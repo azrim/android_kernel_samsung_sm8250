@@ -239,7 +239,6 @@ static void vmpressure_work_fn(struct work_struct *work)
 	spin_unlock(&vmpr->sr_lock);
 
 	pressure = vmpressure_calc_pressure(scanned, reclaimed);
-	vmpr->pressure = pressure;
 	level = vmpressure_level(pressure);
 
 	do {
@@ -368,7 +367,6 @@ static void vmpressure_global(gfp_t gfp, unsigned long scanned,
 	spin_lock(&vmpr->sr_lock);
 	if (!vmpr->scanned)
 		calculate_vmpressure_win();
-
 	vmpr->scanned += scanned;
 	vmpr->reclaimed += reclaimed;
 	scanned = vmpr->scanned;
