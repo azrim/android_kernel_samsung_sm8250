@@ -239,7 +239,8 @@ struct tcp_sock {
 		unused:1,
 		wqp_called:1;
 	u8	nonagle     : 4,
-		fast_ack_mode: 1,/* Disable Nagle algorithm?             */
+		fast_ack_mode: 1,
+		tlp_orig_data_app_limited: 1,/* Disable Nagle algorithm?             */
 		thin_lto    : 1,/* Use linear timeouts for thin streams */
 		recvmsg_inq : 1,/* Indicate # of bytes in queue upon recvmsg */
 		repair      : 1,
