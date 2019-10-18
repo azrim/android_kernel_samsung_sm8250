@@ -6244,6 +6244,12 @@ static unsigned long target_load(int cpu, int type)
 	return max(rq->cpu_load[type-1], total);
 }
 
+static unsigned long cpu_load(struct rq *rq)
+{
+	return cfs_rq_load_avg(&rq->cfs);
+}
+
+static unsigned long capacity_of(int cpu)
 static unsigned long cpu_avg_load_per_task(int cpu)
 {
 	struct rq *rq = cpu_rq(cpu);
@@ -10127,13 +10133,7 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 		if ((env->flags & LBF_NOHZ_STATS) && update_nohz_stats(rq, false))
 			env->flags |= LBF_NOHZ_AGAIN;
 
-		/* Bias balancing toward CPUs of our domain: */
-		if (local_group)
-			load = target_load(i, load_idx);
-		else
-			load = source_load(i, load_idx);
-
-		sgs->group_load += load;
+		sgs->group_load += cpu_load(rq);
 		sgs->group_util += cpu_util(i);
 		sgs->sum_nr_running += rq->cfs.h_nr_running;
 
@@ -10741,7 +10741,7 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 	init_sd_lb_stats(&sds);
 
 	/*
-	 * Compute the various statistics relavent for load balancing at
+	 * Compute the various statistics relevant for load balancing at
 	 * this level.
 	 */
 	update_sd_lb_stats(env, &sds);
@@ -10938,16 +10938,38 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 		    rq->nr_running == 1)
 			continue;
 
-		wl = weighted_cpuload(rq);
+wl = cpu_load(rq);
 
 		/*
 		 * When comparing with imbalance, use weighted_cpuload()
 		 * which is not scaled with the CPU capacity.
 		 */
 
+/*
+		 * When comparing with imbalance, use cpu_load()
+		 * which is not scaled with the CPU capacity.
+		 */
+
 		if (rq->nr_running == 1 && wl > env->imbalance &&
 		    !check_cpu_capacity(rq, env->sd))
 			continue;
+
+		/*
+		 * For the load comparisons with the other CPU's, consider
+		 * the cpu_load() scaled with the CPU capacity, so
+		 * that the load can be moved away from the CPU that is
+		 * potentially running at a lower capacity.
+		 *
+		 * Thus we're looking for max(wl_i / capacity_i), crosswise
+		 * multiplication to rid ourselves of the division works out
+		 * to: wl_i * capacity_j > wl_j * capacity_i;  where j is
+		 * our previous maximum.
+		 */
+		if (wl * busiest_capacity > busiest_load * capacity) {
+			busiest_load = wl;
+			busiest_capacity = capacity;
+			busiest = rq;
+		}
 
 		/*
 		 * For the load comparisons with the other CPU's, consider
