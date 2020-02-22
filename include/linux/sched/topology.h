@@ -237,7 +237,8 @@ unsigned long arch_scale_cpu_capacity(void __always_unused *sd, int cpu)
 #endif	/* !CONFIG_SMP */
 
 #ifndef arch_scale_thermal_pressure
-static inline unsigned long arch_scale_thermal_pressure(int cpu)
+static __always_inline
+unsigned long arch_scale_thermal_pressure(int cpu)
 {
 	return 0;
 }
