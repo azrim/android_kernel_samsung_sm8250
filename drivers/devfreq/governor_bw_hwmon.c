@@ -634,6 +634,10 @@ static int gov_start(struct devfreq *df)
 	if (ret)
 		goto err_sysfs;
 
+	mutex_lock(&df->lock);
+	df->min_freq = df->max_freq;
+	update_devfreq(df);
+	mutex_unlock(&df->lock);
 	return 0;
 
 err_sysfs:
