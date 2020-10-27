@@ -544,6 +544,7 @@ static DEFINE_STATIC_KEY_FALSE(amu_fie_key);
 
 static int __init init_amu_fie(void)
 {
+	bool invariance_status = topology_scale_freq_invariant();
 	cpumask_var_t valid_cpus;
 	bool have_policy = false;
 	int ret = 0;
@@ -578,6 +579,22 @@ static int __init init_amu_fie(void)
 			cpumask_pr_args(amu_fie_cpus));
 		static_branch_enable(&amu_fie_key);
 	}
+
+	/*
+	 * If the system is not fully invariant after AMU init, disable
+	 * partial use of counters for frequency invariance.
+	 */
+	if (!topology_scale_freq_invariant())
+		static_branch_disable(&amu_fie_key);
+
+	/*
+	 * Task scheduler behavior depends on frequency invariance support,
+	 * either cpufreq or counter driven. If the support status changes as
+	 * a result of counter initialisation and use, retrigger the build of
+	 * scheduling domains to ensure the information is propagated properly.
+	 */
+	if (invariance_status != topology_scale_freq_invariant())
+		rebuild_sched_domains_energy();
 
 free_valid_mask:
 	free_cpumask_var(valid_cpus);
