@@ -8024,6 +8024,7 @@ compute_energy(struct task_struct *p, int dst_cpu, struct perf_domain *pd)
 	unsigned int max_util, cpu_util, cpu_cap;
 	unsigned long sum_util, energy = 0;
 	unsigned long min, max;
+	unsigned long _cpu_cap;
 	int cpu;
 
 	for (; pd; pd = pd->next) {
@@ -8034,6 +8035,7 @@ compute_energy(struct task_struct *p, int dst_cpu, struct perf_domain *pd)
 		 * domain have the same capacity.
 		 */
 		cpu_cap = arch_scale_cpu_capacity(cpumask_first(pd_mask));
+		_cpu_cap = cpu_cap - arch_scale_thermal_pressure(cpumask_first(pd_mask));
 		max_util = sum_util = 0;
 
 		/*
@@ -8073,7 +8075,8 @@ compute_energy(struct task_struct *p, int dst_cpu, struct perf_domain *pd)
 			 * is already enough to scale the EM reported power
 			 * consumption at the (eventually clamped) cpu_capacity.
 			 */
-			sum_util += schedutil_cpu_util(cpu, util_running, NULL, NULL);
+			cpu_util = schedutil_cpu_util(cpu, util_running, NULL, NULL);
+			sum_util += min_t(unsigned long, cpu_util, _cpu_cap);
 
 			/*
 			 * Performance domain frequency: utilization clamping
@@ -8092,7 +8095,7 @@ compute_energy(struct task_struct *p, int dst_cpu, struct perf_domain *pd)
 
 			cpu_util = sugov_effective_cpu_perf(cpu, cpu_util, min, max);
 #endif
-			max_util = max(max_util, cpu_util);
+			max_util = max(max_util, min_t(unsigned long, cpu_util, _cpu_cap));
 		}
 
 		energy += em_pd_energy(pd->em_pd, max_util, sum_util);
