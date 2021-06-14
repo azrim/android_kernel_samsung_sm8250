@@ -357,6 +357,7 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
 	RV_DECLARE(rv);
 #endif
 
+	util = map_util_perf(util);
 	freq = map_util_freq(util, freq, max);
 #ifdef CONFIG_SCHED_FFSI_GLUE
 	legacy_freq = freq;
