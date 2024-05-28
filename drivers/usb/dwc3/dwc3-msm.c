@@ -527,10 +527,13 @@ static inline bool dwc3_msm_is_dev_superspeed(struct dwc3_msm *mdwc)
 
 static inline bool dwc3_msm_is_superspeed(struct dwc3_msm *mdwc)
 {
+	if (!mdwc)
+		return false;
 	if (mdwc->in_host_mode)
 		return dwc3_msm_is_host_superspeed(mdwc);
-
-	return dwc3_msm_is_dev_superspeed(mdwc);
+	if (mdwc->in_device_mode)
+		return dwc3_msm_is_dev_superspeed(mdwc);
+	return false;
 }
 
 static int dwc3_msm_dbm_disable_updxfer(struct dwc3 *dwc, u8 usb_ep)
