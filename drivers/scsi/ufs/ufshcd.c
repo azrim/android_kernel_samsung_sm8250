@@ -10829,6 +10829,12 @@ reinit:
 		pm_runtime_put_sync(hba->dev);
 	}
 
+	/*
+	 * Enable auto hibern8 if supported, after full host and
+	 * device initialization.
+	 */
+	ufshcd_set_auto_hibern8_timer(hba);
+
 out:
 	if (ret && link_retry_count++ < UFS_LINK_SETUP_RETRIES) {
 		dev_err(hba->dev, "%s: error with %d, and will be reset.(%d)\n",
