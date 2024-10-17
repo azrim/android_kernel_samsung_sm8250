@@ -222,6 +222,14 @@ static inline bool lru_gen_add_page(struct lruvec *lruvec, struct page *page, bo
 
 		/* see the comment on MIN_NR_GENS */
 		new_flags &= ~(LRU_GEN_MASK | BIT(PG_active));
+		/*
+		 * Reset the tier bits when activating, otherwise they may
+		 * mislead the aging after the page is demoted. keep
+		 * PG_workingset, clearing it would affect refault
+		 * accounting.
+		 */
+		if (old_flags & BIT(PG_active))
+			new_flags &= ~(LRU_REFS_MASK | BIT(PG_referenced));
 		new_flags |= (gen + 1UL) << LRU_GEN_PGOFF;
 	} while (cmpxchg(&page->flags, old_flags, new_flags) != old_flags);
 
