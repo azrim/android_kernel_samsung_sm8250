@@ -293,6 +293,22 @@ config LSM
 
 	  If unsure, leave this as the default.
 
+config SDP
+	bool "Enables SDP"
+	default n
+	help
+	Sensitive Data Protection
+
+config DDAR
+	bool "Enables dual encryption"
+	default n
+	help
+	Knox Dual-DAR (Data-At-Rest) protection
+
+config SDP_KEY_DUMP
+	bool "SDP KEY DUMP"
+	default n
+
 source "security/Kconfig.hardening"
 
 endmenu
