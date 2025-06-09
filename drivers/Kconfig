@@ -241,6 +241,8 @@ source "drivers/energy_model/Kconfig"
 
 source "drivers/samsung/Kconfig"
 
+source "drivers/perf_mgr/Kconfig"
+
 source "drivers/adsp_factory/Kconfig"
 
 source "drivers/staging/samsung/sec_notifier/Kconfig"

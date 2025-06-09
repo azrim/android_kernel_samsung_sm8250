@@ -1586,7 +1586,11 @@ static inline bool is_per_cpu_kthread(struct task_struct *p)
  */
 static inline bool is_cpu_allowed(struct task_struct *p, int cpu)
 {
+#ifdef CONFIG_SEC_PERF_MANAGER
+	if (!p->drawing_flag && !cpumask_test_cpu(cpu, &p->cpus_allowed))
+#else
 	if (!cpumask_test_cpu(cpu, &p->cpus_allowed))
+#endif
 		return false;
 
 	if (is_per_cpu_kthread(p))

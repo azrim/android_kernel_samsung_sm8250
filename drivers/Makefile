@@ -228,6 +228,7 @@ obj-$(CONFIG_UH)        += uh/
 ifeq ($(CONFIG_GATOR), y)
 	obj-$(CONFIG_GATOR)				+= gator/
 endif
+obj-y				+= perf_mgr/
 
 #TZIC
 obj-$(CONFIG_TZIC)  += security/samsung/tzic/
