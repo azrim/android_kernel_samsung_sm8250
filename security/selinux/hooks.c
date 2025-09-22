@@ -92,6 +92,10 @@
 #include <linux/kernfs.h>
 #include <linux/stringhash.h>	/* for hashlen_string() */
 
+// [ SEC_SELINUX_PORTING_COMMON
+#include <linux/delay.h>
+// ] SEC_SELINUX_PORTING_COMMON
+
 #include "avc.h"
 #include "objsec.h"
 #include "netif.h"
@@ -107,6 +111,10 @@ struct selinux_state selinux_state;
 
 /* SECMARK reference count */
 static atomic_t selinux_secmark_refcount = ATOMIC_INIT(0);
+
+// [ SEC_SELINUX_PORTING_COMMON
+static DEFINE_MUTEX(selinux_sdcardfs_lock);
+// ] SEC_SELINUX_PORTING_COMMON
 
 #ifdef CONFIG_SECURITY_SELINUX_DEVELOP
 static int selinux_enforcing_boot __initdata;
@@ -698,6 +706,9 @@ static int selinux_set_mnt_opts(struct super_block *sb,
 
 	if (!strcmp(sb->s_type->name, "debugfs") ||
 	    !strcmp(sb->s_type->name, "tracefs") ||
+// [ SEC_SELINUX_PORTING_COMMON
+	    !strcmp(sb->s_type->name, "configfs") ||
+// ] SEC_SELINUX_PORTING_COMMON	
 	    !strcmp(sb->s_type->name, "binder") ||
 	    !strcmp(sb->s_type->name, "bpf") ||
 	    !strcmp(sb->s_type->name, "pstore"))
@@ -2683,10 +2694,21 @@ static int selinux_sb_kern_mount(struct super_block *sb)
 {
 	const struct cred *cred = current_cred();
 	struct common_audit_data ad;
+	// [ SEC_SELINUX_PORTING_COMMON
+	int rc;
+
+	if((strcmp(sb->s_type->name,"sdcardfs")) == 0)
+		mutex_lock(&selinux_sdcardfs_lock);
 
 	ad.type = LSM_AUDIT_DATA_DENTRY;
 	ad.u.dentry = sb->s_root;
-	return superblock_has_perm(cred, sb, FILESYSTEM__MOUNT, &ad);
+	rc = superblock_has_perm(cred, sb, FILESYSTEM__MOUNT, &ad);
+
+	if((strcmp(sb->s_type->name,"sdcardfs")) == 0)
+		mutex_unlock(&selinux_sdcardfs_lock);
+	// ] SEC_SELINUX_PORTING_COMMON
+	
+	return rc;
 }
 
 static int selinux_sb_statfs(struct dentry *dentry)
@@ -2984,6 +3006,27 @@ static int selinux_inode_follow_link(struct dentry *dentry, struct inode *inode,
 	isec = inode_security_rcu(inode, rcu);
 	if (IS_ERR(isec))
 		return PTR_ERR(isec);
+
+// [ SEC_SELINUX_PORTING_COMMON
+	/* skip sid == 1(kernel), it means first boot time */
+	/* Atakan: SM8350 and higher doesn't have this. Follow the upstream.*/
+#if 0
+	if (isec->initialized != 1 && sid != 1) {
+		int count = 5;
+
+		while (count-- > 0) {
+			pr_err("SELinux : inode->i_security is not initialized. waiting...(%d/5)\n", 5-count);
+			udelay(500);
+			if (isec->initialized == 1) {
+				pr_err("SELinux : inode->i_security is INITIALIZED.\n");
+				break;
+			}
+		}
+		if (isec->initialized != 1)
+			pr_err("SELinux : inode->i_security is not initialized. not fixed.\n");
+	}
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 
 	return avc_has_perm_flags(&selinux_state,
 				  sid, isec->sid, isec->sclass, FILE__READ, &ad,
