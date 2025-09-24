@@ -49,7 +49,7 @@ static bool __may_read_extent_tree(struct inode *inode)
 		return false;
 	if (is_inode_flag_set(inode, FI_NO_EXTENT))
 		return false;
-	if (is_inode_flag_set(inode, FI_COMPRESSED_FILE) &&
+	if (!f2fs_compress_dio_supported(inode) &&
 			 !f2fs_sb_has_readonly(sbi))
 		return false;
 	return S_ISREG(inode->i_mode);
@@ -61,8 +61,7 @@ static bool __may_age_extent_tree(struct inode *inode)
 
 	if (!test_opt(sbi, AGE_EXTENT_CACHE))
 		return false;
-	/* don't cache block age info for cold file */
-	if (is_inode_flag_set(inode, FI_COMPRESSED_FILE))
+	if (!f2fs_compress_dio_supported(inode))
 		return false;
 	if (file_is_cold(inode))
 		return false;
