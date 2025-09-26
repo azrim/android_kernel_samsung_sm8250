@@ -164,16 +164,14 @@ if [ "$USE_SDCLANG" = true ]; then
     CLANG_TRIPLE="aarch64-linux-gnu-"
     CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
 else
-    echo "Using AOSP LLVM"
-    if [ ! -d "/home/atakan/lineage/prebuilts/clang/host/linux-x86/clang-r536225/bin" ]; then
+    echo "Using Neutron Clang"
+    if [ ! -d "/home/atakan/toolchains/neutron-clang/bin" ]; then
         echo "Error: AOSP toolchain directories not found. Exiting."
         exit 1
     fi
 
-    PATH="/home/atakan/lineage/prebuilts/clang/host/linux-x86/clang-r536225/bin:${PATH}"
-    KERNEL_LLVM_BIN="/home/atakan/lineage/prebuilts/clang/host/linux-x86/clang-r536225/bin/clang"
-    GAS_CROSS_COMPILE="/home/atakan/gas/aarch64-linux-gnu-"
-    GAS_CROSS_COMPILE_COMPAT="/home/atakan/gas/arm-linux-gnueabi-"
+    PATH="/home/atakan/toolchains/neutron-clang/bin:${PATH}"
+    KERNEL_LLVM_BIN="/home/atakan/toolchains/neutron-clang/bin/clang"
 fi
 
 # Set kernel build environment variables
@@ -224,17 +222,13 @@ FUNC_BUILD_KERNEL() {
     else
         # Using AOSP LLVM
         make -C "$KERNEL_DIR" O="$KERNEL_OUT_DIR" $KERNEL_MAKE_PARAM ARCH="$KERNEL_ARCH" \
-            CROSS_COMPILE="$GAS_CROSS_COMPILE" \
-            CROSS_COMPILE_COMPAT="$GAS_CROSS_COMPILE_COMPAT" \
             $KERNEL_DEFCONFIG \
             $COMMON_DEFCONFIG \
             $PROJECT_CONFIG \
             $KSU_DEFCONFIG \
             $SLNX_DEFCONFIG
 
-        make -C "$KERNEL_DIR" O="$KERNEL_OUT_DIR" -j"$BUILD_JOB_NUMBER" $KERNEL_MAKE_PARAM ARCH="$KERNEL_ARCH" \
-            CROSS_COMPILE="$GAS_CROSS_COMPILE" \
-            CROSS_COMPILE_COMPAT="$GAS_CROSS_COMPILE_COMPAT"
+        make -C "$KERNEL_DIR" O="$KERNEL_OUT_DIR" -j"$BUILD_JOB_NUMBER" $KERNEL_MAKE_PARAM ARCH="$KERNEL_ARCH"
     fi
 
     cat "$__dts_dir/vendor/qcom"/*.dtb > "$PRODUCT_OUT/dtb.img"
