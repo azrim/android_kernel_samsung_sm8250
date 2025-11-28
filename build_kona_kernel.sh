@@ -149,13 +149,13 @@ if [ "$PERMISSIVE" = true ]; then
 fi
 
 # Set toolchain and build environment
-if [ ! -d "/home/atakan/toolchains/neutron-clang/bin" ]; then
+if [ ! -d "/home/atakan/geliştirme/tools/toolchains/neutron-clang/bin" ]; then
     echo "Error: AOSP toolchain directories not found. Exiting."
     exit 1
 fi
 
-PATH="/home/atakan/toolchains/neutron-clang/bin:${PATH}"
-KERNEL_LLVM_BIN="/home/atakan/toolchains/neutron-clang/bin/clang"
+PATH="/home/atakan/geliştirme/tools/toolchains/neutron-clang/bin:${PATH}"
+KERNEL_LLVM_BIN="/home/atakan/geliştirme/tools/toolchains/neutron-clang/bin/clang"
 
 # Set kernel build environment variables
 export CC="ccache clang"
