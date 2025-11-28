@@ -103,7 +103,6 @@ yes_no_prompt() {
     fi
 }
 
-yes_no_prompt "USE_SDCLANG" "Would you like to use Snapdragon LLVM (proprietary)?"
 yes_no_prompt "PERMISSIVE" "Would you like to force Selinux to permissive?"
 
 
@@ -111,7 +110,6 @@ echo "=============================================="
 echo "Configuration Summary:"
 echo "Model: $model_choice"
 echo "Region: ${region_choice:-default}"
-echo "Snapdragon LLVM: $USE_SDCLANG"
 echo "=============================================="
 
 # Build paths. Must be defined before anything else
@@ -151,35 +149,19 @@ if [ "$PERMISSIVE" = true ]; then
 fi
 
 # Set toolchain and build environment
-if [ "$USE_SDCLANG" = true ]; then
-    echo "Using Snapdragon LLVM"
-    if [ ! -d "/opt/qcom/Qualcomm_Snapdragon_LLVM_ARM_Toolchain_OEM/19.0.0.0/bin" ]; then
-        echo "Error: Snapdragon toolchain directory not found. Exiting."
-        exit 1
-    fi
-
-    PATH="/opt/qcom/Qualcomm_Snapdragon_LLVM_ARM_Toolchain_OEM/19.0.0.0/bin:${PATH}"
-    KERNEL_LLVM_BIN="/opt/qcom/Qualcomm_Snapdragon_LLVM_ARM_Toolchain_OEM/19.0.0.0/bin/clang"
-    BUILD_CROSS_COMPILE="aarch64-linux-gnu-"
-    CLANG_TRIPLE="aarch64-linux-gnu-"
-    CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
-else
-    echo "Using Neutron Clang"
-    if [ ! -d "/home/atakan/toolchains/neutron-clang/bin" ]; then
-        echo "Error: AOSP toolchain directories not found. Exiting."
-        exit 1
-    fi
-
-    PATH="/home/atakan/toolchains/neutron-clang/bin:${PATH}"
-    KERNEL_LLVM_BIN="/home/atakan/toolchains/neutron-clang/bin/clang"
+if [ ! -d "/home/atakan/toolchains/neutron-clang/bin" ]; then
+    echo "Error: AOSP toolchain directories not found. Exiting."
+    exit 1
 fi
+
+PATH="/home/atakan/toolchains/neutron-clang/bin:${PATH}"
+KERNEL_LLVM_BIN="/home/atakan/toolchains/neutron-clang/bin/clang"
 
 # Set kernel build environment variables
-if [ "$USE_SDCLANG" = true ]; then
-    KERNEL_MAKE_PARAM="CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump OBJSIZE=llvm-size READELF=llvm-readelf HOSTCXX=clang++ HOSTAR=llvm-ar HOSTLD=ld.lld DTC_OVERLAY_TEST_EXT=$KERNEL_DIR/tools/ufdt_apply_overlay"
-else
-    KERNEL_MAKE_PARAM="CC=clang LLVM=1 LLVM_IAS=1 DTC_OVERLAY_TEST_EXT=$KERNEL_DIR/tools/ufdt_apply_overlay"
-fi
+export CC="ccache clang"
+export LLVM=1
+export LLVM_IAS=1
+export DTC_OVERLAY_TEST_EXT="$KERNEL_DIR/tools/ufdt_apply_overlay"
 
 # Get number of CPU cores for parallel builds
 BUILD_JOB_NUMBER=$(grep -c processor /proc/cpuinfo)
@@ -201,35 +183,14 @@ FUNC_BUILD_KERNEL() {
     echo "=============================================="
     echo ""
 
-    if [ "$USE_SDCLANG" = true ]; then
-        # Using SDClang
-        make -C "$KERNEL_DIR" O="$KERNEL_OUT_DIR" $KERNEL_MAKE_PARAM ARCH="$KERNEL_ARCH" \
-            CROSS_COMPILE="$BUILD_CROSS_COMPILE" \
-            CC="$KERNEL_LLVM_BIN" \
-            CLANG_TRIPLE="$CLANG_TRIPLE" \
-            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            $KERNEL_DEFCONFIG \
-            $COMMON_DEFCONFIG \
-            $PROJECT_CONFIG \
-            $KSU_DEFCONFIG \
-            $SLNX_DEFCONFIG
+    make -C "$KERNEL_DIR" O="$KERNEL_OUT_DIR" $KERNEL_MAKE_PARAM ARCH="$KERNEL_ARCH" \
+        $KERNEL_DEFCONFIG \
+        $COMMON_DEFCONFIG \
+        $PROJECT_CONFIG \
+        $KSU_DEFCONFIG \
+        $SLNX_DEFCONFIG
 
-        make -C "$KERNEL_DIR" O="$KERNEL_OUT_DIR" -j"$BUILD_JOB_NUMBER" $KERNEL_MAKE_PARAM ARCH="$KERNEL_ARCH" \
-            CROSS_COMPILE="$BUILD_CROSS_COMPILE" \
-            CC="$KERNEL_LLVM_BIN" \
-            CLANG_TRIPLE="$CLANG_TRIPLE" \
-            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32"
-    else
-        # Using AOSP LLVM
-        make -C "$KERNEL_DIR" O="$KERNEL_OUT_DIR" $KERNEL_MAKE_PARAM ARCH="$KERNEL_ARCH" \
-            $KERNEL_DEFCONFIG \
-            $COMMON_DEFCONFIG \
-            $PROJECT_CONFIG \
-            $KSU_DEFCONFIG \
-            $SLNX_DEFCONFIG
-
-        make -C "$KERNEL_DIR" O="$KERNEL_OUT_DIR" -j"$BUILD_JOB_NUMBER" $KERNEL_MAKE_PARAM ARCH="$KERNEL_ARCH"
-    fi
+    make -C "$KERNEL_DIR" O="$KERNEL_OUT_DIR" -j"$BUILD_JOB_NUMBER" $KERNEL_MAKE_PARAM ARCH="$KERNEL_ARCH"
 
     cat "$__dts_dir/vendor/qcom"/*.dtb > "$PRODUCT_OUT/dtb.img"
 
