@@ -244,7 +244,7 @@ FUNC_BUILD_BOOTIMG() {
 
     rm "./queen_$MODEL.img"
 
-    cp "$KERNEL_DIR/$PRODUCT_OUT/dtbo.img" ./dtbo.img
+    cp "$KERNEL_DIR/$PRODUCT_OUT/dtbo.img" "$TARGET/dtbo.img"
 }
 
 
