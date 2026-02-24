@@ -8,19 +8,43 @@ build_kernel() {
     export ARCH=arm64
     mkdir out
 
-    export PATH=$(pwd)/clang-r547379/bin:$PATH
+    export PATH=$(pwd)/llvm-21/bin:$PATH
 
-    BUILD_VAR="-j$(nproc) -C $(pwd) O=$(pwd)/out ARCH=arm64 LLVM=1"
+    BUILD_VAR="-j$(nproc) -C $(pwd) O=$(pwd)/out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1"
 
-    make $BUILD_VAR vendor/kona-perf_defconfig vendor/samsung/kona-sec-common.config vendor/samsung/r8q.config
+    cat arch/arm64/configs/vendor/kona-sec-perf_defconfig arch/arm64/configs/vendor/samsung/r8q.config > arch/arm64/configs/temp_defconfig
 
+    echo "
+    CONFIG_THINLTO=y
+    # CONFIG_LTO_NONE is not set
+    CONFIG_LTO_CLANG=y
+    " >> arch/arm64/configs/temp_defconfig
+
+    make $BUILD_VAR temp_defconfig
+    rm arch/arm64/configs/temp_defconfig
+}
+
+build_dtb() {
+    echo "-----------------------------------------------"
+    echo "Building dtb..."
+    echo "-----------------------------------------------"
     make $BUILD_VAR
+    make $BUILD_VAR dtbs
 
-    # Handle DTB
-    cat $(pwd)/out/arch/arm64/boot/dts/vendor/qcom/*.dtb > $(pwd)/out/arch/arm64/boot/dts/vendor/qcom/dtb
+    cat "$(pwd)/out/arch/arm64/boot/dts/vendor/qcom/kona.dtb" \
+        "$(pwd)/out/arch/arm64/boot/dts/vendor/qcom/kona-v2.dtb" \
+        "$(pwd)/out/arch/arm64/boot/dts/vendor/qcom/kona-v2.1.dtb" \
+        > "$(pwd)/out/arch/arm64/boot/dts/dtb"
+}
 
-    # Handle DTBO
-    mv $(pwd)/out/arch/arm64/boot/dtbo.img dtbo.img
+build_dtbo() {
+    echo "-----------------------------------------------"
+    echo "Building dtbo.img..."
+    echo "-----------------------------------------------"
+    DTBO_FILES=$(find $(pwd)/out/arch/arm64/boot/dts/samsung/r8q -name kona-sec-r8q-*.dtbo)
+    $(pwd)/tools/mkdtimg create $(pwd)/out/dtbo.img --page_size=4096 ${DTBO_FILES}
+
+    mv $(pwd)/out/dtbo.img dtbo.img
 }
 
 build_boot() {
@@ -29,7 +53,7 @@ build_boot() {
     echo "-----------------------------------------------"
     MKBOOTIMG="$(pwd)/mkbootimg/mkbootimg.py"
     OUT_KERNEL="$(pwd)/out/arch/arm64/boot/Image"
-    DTB_OUT="$(pwd)/out/arch/arm64/boot/dts/vendor/qcom/dtb"
+    DTB_OUT="$(pwd)/out/arch/arm64/boot/dts/dtb"
     CMDLINE="console=null androidboot.hardware=qcom androidboot.memcg=1 lpm_levels.sleep_disabled=1 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 service_locator.enable=1 androidboot.usbcontroller=a600000.dwc3 swiotlb=2048 printk.devkmsg=on firmware_class.path=/vendor/firmware_mnt/image loop.max_part=7"
     BASE="0x00000000"
     KOFFSET="0x00008000"
@@ -48,6 +72,7 @@ build_boot() {
         --ramdisk "$RAMDISK" \
         --dtb "$DTB_OUT" \
         --cmdline "$CMDLINE" \
+        --header_version 2 \
         --base "$BASE" \
         --kernel_offset "$KOFFSET" \
         --ramdisk_offset "$ROFFSET" \
@@ -62,4 +87,6 @@ build_boot() {
 }
 
 build_kernel
+build_dtb
+build_dtbo
 build_boot
