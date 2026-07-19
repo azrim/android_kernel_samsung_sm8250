@@ -1,4 +1,15 @@
-#include <linux/kprobes.h>
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (C) 2026 \xx
+ *
+ * This file is a downstream extension and NOT affiliated, endorsed by,
+ * or maintained by the official KernelSU developers.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ */
 
 // sys_newfstat rp
 // upstream: https://github.com/tiann/KernelSU/commit/df640917d11dd0eff1b34ea53ec3c0dc49667002
@@ -9,8 +20,8 @@ static int sys_newfstat_handler_pre(struct kretprobe_instance *p, struct pt_regs
 
 	// grab ptr on entry
 	uintptr_t *arg = (uintptr_t *)p->data;
-	arg[0] = (uintptr_t)PT_REGS_PARM1(regs); 
-	arg[1] = (uintptr_t)PT_REGS_PARM2(regs); 
+	arg[0] = (uintptr_t)PT_REGS_PARM1(real_regs); 
+	arg[1] = (uintptr_t)PT_REGS_PARM2(real_regs); 
 
 	return 0;
 }
@@ -40,8 +51,8 @@ static int sys_fstat64_handler_pre(struct kretprobe_instance *p, struct pt_regs 
 
 	// grab ptr on entry
 	uintptr_t *arg = (uintptr_t *)p->data;
-	arg[0] = (uintptr_t)PT_REGS_PARM1(regs); 
-	arg[1] = (uintptr_t)PT_REGS_PARM2(regs); 
+	arg[0] = (uintptr_t)PT_REGS_PARM1(real_regs); 
+	arg[1] = (uintptr_t)PT_REGS_PARM2(real_regs); 
 
 	return 0;
 }
@@ -141,4 +152,3 @@ static __init int kp_ksud_init()
 	kthread_run(unregister_kprobe_function, NULL, "kp_unreg");
 	return 0;
 }
-late_initcall(kp_ksud_init);
