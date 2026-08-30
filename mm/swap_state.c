@@ -693,6 +693,12 @@ static void swap_ra_info(struct vm_fault *vmf,
 		return;
 	}
 
+	if (swp_swap_info(entry)->flags & SWP_SYNCHRONOUS_IO) {
+		ra_info->win = 1;
+		pte_unmap(orig_pte);
+		return;
+	}
+
 	fpfn = PFN_DOWN(faddr);
 	ra_val = GET_SWAP_RA_VAL(vma);
 	pfn = PFN_DOWN(SWAP_RA_ADDR(ra_val));
