@@ -2294,6 +2294,17 @@ static ssize_t compact_store(struct device *dev,
 	return len;
 }
 
+static void zram_auto_compact_work(struct work_struct *work)
+{
+	struct zram *zram = container_of(to_delayed_work(work),
+			struct zram, compact_work);
+
+	if (init_done(zram) && zram->mem_pool)
+		zs_compact(zram->mem_pool);
+
+	schedule_delayed_work(&zram->compact_work, msecs_to_jiffies(60000));
+}
+
 static ssize_t io_stat_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -3173,6 +3184,7 @@ static void zram_reset_device(struct zram *zram)
 
 	down_write(&zram->init_lock);
 
+	cancel_delayed_work_sync(&zram->compact_work);
 	zram->limit_pages = 0;
 
 	if (!init_done(zram)) {
@@ -3234,6 +3246,9 @@ static ssize_t disksize_store(struct device *dev,
 
 	revalidate_disk(zram->disk);
 	up_write(&zram->init_lock);
+
+	INIT_DELAYED_WORK(&zram->compact_work, zram_auto_compact_work);
+	schedule_delayed_work(&zram->compact_work, msecs_to_jiffies(60000));
 
 	return len;
 
