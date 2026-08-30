@@ -2409,8 +2409,8 @@ static unsigned long zs_shrinker_scan(struct shrinker *shrinker,
 	return pages_freed ? pages_freed : SHRINK_STOP;
 }
 
-#define ZS_SHRINKER_THRESHOLD	1024
-#define ZS_SHRINKER_INTERVAL	10
+#define ZS_SHRINKER_THRESHOLD	256
+#define ZS_SHRINKER_INTERVAL	5
 
 static unsigned long zs_shrinker_count(struct shrinker *shrinker,
 		struct shrink_control *sc)
@@ -2422,7 +2422,7 @@ static unsigned long zs_shrinker_count(struct shrinker *shrinker,
 			shrinker);
 	static unsigned long time_stamp;
 
-	if (!current_is_kswapd() || time_is_after_jiffies(time_stamp))
+	if (time_is_after_jiffies(time_stamp))
 		return 0;
 
 	for (i = ZS_SIZE_CLASSES - 1; i >= 0; i--) {
