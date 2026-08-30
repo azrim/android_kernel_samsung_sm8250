@@ -2275,7 +2275,7 @@ static void async_free_zspage(struct work_struct *work)
 
 static void kick_deferred_free(struct zs_pool *pool)
 {
-	schedule_work(&pool->free_work);
+	queue_work(system_unbound_wq, &pool->free_work);
 }
 
 static void init_deferred_free(struct zs_pool *pool)
