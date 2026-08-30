@@ -2833,11 +2833,17 @@ compress_again:
 		entry = zram_entry_alloc(zram, comp_len,
 				GFP_NOIO | __GFP_HIGHMEM |
 				__GFP_MOVABLE | __GFP_CMA);
-		if (entry)
+		if (entry) {
+			if (comp_len == PAGE_SIZE) {
+				zstrm = zcomp_stream_get(zram->comp);
+				goto alloced_entry;
+			}
 			goto compress_again;
+		}
 		return -ENOMEM;
 	}
 
+alloced_entry:
 	alloced_pages = zs_get_total_pages(zram->mem_pool);
 	update_used_max(zram, alloced_pages);
 
