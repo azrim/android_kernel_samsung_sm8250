@@ -227,14 +227,18 @@ static inline void zram_fill_page(void *ptr, unsigned long len,
 static bool page_same_filled(void *ptr, unsigned long *element)
 {
 	unsigned int pos;
-	unsigned long *page;
-	unsigned long val;
+	unsigned long *page = (unsigned long *)ptr;
+	unsigned long val = page[0];
 
-	page = (unsigned long *)ptr;
-	val = page[0];
-
-	for (pos = 1; pos < PAGE_SIZE / sizeof(*page); pos++) {
-		if (val != page[pos])
+	for (pos = 0; pos < PAGE_SIZE / sizeof(*page); pos += 8) {
+		if (val != page[pos] ||
+		    val != page[pos + 1] ||
+		    val != page[pos + 2] ||
+		    val != page[pos + 3] ||
+		    val != page[pos + 4] ||
+		    val != page[pos + 5] ||
+		    val != page[pos + 6] ||
+		    val != page[pos + 7])
 			return false;
 	}
 
