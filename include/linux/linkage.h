@@ -147,6 +147,15 @@
 	name:
 #endif
 
+#ifndef SYM_FUNC_START_WEAK_ALIAS_PI
+#define SYM_FUNC_START_WEAK_ALIAS_PI(name) \
+	.weak __pi_##name ASM_NL \
+	.weak name ASM_NL \
+	ALIGN ASM_NL \
+	__pi_##name: ASM_NL \
+	name:
+#endif
+
 #ifndef SYM_FUNC_END
 #define SYM_FUNC_END(name) \
 	.size name, .-name

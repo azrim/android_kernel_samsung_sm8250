@@ -63,8 +63,11 @@
 		SYM_FUNC_START_WEAK(x)
 
 #define SYM_FUNC_START_WEAK_ALIAS_PI(x)		\
-		SYM_FUNC_START_ALIAS(__pi_##x);	\
-		SYM_START(x, SYM_L_WEAK, SYM_A_ALIGN)
+	.globl __pi_##x ASM_NL			\
+	.weak x ASM_NL				\
+	__ALIGN ASM_NL				\
+	__pi_##x: ASM_NL			\
+	x:
 
 #define SYM_FUNC_END_PI(x)			\
 		SYM_FUNC_END(x);		\
