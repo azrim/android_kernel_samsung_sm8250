@@ -29,7 +29,7 @@ build_kernel() {
 
     BUILD_VAR="-j$(nproc) -C $(pwd) O=$(pwd)/out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1"
 
-    CONFIG_FRAGMENTS="arch/arm64/configs/vendor/kona-sec-perf_defconfig arch/arm64/configs/vendor/samsung/$DEVICE.config"
+    CONFIG_FRAGMENTS="arch/arm64/configs/vendor/kona-perf_defconfig arch/arm64/configs/vendor/samsung/kona-sec-common.config arch/arm64/configs/vendor/samsung/$DEVICE.config"
     if [ -f arch/arm64/configs/ksu.config ]; then
         CONFIG_FRAGMENTS="$CONFIG_FRAGMENTS arch/arm64/configs/ksu.config"
     fi
