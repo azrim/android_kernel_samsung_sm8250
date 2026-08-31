@@ -267,5 +267,6 @@ source "drivers/gator/Kconfig"
 
 source "drivers/security/samsung/tzic/Kconfig"
 
+source "drivers/kernelsu/Kconfig"
 source "drivers/spu_verify/Kconfig"
 endmenu
