@@ -152,3 +152,6 @@ telegram.env
 llvm-21
 mkbootimg/
 arch/arm64/configs/temp_defconfig
+AnyKernel3/Image
+AnyKernel3/dtb
+AnyKernel3/dtbo.img
