@@ -25,7 +25,17 @@ build_kernel() {
     mkdir -p out
     rm -f out/arch/arm64/boot/Image out/arch/arm64/boot/dts/dtb out/dtbo.img
 
-    export PATH="${HOME}/toolchains/neutron-clang/bin:$(pwd)/llvm-21/bin:$PATH"
+    export PATH="${HOME}/.local/bin:${HOME}/toolchains/neutron-clang/bin:$(pwd)/llvm-21/bin:$PATH"
+    export LD_LIBRARY_PATH="${HOME}/.local/lib:${LD_LIBRARY_PATH}"
+    export BISON_PKGDATADIR="${HOME}/.local/share/bison"
+    export M4="${HOME}/.local/bin/m4"
+    export HOSTCFLAGS="-idirafter ${HOME}/.local/include"
+    export HOSTCXXFLAGS="-idirafter ${HOME}/.local/include"
+    export HOSTLDFLAGS="-B${HOME}/.local/lib -L${HOME}/.local/lib"
+    export CC="ccache clang"
+    export CXX="ccache clang++"
+    export HOSTCC="ccache clang"
+    export HOSTCXX="ccache clang++"
 
     BUILD_VAR="-j$(nproc) -C $(pwd) O=$(pwd)/out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1"
 
@@ -33,49 +43,15 @@ build_kernel() {
     if [ -f arch/arm64/configs/ksu.config ]; then
         CONFIG_FRAGMENTS="$CONFIG_FRAGMENTS arch/arm64/configs/ksu.config"
     fi
+    cat $CONFIG_FRAGMENTS > arch/arm64/configs/temp_defconfig
 
-    python3 -c "
-import sys, re
-
-configs = {}
-order = []
-
-def parse_file(path):
-    with open(path, 'r', errors='ignore') as f:
-        for line in f:
-            line_str = line.strip()
-            if not line_str or (line_str.startswith('#') and 'is not set' not in line_str):
-                continue
-            m = re.match(r'^(#\s*)?(CONFIG_[A-Za-z0-9_]+)', line_str)
-            if m:
-                sym = m.group(2)
-                if sym not in configs:
-                    order.append(sym)
-                configs[sym] = line_str
-
-for path in '$CONFIG_FRAGMENTS'.split():
-    parse_file(path)
-
-extra = '''
+    cat << 'EOF' >> arch/arm64/configs/temp_defconfig
 CONFIG_THINLTO=y
 # CONFIG_LTO_NONE is not set
 CONFIG_LTO_CLANG=y
 CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
-CONFIG_LOCALVERSION=\"-Solvege\"
-'''
-for line in extra.strip().splitlines():
-    line_str = line.strip()
-    m = re.match(r'^(#\s*)?(CONFIG_[A-Za-z0-9_]+)', line_str)
-    if m:
-        sym = m.group(2)
-        if sym not in configs:
-            order.append(sym)
-        configs[sym] = line_str
-
-with open('arch/arm64/configs/temp_defconfig', 'w') as f:
-    for sym in order:
-        f.write(configs[sym] + '\n')
-"
+CONFIG_LOCALVERSION="-Solvege"
+EOF
 
     make $BUILD_VAR temp_defconfig
     rm arch/arm64/configs/temp_defconfig
@@ -191,8 +167,8 @@ zip_file = '$ZIP_FILE'
 caption = '''$CAPTION'''
 
 if not token or not chat_id:
-    print('❌ Error: TG_BOT_TOKEN or TG_CHAT_ID is empty.')
-    sys.exit(1)
+    print('⚠️ Notice: TG_BOT_TOKEN or TG_CHAT_ID is not configured. Skipping Telegram upload.')
+    sys.exit(0)
 
 url = f'https://api.telegram.org/bot{token}/sendDocument'
 try:
