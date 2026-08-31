@@ -85,6 +85,13 @@ modules.builtin
 !.mailmap
 !.cocciconfig
 !.clang-format
+!.gitattributes
+!.gitlab-ci.yml
+!.get_maintainer.ignore
+!.github/
+
+# In-tree firmware binaries
+!firmware/
 
 #
 # Generated include files
@@ -140,18 +147,20 @@ kernel/configs/android-*.cfg
 #
 Android.bp
 
-# Ignore build environment
-build_env/
+# Build & output directories
 out/
-
-# Local workspace & build artifacts
-AGENTS.md
-*.env
-telegram.env
-*.zip
 llvm-21
 mkbootimg/
+
+# Config fragments & build artifacts
+AGENTS.md
 arch/arm64/configs/temp_defconfig
+*.env
+*.zip
+*.log
+.github/log.txt
+
+# AnyKernel3 generated files
 AnyKernel3/Image
 AnyKernel3/dtb
 AnyKernel3/dtbo.img
