@@ -143,3 +143,12 @@ Android.bp
 # Ignore build environment
 build_env/
 out/
+
+# Local workspace & build artifacts
+AGENTS.md
+*.env
+telegram.env
+*.zip
+llvm-21
+mkbootimg/
+arch/arm64/configs/temp_defconfig
