@@ -121,9 +121,6 @@
  * If disabled, this behaviour will only apply to tasks of the
  * RT class.
  */
-<<<<<<< HEAD
-SCHED_FEAT(SCHEDTUNE_BOOST_HOLD_ALL, false)
-=======
 #define SCHED_FEAT_SCHEDTUNE_BOOST_HOLD_ALL 0
 
 /*
@@ -132,4 +129,3 @@ SCHED_FEAT(SCHEDTUNE_BOOST_HOLD_ALL, false)
  * If disabled, boosts will only bias tasks to higher-capacity CPUs.
  */
 #define SCHED_FEAT_SCHEDTUNE_BOOST_UTIL 0
->>>>>>> ce3afb174dfb (sched: Resolve sched_feat() at compile time to improve code optimization)
