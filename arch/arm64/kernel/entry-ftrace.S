@@ -120,7 +120,6 @@ skip_ftrace_call:			// }
 #endif /* CONFIG_FUNCTION_GRAPH_TRACER */
 	mcount_exit
 ENDPROC(_mcount)
-EXPORT_SYMBOL(_mcount)
 NOKPROBE(_mcount)
 
 #else /* CONFIG_DYNAMIC_FTRACE */
@@ -133,7 +132,6 @@ NOKPROBE(_mcount)
 ENTRY(_mcount)
 	ret
 ENDPROC(_mcount)
-EXPORT_SYMBOL(_mcount)
 NOKPROBE(_mcount)
 
 /*
