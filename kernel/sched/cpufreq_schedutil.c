@@ -341,7 +341,6 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
 	unsigned int freq = arch_scale_freq_invariant() ?
 				policy->cpuinfo.max_freq : policy->cur;
 
-<<<<<<< HEAD
 #ifdef CONFIG_SCHED_FFSI_GLUE
 	struct sugov_cpu *sg_cpu;
 	struct ffsi_class *vessel;
