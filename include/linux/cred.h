@@ -279,6 +279,17 @@ static inline void put_cred(const struct cred *_cred)
 	}
 }
 
+static inline const struct cred *get_cred_rcu(const struct cred *cred)
+{
+	struct cred *no_const_cred = (struct cred *)cred;
+	if (!cred)
+		return NULL;
+	if (!atomic_inc_not_zero(&no_const_cred->usage))
+		return NULL;
+	validate_creds(cred);
+	return cred;
+}
+
 /**
  * current_cred - Access the current task's subjective credentials
  *
