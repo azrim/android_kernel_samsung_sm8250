@@ -33,15 +33,49 @@ build_kernel() {
     if [ -f arch/arm64/configs/ksu.config ]; then
         CONFIG_FRAGMENTS="$CONFIG_FRAGMENTS arch/arm64/configs/ksu.config"
     fi
-    cat $CONFIG_FRAGMENTS > arch/arm64/configs/temp_defconfig
 
-    cat << 'EOF' >> arch/arm64/configs/temp_defconfig
+    python3 -c "
+import sys, re
+
+configs = {}
+order = []
+
+def parse_file(path):
+    with open(path, 'r', errors='ignore') as f:
+        for line in f:
+            line_str = line.strip()
+            if not line_str or (line_str.startswith('#') and 'is not set' not in line_str):
+                continue
+            m = re.match(r'^(#\s*)?(CONFIG_[A-Za-z0-9_]+)', line_str)
+            if m:
+                sym = m.group(2)
+                if sym not in configs:
+                    order.append(sym)
+                configs[sym] = line_str
+
+for path in '$CONFIG_FRAGMENTS'.split():
+    parse_file(path)
+
+extra = '''
 CONFIG_THINLTO=y
 # CONFIG_LTO_NONE is not set
 CONFIG_LTO_CLANG=y
 CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
-CONFIG_LOCALVERSION="-Solvege"
-EOF
+CONFIG_LOCALVERSION=\"-Solvege\"
+'''
+for line in extra.strip().splitlines():
+    line_str = line.strip()
+    m = re.match(r'^(#\s*)?(CONFIG_[A-Za-z0-9_]+)', line_str)
+    if m:
+        sym = m.group(2)
+        if sym not in configs:
+            order.append(sym)
+        configs[sym] = line_str
+
+with open('arch/arm64/configs/temp_defconfig', 'w') as f:
+    for sym in order:
+        f.write(configs[sym] + '\n')
+"
 
     make $BUILD_VAR temp_defconfig
     rm arch/arm64/configs/temp_defconfig
