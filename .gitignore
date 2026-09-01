@@ -149,3 +149,9 @@ out/
 *.out
 zImage
 dtbo.img
+
+# local
+AGENTS.md
+*.env
+AnyKernel3/dtb
+AnyKernel3/Image
