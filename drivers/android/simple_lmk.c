@@ -315,7 +315,7 @@ static void scan_and_kill(void)
 	write_lock(&mm_free_lock);
 	reinit_completion(&reclaim_done);
 	reclaim_active = false;
-	nr_killed = (atomic_t)ATOMIC_INIT(0);
+	atomic_set(&nr_killed, 0);
 	write_unlock(&mm_free_lock);
 }
 
