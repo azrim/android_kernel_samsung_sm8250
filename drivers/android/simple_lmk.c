@@ -9,6 +9,7 @@
 #include <linux/kthread.h>
 #include <linux/mm.h>
 #include <linux/moduleparam.h>
+#include <linux/mutex.h>
 #include <linux/oom.h>
 #include <linux/sched/mm.h>
 #include <linux/sort.h>
@@ -34,13 +35,13 @@ static struct victim_info victims[MAX_VICTIMS] __cacheline_aligned_in_smp;
 static struct task_struct *task_bucket[SHRT_MAX + 1] __cacheline_aligned;
 static DECLARE_WAIT_QUEUE_HEAD(oom_waitq);
 static DECLARE_WAIT_QUEUE_HEAD(reaper_waitq);
-static DECLARE_COMPLETION(reclaim_done);
 static __cacheline_aligned_in_smp DEFINE_RWLOCK(mm_free_lock);
 static int nr_victims;
 static bool reclaim_active;
+static DEFINE_MUTEX(reclaim_lock);
+static unsigned long last_reclaim;
 static atomic_t needs_reclaim = ATOMIC_INIT(0);
 static atomic_t needs_reap = ATOMIC_INIT(0);
-static atomic_t nr_killed = ATOMIC_INIT(0);
 
 static int victim_cmp(const void *lhs_ptr, const void *rhs_ptr)
 {
@@ -198,7 +199,7 @@ static void set_task_rt_prio(struct task_struct *tsk, int priority)
 	sched_setscheduler_nocheck(tsk, SCHED_RR, &rt_prio);
 }
 
-static void scan_and_kill(void)
+static unsigned long scan_and_kill(void)
 {
 	int i, nr_to_kill, nr_found = 0;
 	unsigned long pages_found;
@@ -215,7 +216,7 @@ static void scan_and_kill(void)
 	pages_found = find_victims(&nr_found);
 	if (unlikely(!nr_found)) {
 		pr_err_ratelimited("No processes available to kill!\n");
-		return;
+		return 0;
 	}
 
 	/* Minimize the number of victims if we found more pages than needed */
@@ -303,20 +304,13 @@ static void scan_and_kill(void)
 	write_lock(&mm_free_lock);
 	sort(victims, nr_to_kill, sizeof(*victims), victim_cmp, victim_swap);
 	atomic_set(&needs_reap, 1);
+	reclaim_active = false;
 	write_unlock(&mm_free_lock);
 	if (waitqueue_active(&reaper_waitq))
 		wake_up(&reaper_waitq);
 
-	/* Wait until all the victims die or until the timeout is reached */
-	if (!wait_for_completion_timeout(&reclaim_done, RECLAIM_EXPIRES))
-		pr_info("Timeout hit waiting for victims to die, proceeding\n");
-
-	/* Clean up for future reclaims but let the reaper thread keep going */
-	write_lock(&mm_free_lock);
-	reinit_completion(&reclaim_done);
-	reclaim_active = false;
-	atomic_set(&nr_killed, 0);
-	write_unlock(&mm_free_lock);
+	WRITE_ONCE(last_reclaim, jiffies);
+	return pages_found;
 }
 
 static int simple_lmk_reclaim_thread(void *data)
@@ -328,11 +322,13 @@ static int simple_lmk_reclaim_thread(void *data)
 	while (1) {
 		wait_event_freezable(oom_waitq,
 				     kthread_should_stop() ||
-				     atomic_read(&needs_reclaim));
+				     atomic_cmpxchg_relaxed(&needs_reclaim, 1, 0));
 		if (kthread_should_stop())
 			break;
-		scan_and_kill();
-		atomic_set(&needs_reclaim, 0);
+		if (mutex_trylock(&reclaim_lock)) {
+			scan_and_kill();
+			mutex_unlock(&reclaim_lock);
+		}
 	}
 
 	return 0;
@@ -465,16 +461,8 @@ void simple_lmk_mm_freed(struct mm_struct *mm)
 	read_lock(&mm_free_lock);
 	for (i = 0; i < nr_victims; i++) {
 		if (victims[i].mm == mm) {
-			/*
-			 * Clear out this victim from the victims array and only
-			 * increment nr_killed if reclaim is active. If reclaim
-			 * isn't active, then clearing out the victim is done
-			 * solely for the reaper thread to avoid freed victims.
-			 */
+			/* Prevent the reaper from touching a freed victim */
 			victims[i].mm = NULL;
-			if (reclaim_active &&
-			    atomic_inc_return_relaxed(&nr_killed) == nr_victims)
-				complete(&reclaim_done);
 			break;
 		}
 	}
@@ -484,16 +472,23 @@ void simple_lmk_mm_freed(struct mm_struct *mm)
 static int simple_lmk_oom_cb(struct notifier_block *nb,
 			     unsigned long action, void *data)
 {
+	int *freed = data;
+
 	/*
-	 * The kernel OOM killer is about to kill. Trigger a reclaim in
-	 * simple_lmk so that the least important processes are killed instead
-	 * of whatever the OOM killer picks, but let the OOM killer proceed as
-	 * a fallback in case there are no suitable victims.
+	 * Try to reclaim synchronously so the kernel OOM killer is
+	 * preempted.  If another reclaim is in progress, fall back to
+	 * waking the reclaim thread.
 	 */
-	atomic_set(&needs_reclaim, 1);
-	smp_mb__after_atomic();
-	if (waitqueue_active(&oom_waitq))
-		wake_up(&oom_waitq);
+	if (mutex_trylock(&reclaim_lock)) {
+		if (scan_and_kill() && freed)
+			*freed = 1;
+		mutex_unlock(&reclaim_lock);
+	} else {
+		atomic_set(&needs_reclaim, 1);
+		smp_mb__after_atomic();
+		if (waitqueue_active(&oom_waitq))
+			wake_up(&oom_waitq);
+	}
 
 	return NOTIFY_OK;
 }
@@ -506,7 +501,9 @@ static struct notifier_block oom_notif = {
 static int simple_lmk_vmpressure_cb(struct notifier_block *nb,
 				    unsigned long pressure, void *data)
 {
-	if (pressure == 100) {
+	if (pressure == 100 &&
+	    time_after_eq(jiffies, READ_ONCE(last_reclaim) +
+			  msecs_to_jiffies(CONFIG_ANDROID_SIMPLE_LMK_GRACE_MSEC))) {
 		atomic_set(&needs_reclaim, 1);
 		smp_mb__after_atomic();
 		if (waitqueue_active(&oom_waitq))

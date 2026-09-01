@@ -83,15 +83,25 @@ config ANDROID_SIMPLE_LMK_MINFREE
 	  Simple LMK will try to free at least this much memory per reclaim.
 
 config ANDROID_SIMPLE_LMK_TIMEOUT_MSEC
-	int "Reclaim timeout in milliseconds"
+	int "Reaper retry timeout in milliseconds"
 	range 50 1000
 	default 200
 	help
-	  Simple LMK tries to wait until all of the victims it kills have their
-	  memory freed; however, sometimes victims can take a while to die,
-	  which can block Simple LMK from killing more processes in time when
-	  needed. After the specified timeout elapses, Simple LMK will stop
-	  waiting and make itself available to kill more processes.
+	  Simple LMK's reaper tries to reap a victim's memory while its
+	  mmap_sem is contended.  If the memory still can't be reaped after
+	  this timeout, the reaper gives up and lets exit_mmap() handle it.
+	  This is also the maximum time the reaper waits for a victim that
+	  never yields mmap_sem, so it bounds how long reaping can take.
+
+config ANDROID_SIMPLE_LMK_GRACE_MSEC
+	int "Minimum interval between reclaims in milliseconds"
+	range 10 1000
+	default 100
+	help
+	  Simple LMK will not react to vmpressure notifications within this
+	  interval after a reclaim, to prevent over-killing while the reaper
+	  frees memory asynchronously.  The OOM notifier bypasses the grace
+	  period.
 
 endif
 
