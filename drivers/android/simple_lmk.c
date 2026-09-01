@@ -348,6 +348,15 @@ static struct mm_struct *next_reap_victim(void)
 		if (!mm || test_bit(MMF_OOM_SKIP, &mm->flags))
 			continue;
 
+		/*
+		 * Skip victims that haven't been killed yet. New victims are
+		 * published to this array before the reclaim thread sends them
+		 * SIGKILL, so a reaper left over from a timed-out reclaim must
+		 * not unmap a not-yet-dying victim's memory.
+		 */
+		if (!test_bit(MMF_OOM_VICTIM, &mm->flags))
+			continue;
+
 		/* Do a trylock so the reaper thread doesn't sleep */
 		if (!down_read_trylock(&mm->mmap_sem)) {
 			should_retry = true;
