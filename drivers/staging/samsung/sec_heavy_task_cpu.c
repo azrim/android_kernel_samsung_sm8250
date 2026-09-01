@@ -37,7 +37,7 @@ static ssize_t heavy_task_cpu_show(struct device *dev, struct device_attribute *
         struct task_struct *p = rq->curr;
 
         task_util = (unsigned long int)p->se.avg.util_avg;
-        cfs_load = (unsigned long int)rq->cfs.runnable_load_avg;
+        cfs_load = (unsigned long int)rq->cfs.runnable_avg;
         no_task = (unsigned long int)rq->cfs.h_nr_running;
 
         if (task_util > HEAVY_TASK_CPU_LOAD_THRESHOLD) {
