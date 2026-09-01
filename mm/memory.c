@@ -4176,8 +4176,10 @@ vm_fault_t handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
 	 * Enable the memcg OOM handling for faults triggered in user
 	 * space.  Kernel faults are handled more gracefully.
 	 */
-	if (flags & FAULT_FLAG_USER)
+	if (flags & FAULT_FLAG_USER) {
 		mem_cgroup_enter_user_fault();
+		vma->vm_mm->last_accessed = jiffies;
+	}
 
 	if (unlikely(is_vm_hugetlb_page(vma)))
 		ret = hugetlb_fault(vma->vm_mm, vma, address, flags);
