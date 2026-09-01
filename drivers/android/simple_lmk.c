@@ -525,18 +525,45 @@ static struct notifier_block vmpressure_notif = {
 static int simple_lmk_init_set(const char *val, const struct kernel_param *kp)
 {
 	static atomic_t init_done = ATOMIC_INIT(0);
-	struct task_struct *thread;
+	struct task_struct *reaper, *reclaim;
 
 	if (!atomic_cmpxchg(&init_done, 0, 1)) {
-		thread = kthread_run(simple_lmk_reaper_thread, NULL,
+		reaper = kthread_run(simple_lmk_reaper_thread, NULL,
 				     "simple_lmkd_reaper");
-		BUG_ON(IS_ERR(thread));
-		thread = kthread_run(simple_lmk_reclaim_thread, NULL,
-				     "simple_lmkd");
-		BUG_ON(IS_ERR(thread));
-		BUG_ON(vmpressure_notifier_register(&vmpressure_notif));
+		if (IS_ERR(reaper)) {
+			pr_err("Failed to create reaper thread: %ld\n",
+			       PTR_ERR(reaper));
+			atomic_set(&init_done, 0);
+			return 0;
+		}
+
+		reclaim = kthread_run(simple_lmk_reclaim_thread, NULL,
+				      "simple_lmkd");
+		if (IS_ERR(reclaim)) {
+			pr_err("Failed to create reclaim thread: %ld\n",
+			       PTR_ERR(reclaim));
+			kthread_stop(reaper);
+			atomic_set(&init_done, 0);
+			return 0;
+		}
+
+		if (vmpressure_notifier_register(&vmpressure_notif)) {
+			pr_err("Failed to register vmpressure notifier\n");
+			goto err_stop_threads;
+		}
+		if (register_oom_notifier(&oom_notif)) {
+			pr_err("Failed to register OOM notifier\n");
+			vmpressure_notifier_unregister(&vmpressure_notif);
+			goto err_stop_threads;
+		}
 	}
 
+	return 0;
+
+err_stop_threads:
+	kthread_stop(reaper);
+	kthread_stop(reclaim);
+	atomic_set(&init_done, 0);
 	return 0;
 }
 
