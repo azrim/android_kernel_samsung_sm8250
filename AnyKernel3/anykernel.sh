@@ -4,7 +4,7 @@
 ## AnyKernel setup
 # begin properties
 properties() { '
-kernel.string=Kernel for S20 FE (Snapdragon) by pascua28 @ xda-developers
+kernel.string=Solvege Kernel for Galaxy S20 FE 5G (SM8250) by azrim
 do.devicecheck=1
 do.modules=0
 do.systemless=1
