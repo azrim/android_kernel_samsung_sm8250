@@ -59,6 +59,24 @@ static void victim_swap(void *lhs_ptr, void *rhs_ptr, int size)
 	swap(*lhs, *rhs);
 }
 
+static unsigned long get_time_decayed_anon_pages(struct mm_struct *mm)
+{
+	unsigned long anon_pages = get_mm_counter(mm, MM_ANONPAGES);
+	unsigned long age = jiffies - READ_ONCE(mm->last_accessed);
+	unsigned long decay = msecs_to_jiffies(CONFIG_ANDROID_SIMPLE_LMK_DECAY_MSEC);
+
+	/*
+	 * Decay the victim's anonymous pages by how recently they were
+	 * accessed.  Processes holding cold (stale) anonymous memory are
+	 * prioritized as victims over processes that are actively touching
+	 * their memory, since reclaiming the former is less disruptive.
+	 */
+	if (age < decay)
+		anon_pages = anon_pages * age / decay;
+
+	return anon_pages;
+}
+
 static unsigned long get_reclaimable_mm_pages(struct mm_struct *mm)
 {
 	/*
@@ -66,7 +84,7 @@ static unsigned long get_reclaimable_mm_pages(struct mm_struct *mm)
 	 * and swap-backed pages survive the kill, so they must not inflate the
 	 * victim's size when deciding how much memory a reclaim frees.
 	 */
-	return get_mm_counter(mm, MM_ANONPAGES) +
+	return get_time_decayed_anon_pages(mm) +
 	       get_mm_counter(mm, MM_FILEPAGES);
 }
 

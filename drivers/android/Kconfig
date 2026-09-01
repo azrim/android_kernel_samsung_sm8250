@@ -103,6 +103,16 @@ config ANDROID_SIMPLE_LMK_GRACE_MSEC
 	  frees memory asynchronously.  The OOM notifier bypasses the grace
 	  period.
 
+config ANDROID_SIMPLE_LMK_DECAY_MSEC
+	int "Time-decay window for anonymous pages in milliseconds"
+	range 100 10000
+	default 1000
+	help
+	  Anonymous pages of a victim that were accessed within this window
+	  are decayed proportionally, so that processes holding cold (stale)
+	  anonymous memory are prioritized as victims over processes that are
+	  actively touching their memory.
+
 endif
 
 config ANDROID_KABI_RESERVE
