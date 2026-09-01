@@ -32,6 +32,9 @@ build_kernel() {
     export HOSTCFLAGS="-idirafter ${HOME}/.local/include"
     export HOSTCXXFLAGS="-idirafter ${HOME}/.local/include"
     export HOSTLDFLAGS="-B${HOME}/.local/lib -L${HOME}/.local/lib"
+    export CCACHE_DIR="${HOME}/.cache/ccache"
+    export CCACHE_MAXSIZE="50G"
+    export CCACHE_SLOPPINESS="file_macro,time_macros,include_file_mtime,include_file_ctime"
     export CC="ccache clang"
     export CXX="ccache clang++"
     export HOSTCC="ccache clang"
@@ -53,7 +56,7 @@ CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
 CONFIG_LOCALVERSION="-Solvege"
 EOF
 
-    make $BUILD_VAR temp_defconfig
+    make CC="ccache clang" CXX="ccache clang++" HOSTCC="ccache clang" HOSTCXX="ccache clang++" $BUILD_VAR temp_defconfig
     rm arch/arm64/configs/temp_defconfig
 }
 
@@ -61,8 +64,8 @@ build_dtb() {
     echo "-----------------------------------------------"
     echo "Building kernel and dtb..."
     echo "-----------------------------------------------"
-    make $BUILD_VAR
-    make $BUILD_VAR dtbs
+    make CC="ccache clang" CXX="ccache clang++" HOSTCC="ccache clang" HOSTCXX="ccache clang++" $BUILD_VAR
+    make CC="ccache clang" CXX="ccache clang++" HOSTCC="ccache clang" HOSTCXX="ccache clang++" $BUILD_VAR dtbs
 
     if [ ! -f "$(pwd)/out/arch/arm64/boot/Image" ]; then
         echo "❌ Error: Kernel Image compilation failed! File out/arch/arm64/boot/Image does not exist."
