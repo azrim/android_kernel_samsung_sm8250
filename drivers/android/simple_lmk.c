@@ -326,7 +326,11 @@ static int simple_lmk_reclaim_thread(void *data)
 	set_freezable();
 
 	while (1) {
-		wait_event_freezable(oom_waitq, atomic_read(&needs_reclaim));
+		wait_event_freezable(oom_waitq,
+				     kthread_should_stop() ||
+				     atomic_read(&needs_reclaim));
+		if (kthread_should_stop())
+			break;
 		scan_and_kill();
 		atomic_set(&needs_reclaim, 0);
 	}
@@ -437,7 +441,10 @@ static int simple_lmk_reaper_thread(void *data)
 
 	while (1) {
 		wait_event_freezable(reaper_waitq,
+				     kthread_should_stop() ||
 				     atomic_cmpxchg_relaxed(&needs_reap, 1, 0));
+		if (kthread_should_stop())
+			break;
 		reap_victims();
 	}
 
