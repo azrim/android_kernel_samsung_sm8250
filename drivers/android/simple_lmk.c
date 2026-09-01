@@ -481,6 +481,28 @@ void simple_lmk_mm_freed(struct mm_struct *mm)
 	read_unlock(&mm_free_lock);
 }
 
+static int simple_lmk_oom_cb(struct notifier_block *nb,
+			     unsigned long action, void *data)
+{
+	/*
+	 * The kernel OOM killer is about to kill. Trigger a reclaim in
+	 * simple_lmk so that the least important processes are killed instead
+	 * of whatever the OOM killer picks, but let the OOM killer proceed as
+	 * a fallback in case there are no suitable victims.
+	 */
+	atomic_set(&needs_reclaim, 1);
+	smp_mb__after_atomic();
+	if (waitqueue_active(&oom_waitq))
+		wake_up(&oom_waitq);
+
+	return NOTIFY_OK;
+}
+
+static struct notifier_block oom_notif = {
+	.notifier_call = simple_lmk_oom_cb,
+	.priority = INT_MAX
+};
+
 static int simple_lmk_vmpressure_cb(struct notifier_block *nb,
 				    unsigned long pressure, void *data)
 {
