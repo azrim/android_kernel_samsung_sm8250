@@ -397,13 +397,25 @@ static struct mm_struct *next_reap_victim(void)
 static void reap_victims(void)
 {
 	struct mm_struct *mm;
+	int retries = 0;
 
 	while ((mm = next_reap_victim())) {
 		if (IS_ERR(mm)) {
+			/*
+			 * Give up after the reclaim timeout if the victims'
+			 * mmap_sem stays contended; exit_mmap() will reap them
+			 * when they die.  Bounding the retry prevents a stuck
+			 * victim from keeping the reaper spinning forever.
+			 */
+			if (++retries >= RECLAIM_EXPIRES)
+				break;
 			/* Wait one jiffy before trying to reap again */
 			schedule_timeout_uninterruptible(1);
 			continue;
 		}
+
+		/* Reset the retry counter on a successful reap */
+		retries = 0;
 
 		/*
 		 * Try to reap the victim. Unflag the mm for exit_mmap() reaping
