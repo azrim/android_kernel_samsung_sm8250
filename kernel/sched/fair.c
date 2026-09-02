@@ -8003,7 +8003,8 @@ compute_energy(struct task_struct *p, int dst_cpu, struct perf_domain *pd)
 
 			cpu_util = sugov_effective_cpu_perf(cpu, cpu_util, min, max);
 #endif
-			max_util = max(max_util, min_t(unsigned long, cpu_util, _cpu_cap));
+			max_util = max_t(unsigned long, max_util, cpu_util);
+			max_util = min_t(unsigned long, max_util, _cpu_cap);
 		}
 
 		energy += em_pd_energy(pd->em_pd, max_util, sum_util, _cpu_cap);
