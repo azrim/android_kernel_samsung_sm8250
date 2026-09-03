@@ -9,7 +9,6 @@
 #include <linux/kthread.h>
 #include <linux/mm.h>
 #include <linux/sort.h>
-#include <linux/swap.h>
 #include <linux/moduleparam.h>
 #include <linux/mutex.h>
 #include <linux/oom.h>
@@ -18,11 +17,8 @@
 #include <linux/psi_types.h>
 #include <uapi/linux/sched/types.h>
 
-/* The floor for the number of pages to free per reclaim */
+/* The minimum number of pages to free per reclaim */
 #define MIN_FREE_PAGES (CONFIG_ANDROID_SIMPLE_LMK_MINFREE * SZ_1M / PAGE_SIZE)
-
-/* The ceiling for the number of pages to free per reclaim */
-#define MAX_FREE_PAGES (256 * SZ_1M / PAGE_SIZE)
 
 /* Kill up to this many victims per reclaim */
 #define MAX_VICTIMS 1024
@@ -30,8 +26,13 @@
 /* Timeout in jiffies for each reclaim */
 #define RECLAIM_EXPIRES msecs_to_jiffies(CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC)
 
-/* Reclaim when memory stalls exceed 50% of a 1s window */
-#define PSI_MEM_SPEC "some 50 1000000"
+/*
+ * Reclaim only on sustained, system-wide memory stalls: a single app's
+ * cold-start refault storm must not trigger kills of other apps, so
+ * require 70% of a 2s window in memstall. Events are rate-limited to
+ * one per window by the PSI trigger itself.
+ */
+#define PSI_MEM_SPEC "some 70 2000000"
 
 struct victim_info {
 	struct task_struct *tsk;
@@ -69,51 +70,31 @@ static void victim_swap(void *lhs_ptr, void *rhs_ptr, int size)
 	swap(*lhs, *rhs);
 }
 
-static unsigned long get_time_decayed_anon_pages(struct mm_struct *mm)
+static unsigned long get_reclaimable_mm_pages(struct mm_struct *mm)
 {
 	unsigned long anon_pages = get_mm_counter(mm, MM_ANONPAGES);
+	unsigned long swap_pages = get_mm_counter(mm, MM_SWAPENTS);
 	unsigned long age = jiffies - READ_ONCE(mm->last_accessed);
 	unsigned long decay = msecs_to_jiffies(CONFIG_ANDROID_SIMPLE_LMK_DECAY_MSEC);
 
 	/*
-	 * Decay the victim's anonymous pages by how recently they were
-	 * accessed.  Processes holding cold (stale) anonymous memory are
-	 * prioritized as victims over processes that are actively touching
-	 * their memory, since reclaiming the former is less disruptive.
+	 * Decay resident and swapped-out anonymous pages by how recently
+	 * the mm was accessed. Processes holding cold (stale) anonymous
+	 * memory are prioritized as victims over processes that are
+	 * actively touching their memory. This deliberately discounts the
+	 * swap of a recently foregrounded app: it is the likeliest to be
+	 * reopened, and killing it then only causes a reload stall.
 	 */
-	if (age < decay)
+	if (age < decay) {
 		anon_pages = anon_pages * age / decay;
+		swap_pages = swap_pages * age / decay;
+	}
 
-	return anon_pages;
-}
-
-static unsigned long get_reclaimable_mm_pages(struct mm_struct *mm)
-{
 	/*
-	 * Count the pages that killing this task frees: its resident
-	 * anonymous pages, its swapped-out pages (freeing zram slots
-	 * returns real RAM), and its mapped file pages, which survive the
-	 * kill in page cache but become unmapped and thus reclaimable by
-	 * normal reclaim.
+	 * Mapped file pages survive the kill in page cache but become
+	 * unmapped and thus reclaimable by normal reclaim.
 	 */
-	return get_time_decayed_anon_pages(mm) +
-	       get_mm_counter(mm, MM_FILEPAGES) +
-	       get_mm_counter(mm, MM_SWAPENTS);
-}
-
-/*
- * Scale the reclaim target with how deep into swap the system already is:
- * the more memory has been compressed into zram, the more urgent it is to
- * kill processes to relieve real memory pressure. Clamped to
- * [MIN_FREE_PAGES, MAX_FREE_PAGES].
- */
-static unsigned long reclaim_target_pages(void)
-{
-	unsigned long swap_used = total_swap_pages -
-				  atomic_long_read(&nr_swap_pages);
-
-	return clamp_t(unsigned long, swap_used / 10, MIN_FREE_PAGES,
-		       MAX_FREE_PAGES);
+	return anon_pages + swap_pages + get_mm_counter(mm, MM_FILEPAGES);
 }
 
 static unsigned long find_victims(int *vindex, unsigned long target)
@@ -248,7 +229,7 @@ static void set_task_rt_prio(struct task_struct *tsk, int priority)
 static unsigned long scan_and_kill(void)
 {
 	int i, nr_to_kill, nr_found = 0;
-	unsigned long pages_found, target = reclaim_target_pages();
+	unsigned long pages_found, target = MIN_FREE_PAGES;
 
 	/*
 	 * Reset nr_victims so the reaper thread and simple_lmk_mm_freed() are
