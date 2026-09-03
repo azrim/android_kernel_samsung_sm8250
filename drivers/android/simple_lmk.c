@@ -8,22 +8,30 @@
 #include <linux/freezer.h>
 #include <linux/kthread.h>
 #include <linux/mm.h>
+#include <linux/sort.h>
+#include <linux/swap.h>
 #include <linux/moduleparam.h>
 #include <linux/mutex.h>
 #include <linux/oom.h>
 #include <linux/sched/mm.h>
-#include <linux/sort.h>
-#include <linux/vmpressure.h>
+#include <linux/psi.h>
+#include <linux/psi_types.h>
 #include <uapi/linux/sched/types.h>
 
-/* The minimum number of pages to free per reclaim */
+/* The floor for the number of pages to free per reclaim */
 #define MIN_FREE_PAGES (CONFIG_ANDROID_SIMPLE_LMK_MINFREE * SZ_1M / PAGE_SIZE)
+
+/* The ceiling for the number of pages to free per reclaim */
+#define MAX_FREE_PAGES (256 * SZ_1M / PAGE_SIZE)
 
 /* Kill up to this many victims per reclaim */
 #define MAX_VICTIMS 1024
 
 /* Timeout in jiffies for each reclaim */
 #define RECLAIM_EXPIRES msecs_to_jiffies(CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC)
+
+/* Reclaim when memory stalls exceed 50% of a 1s window */
+#define PSI_MEM_SPEC "some 50 1000000"
 
 struct victim_info {
 	struct task_struct *tsk;
@@ -35,11 +43,13 @@ static struct victim_info victims[MAX_VICTIMS] __cacheline_aligned_in_smp;
 static struct task_struct *task_bucket[SHRT_MAX + 1] __cacheline_aligned;
 static DECLARE_WAIT_QUEUE_HEAD(oom_waitq);
 static DECLARE_WAIT_QUEUE_HEAD(reaper_waitq);
+static struct psi_trigger *mem_trigger;
+static wait_queue_head_t *reclaim_waitq = &oom_waitq;
+
 static __cacheline_aligned_in_smp DEFINE_RWLOCK(mm_free_lock);
 static int nr_victims;
 static bool reclaim_active;
 static DEFINE_MUTEX(reclaim_lock);
-static unsigned long last_reclaim;
 static atomic_t needs_reclaim = ATOMIC_INIT(0);
 static atomic_t needs_reap = ATOMIC_INIT(0);
 
@@ -80,15 +90,33 @@ static unsigned long get_time_decayed_anon_pages(struct mm_struct *mm)
 static unsigned long get_reclaimable_mm_pages(struct mm_struct *mm)
 {
 	/*
-	 * Count only the pages that killing this task actually frees. Shared
-	 * and swap-backed pages survive the kill, so they must not inflate the
-	 * victim's size when deciding how much memory a reclaim frees.
+	 * Count the pages that killing this task frees: its resident
+	 * anonymous pages, its swapped-out pages (freeing zram slots
+	 * returns real RAM), and its mapped file pages, which survive the
+	 * kill in page cache but become unmapped and thus reclaimable by
+	 * normal reclaim.
 	 */
 	return get_time_decayed_anon_pages(mm) +
-	       get_mm_counter(mm, MM_FILEPAGES);
+	       get_mm_counter(mm, MM_FILEPAGES) +
+	       get_mm_counter(mm, MM_SWAPENTS);
 }
 
-static unsigned long find_victims(int *vindex)
+/*
+ * Scale the reclaim target with how deep into swap the system already is:
+ * the more memory has been compressed into zram, the more urgent it is to
+ * kill processes to relieve real memory pressure. Clamped to
+ * [MIN_FREE_PAGES, MAX_FREE_PAGES].
+ */
+static unsigned long reclaim_target_pages(void)
+{
+	unsigned long swap_used = total_swap_pages -
+				  atomic_long_read(&nr_swap_pages);
+
+	return clamp_t(unsigned long, swap_used / 10, MIN_FREE_PAGES,
+		       MAX_FREE_PAGES);
+}
+
+static unsigned long find_victims(int *vindex, unsigned long target)
 {
 	short i, min_adj = SHRT_MAX, max_adj = 0;
 	unsigned long pages_found = 0;
@@ -170,7 +198,7 @@ static unsigned long find_victims(int *vindex)
 		     sizeof(*victims), victim_cmp, victim_swap);
 
 		/* Stop when we are out of space or have enough pages found */
-		if (*vindex == MAX_VICTIMS || pages_found >= MIN_FREE_PAGES) {
+		if (*vindex == MAX_VICTIMS || pages_found >= target) {
 			/* Zero out any remaining buckets we didn't touch */
 			if (i > min_adj)
 				memset(&task_bucket[min_adj], 0,
@@ -183,7 +211,7 @@ static unsigned long find_victims(int *vindex)
 	return pages_found;
 }
 
-static int process_victims(int vlen)
+static int process_victims(int vlen, unsigned long target)
 {
 	unsigned long pages_found = 0;
 	int i, nr_to_kill = 0;
@@ -197,7 +225,7 @@ static int process_victims(int vlen)
 		struct task_struct *vtsk = victim->tsk;
 
 		/* The victim's mm lock is taken in find_victims; release it */
-		if (pages_found >= MIN_FREE_PAGES) {
+		if (pages_found >= target) {
 			task_unlock(vtsk);
 		} else {
 			pages_found += victim->size;
@@ -220,7 +248,7 @@ static void set_task_rt_prio(struct task_struct *tsk, int priority)
 static unsigned long scan_and_kill(void)
 {
 	int i, nr_to_kill, nr_found = 0;
-	unsigned long pages_found;
+	unsigned long pages_found, target = reclaim_target_pages();
 
 	/*
 	 * Reset nr_victims so the reaper thread and simple_lmk_mm_freed() are
@@ -231,16 +259,16 @@ static unsigned long scan_and_kill(void)
 	write_unlock(&mm_free_lock);
 
 	/* Populate the victims array with tasks sorted by adj and then size */
-	pages_found = find_victims(&nr_found);
+	pages_found = find_victims(&nr_found, target);
 	if (unlikely(!nr_found)) {
 		pr_err_ratelimited("No processes available to kill!\n");
 		return 0;
 	}
 
 	/* Minimize the number of victims if we found more pages than needed */
-	if (pages_found > MIN_FREE_PAGES) {
+	if (pages_found > target) {
 		/* First round of processing to weed out unneeded victims */
-		nr_to_kill = process_victims(nr_found);
+		nr_to_kill = process_victims(nr_found, target);
 
 		/*
 		 * Try to kill as few of the chosen victims as possible by
@@ -252,7 +280,7 @@ static unsigned long scan_and_kill(void)
 		     victim_swap);
 
 		/* Second round of processing to finally select the victims */
-		nr_to_kill = process_victims(nr_to_kill);
+		nr_to_kill = process_victims(nr_to_kill, target);
 	} else {
 		/* Too few pages found, so all the victims need to be killed */
 		nr_to_kill = nr_found;
@@ -327,8 +355,14 @@ static unsigned long scan_and_kill(void)
 	if (waitqueue_active(&reaper_waitq))
 		wake_up(&reaper_waitq);
 
-	WRITE_ONCE(last_reclaim, jiffies);
 	return pages_found;
+}
+
+static bool reclaim_needed(void)
+{
+	if (mem_trigger && cmpxchg(&mem_trigger->event, 1, 0))
+		return true;
+	return atomic_cmpxchg_relaxed(&needs_reclaim, 1, 0);
 }
 
 static int simple_lmk_reclaim_thread(void *data)
@@ -338,9 +372,8 @@ static int simple_lmk_reclaim_thread(void *data)
 	set_freezable();
 
 	while (1) {
-		wait_event_freezable(oom_waitq,
-				     kthread_should_stop() ||
-				     atomic_cmpxchg_relaxed(&needs_reclaim, 1, 0));
+		wait_event_freezable(*reclaim_waitq,
+				     kthread_should_stop() || reclaim_needed());
 		if (kthread_should_stop())
 			break;
 		if (mutex_trylock(&reclaim_lock)) {
@@ -504,8 +537,8 @@ static int simple_lmk_oom_cb(struct notifier_block *nb,
 	} else {
 		atomic_set(&needs_reclaim, 1);
 		smp_mb__after_atomic();
-		if (waitqueue_active(&oom_waitq))
-			wake_up(&oom_waitq);
+		if (waitqueue_active(reclaim_waitq))
+			wake_up(reclaim_waitq);
 	}
 
 	return NOTIFY_OK;
@@ -516,25 +549,6 @@ static struct notifier_block oom_notif = {
 	.priority = INT_MAX
 };
 
-static int simple_lmk_vmpressure_cb(struct notifier_block *nb,
-				    unsigned long pressure, void *data)
-{
-	if (pressure == 100 &&
-	    time_after_eq(jiffies, READ_ONCE(last_reclaim) +
-			  msecs_to_jiffies(CONFIG_ANDROID_SIMPLE_LMK_GRACE_MSEC))) {
-		atomic_set(&needs_reclaim, 1);
-		smp_mb__after_atomic();
-		if (waitqueue_active(&oom_waitq))
-			wake_up(&oom_waitq);
-	}
-
-	return NOTIFY_OK;
-}
-
-static struct notifier_block vmpressure_notif = {
-	.notifier_call = simple_lmk_vmpressure_cb,
-	.priority = INT_MAX
-};
 
 /* Initialize Simple LMK when lmkd in Android writes to the minfree parameter */
 static int simple_lmk_init_set(const char *val, const struct kernel_param *kp)
@@ -542,42 +556,47 @@ static int simple_lmk_init_set(const char *val, const struct kernel_param *kp)
 	static atomic_t init_done = ATOMIC_INIT(0);
 	struct task_struct *reaper, *reclaim;
 
-	if (!atomic_cmpxchg(&init_done, 0, 1)) {
-		reaper = kthread_run(simple_lmk_reaper_thread, NULL,
-				     "simple_lmkd_reaper");
-		if (IS_ERR(reaper)) {
-			pr_err("Failed to create reaper thread: %ld\n",
-			       PTR_ERR(reaper));
-			atomic_set(&init_done, 0);
-			return 0;
-		}
+	if (atomic_cmpxchg(&init_done, 0, 1))
+		return 0;
 
-		reclaim = kthread_run(simple_lmk_reclaim_thread, NULL,
-				      "simple_lmkd");
-		if (IS_ERR(reclaim)) {
-			pr_err("Failed to create reclaim thread: %ld\n",
-			       PTR_ERR(reclaim));
-			kthread_stop(reaper);
-			atomic_set(&init_done, 0);
-			return 0;
-		}
+	mem_trigger = psi_trigger_create(&psi_system, PSI_MEM_SPEC,
+					 sizeof(PSI_MEM_SPEC) - 1, PSI_MEM);
+	if (IS_ERR(mem_trigger)) {
+		pr_err("Failed to create PSI trigger: %ld; relying on OOM notifications only\n",
+		       PTR_ERR(mem_trigger));
+		mem_trigger = NULL;
+	} else {
+		reclaim_waitq = &mem_trigger->event_wait;
+	}
 
-		if (vmpressure_notifier_register(&vmpressure_notif)) {
-			pr_err("Failed to register vmpressure notifier\n");
-			goto err_stop_threads;
-		}
-		if (register_oom_notifier(&oom_notif)) {
-			pr_err("Failed to register OOM notifier\n");
-			vmpressure_notifier_unregister(&vmpressure_notif);
-			goto err_stop_threads;
-		}
+	reaper = kthread_run(simple_lmk_reaper_thread, NULL,
+			     "simple_lmkd_reaper");
+	if (IS_ERR(reaper)) {
+		pr_err("Failed to create reaper thread: %ld\n", PTR_ERR(reaper));
+		goto err_trigger;
+	}
+
+	reclaim = kthread_run(simple_lmk_reclaim_thread, NULL, "simple_lmkd");
+	if (IS_ERR(reclaim)) {
+		pr_err("Failed to create reclaim thread: %ld\n",
+		       PTR_ERR(reclaim));
+		kthread_stop(reaper);
+		goto err_trigger;
+	}
+
+	if (register_oom_notifier(&oom_notif)) {
+		pr_err("Failed to register OOM notifier\n");
+		kthread_stop(reaper);
+		kthread_stop(reclaim);
+		goto err_trigger;
 	}
 
 	return 0;
 
-err_stop_threads:
-	kthread_stop(reaper);
-	kthread_stop(reclaim);
+err_trigger:
+	psi_trigger_destroy(mem_trigger);
+	mem_trigger = NULL;
+	reclaim_waitq = &oom_waitq;
 	atomic_set(&init_done, 0);
 	return 0;
 }
