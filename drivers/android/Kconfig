@@ -65,13 +65,13 @@ config ANDROID_VENDOR_HOOKS
 config ANDROID_SIMPLE_LMK
 	bool "Simple Android Low Memory Killer"
 	depends on !ANDROID_LOW_MEMORY_KILLER
+	select PSI
 	---help---
 	  This is a complete low memory killer solution for Android that is
 	  small and simple. Processes are killed according to the priorities
 	  that Android gives them, so that the least important processes are
 	  always killed first. Processes are killed until memory deficits are
-	  satisfied, as observed from direct reclaim and kswapd reclaim
-	  struggling to free up pages, via VM pressure notifications.
+	  satisfied, as observed from memory pressure stalls via PSI.
 
 if ANDROID_SIMPLE_LMK
 
@@ -92,16 +92,6 @@ config ANDROID_SIMPLE_LMK_TIMEOUT_MSEC
 	  this timeout, the reaper gives up and lets exit_mmap() handle it.
 	  This is also the maximum time the reaper waits for a victim that
 	  never yields mmap_sem, so it bounds how long reaping can take.
-
-config ANDROID_SIMPLE_LMK_GRACE_MSEC
-	int "Minimum interval between reclaims in milliseconds"
-	range 10 1000
-	default 100
-	help
-	  Simple LMK will not react to vmpressure notifications within this
-	  interval after a reclaim, to prevent over-killing while the reaper
-	  frees memory asynchronously.  The OOM notifier bypasses the grace
-	  period.
 
 config ANDROID_SIMPLE_LMK_DECAY_MSEC
 	int "Time-decay window for anonymous pages in milliseconds"
