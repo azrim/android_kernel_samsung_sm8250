@@ -35,10 +35,11 @@ build_kernel() {
     export CCACHE_DIR="${HOME}/.cache/ccache"
     export CCACHE_MAXSIZE="50G"
     export CCACHE_SLOPPINESS="file_macro,time_macros,include_file_mtime,include_file_ctime"
-    # hard_link makes ccache hardlink its cache into .tmp_<file>.o; when a
-    # recompile hardlinks the SAME cache inode again, `mv -f .tmp_$(@F) $@`
-    # fails with "are the same file" (seen on arch/arm64/kernel/signal32.o).
-    export CCACHE_NOHARDLINK="true"
+    # CCACHE_HARDLINK=1 leaks in from the shell rc and forces hard_link=true
+    # in ccache 4.x (CCACHE_NOHARDLINK was removed in 4.0). Hardlinked cache
+    # entries into .tmp_<file>.o make `mv -f .tmp_$(@F) $@` fail with "are the
+    # same file" on recompiles (seen on signal32.o, fallback_table.o).
+    unset CCACHE_HARDLINK
     export CC="ccache clang"
     export CXX="ccache clang++"
     export HOSTCC="ccache clang"
