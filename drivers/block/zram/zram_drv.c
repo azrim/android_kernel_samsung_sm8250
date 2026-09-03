@@ -2298,11 +2298,29 @@ static void zram_auto_compact_work(struct work_struct *work)
 {
 	struct zram *zram = container_of(to_delayed_work(work),
 			struct zram, compact_work);
+	unsigned long interval = msecs_to_jiffies(60000);
+	unsigned long total_before, total_after;
 
-	if (init_done(zram) && zram->mem_pool)
+	if (init_done(zram) && zram->mem_pool) {
+		total_before = zs_get_total_pages(zram->mem_pool);
 		zs_compact(zram->mem_pool);
+		total_after = zs_get_total_pages(zram->mem_pool);
 
-	schedule_delayed_work(&zram->compact_work, msecs_to_jiffies(60000));
+		/* Adaptive interval: compact frequently while compaction
+		 * yields pages (fragmentation present), back off when it
+		 * doesn't. Under high pool usage (>= 90% of disksize)
+		 * compact as aggressively as possible.
+		 */
+		if (total_after < total_before)
+			interval = msecs_to_jiffies(30000);
+		else
+			interval = msecs_to_jiffies(300000);
+
+		if (total_after > (zram->disksize >> PAGE_SHIFT) * 9 / 10)
+			interval = min(interval, msecs_to_jiffies(10000));
+	}
+
+	schedule_delayed_work(&zram->compact_work, interval);
 }
 
 static ssize_t io_stat_show(struct device *dev,
@@ -2846,6 +2864,22 @@ compress_again:
 	if (!entry) {
 		zcomp_stream_put(zram->comp);
 		atomic64_inc(&zram->stats.writestall);
+		entry = zram_entry_alloc(zram, comp_len,
+				GFP_NOIO | __GFP_HIGHMEM |
+				__GFP_MOVABLE | __GFP_CMA);
+		if (entry) {
+			if (comp_len == PAGE_SIZE) {
+				zstrm = zcomp_stream_get(zram->comp);
+				goto alloced_entry;
+			}
+			goto compress_again;
+		}
+		/*
+		 * Pool may be fragmented. Compact and retry once before
+		 * giving up — a failed swap write forces page eviction
+		 * and can cause trashing.
+		 */
+		zs_compact(zram->mem_pool);
 		entry = zram_entry_alloc(zram, comp_len,
 				GFP_NOIO | __GFP_HIGHMEM |
 				__GFP_MOVABLE | __GFP_CMA);
