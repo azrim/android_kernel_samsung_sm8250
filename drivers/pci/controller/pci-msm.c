@@ -9142,7 +9142,7 @@ static int msm_pcie_drv_suspend(struct msm_pcie_dev_t *pcie_dev,
 	mutex_lock(&pcie_dev->setup_lock);
 	pcie_dev->link_status = MSM_PCIE_LINK_DRV;
 
-	PCIE_ERR(pcie_dev, "PCIe: RC%d: prevnet_l1=%d LTSSM_STATE=:%s\n",
+	PCIE_DBG(pcie_dev, "PCIe: RC%d: prevnet_l1=%d LTSSM_STATE=:%s\n",
 			pcie_dev->rc_idx, 
 			pcie_dev->prevent_l1,
 			TO_LTSSM_STR(readl_relaxed(pcie_dev->parf + PCIE20_PARF_LTSSM) & 0x3f));
