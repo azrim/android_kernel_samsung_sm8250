@@ -1662,7 +1662,7 @@ static void __ref cdev_print(struct work_struct *work)
 	}
 	mutex_unlock(&thermal_list_lock);
 
-	pr_info("thermal: cdev%s\n", buffer);
+	pr_debug("thermal: cdev%s\n", buffer);
 
 	schedule_delayed_work(&cdev_print_work, HZ * 5);
 }
