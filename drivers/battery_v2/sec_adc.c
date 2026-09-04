@@ -12,7 +12,7 @@
 
 #include "include/sec_adc.h"
 
-#define DEBUG
+/* #define DEBUG */
 
 struct adc_list {
 	const char *name;

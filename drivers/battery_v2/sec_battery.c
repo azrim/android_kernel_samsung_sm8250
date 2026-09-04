@@ -7449,7 +7449,7 @@ static int sec_bat_get_property(struct power_supply *psy,
 		} else {
 			val->intval = battery->cable_type;
 		}
-		pr_info("%s cable type = %d sleep_mode = %d\n", __func__, val->intval, sleep_mode);
+		pr_debug("%s cable type = %d sleep_mode = %d\n", __func__, val->intval, sleep_mode);
 		break;
 	case POWER_SUPPLY_PROP_TECHNOLOGY:
 		val->intval = battery->pdata->technology;
