@@ -78,12 +78,12 @@ if ANDROID_SIMPLE_LMK
 config ANDROID_SIMPLE_LMK_PSI_THRESHOLD_US
 	int "PSI memory stall threshold in microseconds"
 	range 1000 10000000
-	default 70000
+	default 150000
 	help
 	  Simple LMK reclaims once per PSI window in which at least this many
 	  microseconds were spent stalled on memory. This is an ABSOLUTE
-	  duration, not a percentage: 70000 over the default 2s window means
-	  3.5%. Both values are writable at runtime under
+	  duration, not a percentage: 150000 over the default 2s window means
+	  7.5%. Both values are writable at runtime under
 	  /sys/module/simple_lmk/parameters/ to tune the trigger.
 
 config ANDROID_SIMPLE_LMK_PSI_WINDOW_US
