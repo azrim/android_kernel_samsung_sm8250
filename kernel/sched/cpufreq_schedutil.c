@@ -118,15 +118,9 @@ static bool sugov_should_update_freq(struct sugov_policy *sg_policy, u64 time)
 		return true;
 	}
 
-	/*
-	 * When frequency-invariant utilization tracking is present, there's no
-	 * rate limit when increasing frequency. Therefore, the next frequency
-	 * must be determined before a decision can be made to rate limit the
-	 * frequency change, hence the rate limit check is bypassed here.
+	/* Rate-limit frequency increases even with invariant tracking to
+	 * avoid pinning at max while idle.
 	 */
-	if (arch_scale_freq_invariant())
-		return true;
-
 	return !sugov_should_rate_limit(sg_policy, time);
 }
 
@@ -447,8 +441,8 @@ static bool sugov_iowait_reset(struct sugov_cpu *sg_cpu, u64 time,
 {
 	s64 delta_ns = time - sg_cpu->last_update;
 
-	/* Reset boost only if a tick has elapsed since last request */
-	if (delta_ns <= TICK_NSEC)
+	/* Use half tick for iowait boost reset to allow faster decay at idle. */
+	if (delta_ns <= (TICK_NSEC >> 1))
 		return false;
 
 	sg_cpu->iowait_boost = set_iowait_boost ? IOWAIT_BOOST_MIN : 0;
