@@ -521,6 +521,12 @@ static bool reclaim_needed(int *adj_floor)
 		ulmk_watchdog_pet(&t->wdog_timer);
 	mutex_unlock(&slmk_lock);
 
+	/* Avoid PSI thrash when memory is still available (>1GB).
+	 * PSI can fire with 2.7GB available at boot.
+	 */
+	if (needed && si_mem_available() > (1UL << (30 - PAGE_SHIFT)))
+		return false;
+
 	return needed;
 }
 
