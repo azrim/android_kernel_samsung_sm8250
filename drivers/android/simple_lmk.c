@@ -17,60 +17,147 @@
 #include <linux/psi_types.h>
 #include <uapi/linux/sched/types.h>
 
-/* The minimum number of pages to free per reclaim */
-#define MIN_FREE_PAGES (CONFIG_ANDROID_SIMPLE_LMK_MINFREE * SZ_1M / PAGE_SIZE)
-
-/* Kill up to this many victims per reclaim */
-#define MAX_VICTIMS 1024
+/* Consider at most this many victims per reclaim */
+#define MAX_VICTIMS 256
 
 /* Timeout in jiffies for each reclaim */
 #define RECLAIM_EXPIRES msecs_to_jiffies(CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC)
 
 /*
- * Reclaim only on sustained, system-wide memory stalls: a single app's
- * cold-start refault storm must not trigger kills of other apps, so
- * require 70% of a 2s window in memstall. Events are rate-limited to
- * one per window by the PSI trigger itself.
+ * Reclaim target, in MiB: 1/64th of installed RAM, clamped to the configured
+ * bounds. This yields 96 MiB on the 6 GiB S20FE and 128 MiB on the 8 GiB one,
+ * so a single image reclaims proportionally on both. An under-sized target is
+ * itself an over-kill mechanism: each event frees less than the deficit, so
+ * pressure survives and the next PSI window fires again -- death by a
+ * thousand cuts, which reads to the user exactly like over-killing.
  */
-#define PSI_MEM_SPEC "some 70 2000000"
+#define TARGET_RAM_DIVISOR 64
+#define TARGET_MIN_MIB 64
+#define TARGET_MAX_MIB 256
+
+/* psi_trigger_create() accepts windows between 500ms and 10s */
+#define PSI_WINDOW_MIN_US 500000
+#define PSI_WINDOW_MAX_US 10000000
+
+/*
+ * oom_score_adj floors. The routine, PSI-driven path never touches adj 0,
+ * which is the foreground app; only the OOM emergency path may, because there
+ * the alternative to killing it is letting the stock OOM killer choose.
+ */
+#define ADJ_FLOOR_ROUTINE 1
+#define ADJ_FLOOR_EMERGENCY 0
 
 struct victim_info {
 	struct task_struct *tsk;
 	struct mm_struct *mm;
-	unsigned long size;
+	unsigned long size;	/* Reclaimable pages: drives the accounting */
+	unsigned long score;	/* Decayed pages: drives kill ordering only */
+	unsigned long anon;	/* Anon pages: drives reaper ordering only */
 };
 
 static struct victim_info victims[MAX_VICTIMS] __cacheline_aligned_in_smp;
-static struct task_struct *task_bucket[SHRT_MAX + 1] __cacheline_aligned;
-static DECLARE_WAIT_QUEUE_HEAD(oom_waitq);
+static struct task_struct *task_bucket[OOM_SCORE_ADJ_MAX + 1];
+static DECLARE_WAIT_QUEUE_HEAD(reclaim_waitq);
 static DECLARE_WAIT_QUEUE_HEAD(reaper_waitq);
-static struct psi_trigger *mem_trigger;
-static wait_queue_head_t *reclaim_waitq = &oom_waitq;
 
 static __cacheline_aligned_in_smp DEFINE_RWLOCK(mm_free_lock);
 static int nr_victims;
 static bool reclaim_active;
 static DEFINE_MUTEX(reclaim_lock);
-static atomic_t needs_reclaim = ATOMIC_INIT(0);
+static atomic_t needs_emergency = ATOMIC_INIT(0);
 static atomic_t needs_reap = ATOMIC_INIT(0);
 
-static int victim_cmp(const void *lhs_ptr, const void *rhs_ptr)
-{
-	const struct victim_info *lhs = (typeof(lhs))lhs_ptr;
-	const struct victim_info *rhs = (typeof(rhs))rhs_ptr;
+/*
+ * The PSI trigger is recreated whenever its threshold or window changes, so it
+ * cannot be the reclaim thread's sleep target: freeing a waitqueue that a
+ * thread is still enqueued on is a use-after-free. The thread therefore polls
+ * mem_trigger->event from its own stable waitqueue above, and every read of
+ * the trigger pointer is serialized by slmk_lock.
+ */
+static DEFINE_MUTEX(slmk_lock);
+static struct psi_trigger *mem_trigger;
+static bool slmk_running;
 
-	return rhs->size - lhs->size;
-}
+/*
+ * PSI stall threshold and window, both in MICROSECONDS. psi_trigger_create()
+ * compares accumulated stall time against the threshold, so these are absolute
+ * durations and not percentages: "some 70 2000000" is 70 microseconds of stall
+ * per 2 seconds, i.e. 0.0035%, which fires on essentially any stall at all.
+ * The defaults below are 3.5% of the window, near the ratio AOSP's lmkd uses.
+ * Both are writable at runtime -- the change takes effect by recreating the
+ * trigger, so the right value can be swept on-device without a rebuild.
+ */
+static unsigned int psi_threshold_us =
+	CONFIG_ANDROID_SIMPLE_LMK_PSI_THRESHOLD_US;
+static unsigned int psi_window_us = CONFIG_ANDROID_SIMPLE_LMK_PSI_WINDOW_US;
+
+/* Reclaim target in MiB; 0 derives it from installed RAM */
+static unsigned int target_mib;
+
+/* Hard cap on victims killed per reclaim; bounds worst-case kill volume */
+static unsigned int max_kills = CONFIG_ANDROID_SIMPLE_LMK_MAX_KILLS;
+
+/* How often the reclaim thread polls the PSI trigger, in ms */
+static unsigned int poll_msec = 100;
+
+/* Counters for measuring kill volume in the field; read-only */
+static unsigned long stat_events;
+static unsigned long stat_reclaims;
+static unsigned long stat_kills;
+static unsigned long stat_pages_freed;
+static unsigned long stat_no_victims;
+
+/*
+ * Descending by the named field. Comparing explicitly rather than subtracting
+ * matters: the fields are unsigned long and sort() wants an int, so a
+ * difference above INT_MAX pages would truncate into the wrong sign and
+ * silently invert the order.
+ */
+#define DEFINE_VICTIM_CMP(name, field)					\
+	static int name(const void *lhs_ptr, const void *rhs_ptr)	\
+	{								\
+		const struct victim_info *lhs = lhs_ptr;			\
+		const struct victim_info *rhs = rhs_ptr;			\
+									\
+		if (lhs->field < rhs->field)				\
+			return 1;					\
+		if (lhs->field > rhs->field)				\
+			return -1;					\
+		return 0;						\
+	}
+
+DEFINE_VICTIM_CMP(victim_score_cmp, score)
+DEFINE_VICTIM_CMP(victim_size_cmp, size)
+DEFINE_VICTIM_CMP(victim_anon_cmp, anon)
 
 static void victim_swap(void *lhs_ptr, void *rhs_ptr, int size)
 {
-	struct victim_info *lhs = (typeof(lhs))lhs_ptr;
-	struct victim_info *rhs = (typeof(rhs))rhs_ptr;
+	struct victim_info *lhs = lhs_ptr;
+	struct victim_info *rhs = rhs_ptr;
 
 	swap(*lhs, *rhs);
 }
 
 static unsigned long get_reclaimable_mm_pages(struct mm_struct *mm)
+{
+	/*
+	 * What killing this task actually frees: its resident anonymous
+	 * pages, its swapped-out pages (freeing a zram slot returns real RAM),
+	 * and its mapped file pages, which survive the kill in page cache but
+	 * become unmapped and thus reclaimable by normal reclaim.
+	 *
+	 * This is deliberately NOT decayed. It is the only number allowed to
+	 * be counted against the reclaim target: a decayed value collapses
+	 * toward zero for every process during a refault storm, which makes
+	 * the target look unreachable and triggers a kill-everything sweep
+	 * precisely when the system is most stressed.
+	 */
+	return get_mm_counter(mm, MM_ANONPAGES) +
+		get_mm_counter(mm, MM_SWAPENTS) +
+		get_mm_counter(mm, MM_FILEPAGES);
+}
+
+static unsigned long get_mm_kill_score(struct mm_struct *mm)
 {
 	unsigned long anon_pages = get_mm_counter(mm, MM_ANONPAGES);
 	unsigned long swap_pages = get_mm_counter(mm, MM_SWAPENTS);
@@ -78,26 +165,22 @@ static unsigned long get_reclaimable_mm_pages(struct mm_struct *mm)
 	unsigned long decay = msecs_to_jiffies(CONFIG_ANDROID_SIMPLE_LMK_DECAY_MSEC);
 
 	/*
-	 * Decay resident and swapped-out anonymous pages by how recently
-	 * the mm was accessed. Processes holding cold (stale) anonymous
-	 * memory are prioritized as victims over processes that are
-	 * actively touching their memory. This deliberately discounts the
-	 * swap of a recently foregrounded app: it is the likeliest to be
-	 * reopened, and killing it then only causes a reload stall.
+	 * Ordering key only: discount the resident and swapped-out anonymous
+	 * pages of an mm that was touched recently, so cold processes are
+	 * preferred as victims over ones actively using their memory. A
+	 * recently foregrounded app is the likeliest to be reopened, and
+	 * killing it only buys a reload stall.
 	 */
 	if (age < decay) {
 		anon_pages = anon_pages * age / decay;
 		swap_pages = swap_pages * age / decay;
 	}
 
-	/*
-	 * Mapped file pages survive the kill in page cache but become
-	 * unmapped and thus reclaimable by normal reclaim.
-	 */
 	return anon_pages + swap_pages + get_mm_counter(mm, MM_FILEPAGES);
 }
 
-static unsigned long find_victims(int *vindex, unsigned long target)
+static unsigned long find_victims(int *vindex, unsigned long target,
+				  short adj_floor)
 {
 	short i, min_adj = SHRT_MAX, max_adj = 0;
 	unsigned long pages_found = 0;
@@ -109,16 +192,27 @@ static unsigned long find_victims(int *vindex, unsigned long target)
 		short adj;
 
 		/*
-		 * Search for suitable tasks with a positive adj (importance).
-		 * Since only tasks with a positive adj can be targeted, that
-		 * naturally excludes tasks which shouldn't be killed, like init
-		 * and kthreads. Although oom_score_adj can still be changed
-		 * while this code runs, it doesn't really matter; we just need
-		 * a snapshot of the task's adj.
+		 * Consider thread group leaders only. for_each_process()
+		 * walks every thread, not just leaders -- copy_process() puts
+		 * every task on init_task.tasks -- so without this a
+		 * 20-thread app occupies 20 victim slots that all share one
+		 * mm: the page accounting is inflated 20x, the victims array
+		 * can be exhausted by duplicates of a single process, and the
+		 * same thread group is signalled repeatedly.
 		 */
+		if (!thread_group_leader(tsk))
+			continue;
+
 		sig = tsk->signal;
 		adj = READ_ONCE(sig->oom_score_adj);
-		if (adj < 0 ||
+		/*
+		 * Never target adj 0 (FOREGROUND_APP_ADJ) from the routine
+		 * path. A negative adj marks tasks that must not be killed,
+		 * which also excludes init and kthreads. The adj bound is
+		 * re-checked here rather than trusted: oom_score_adj is
+		 * user-writable and indexes a fixed-size array.
+		 */
+		if (adj < adj_floor || adj > OOM_SCORE_ADJ_MAX ||
 		    sig->flags & (SIGNAL_GROUP_EXIT | SIGNAL_GROUP_COREDUMP) ||
 		    (thread_group_empty(tsk) && tsk->flags & PF_EXITING))
 			continue;
@@ -133,6 +227,9 @@ static unsigned long find_victims(int *vindex, unsigned long target)
 		if (adj < min_adj)
 			min_adj = adj;
 	}
+
+	if (min_adj > max_adj)
+		goto done;
 
 	/* Start searching for victims from the highest adj (least important) */
 	for (i = max_adj; i >= min_adj; i--) {
@@ -149,15 +246,37 @@ static unsigned long find_victims(int *vindex, unsigned long target)
 		old_vindex = *vindex;
 		do {
 			struct task_struct *vtsk;
+			struct mm_struct *mm;
+			int j;
 
 			vtsk = find_lock_task_mm(tsk);
 			if (!vtsk)
 				continue;
 
+			mm = vtsk->mm;
+
+			/*
+			 * Two thread group leaders can share one mm (a
+			 * CLONE_VM-but-not-CLONE_THREAD child, e.g. from
+			 * vfork). Counting it twice would double the
+			 * accounting and kill two processes for one mm.
+			 */
+			for (j = 0; j < *vindex; j++) {
+				if (victims[j].mm != mm)
+					continue;
+				task_unlock(vtsk);
+				mm = NULL;
+				break;
+			}
+			if (!mm)
+				continue;
+
 			/* Store this potential victim away for later */
 			victims[*vindex].tsk = vtsk;
-			victims[*vindex].mm = vtsk->mm;
-			victims[*vindex].size = get_reclaimable_mm_pages(vtsk->mm);
+			victims[*vindex].mm = mm;
+			victims[*vindex].size = get_reclaimable_mm_pages(mm);
+			victims[*vindex].score = get_mm_kill_score(mm);
+			victims[*vindex].anon = 0;
 
 			/* Count the number of pages that have been found */
 			pages_found += victims[*vindex].size;
@@ -172,11 +291,11 @@ static unsigned long find_victims(int *vindex, unsigned long target)
 			continue;
 
 		/*
-		 * Sort the victims in descending order of size to prioritize
-		 * killing the larger ones first.
+		 * Sort the victims in descending order of kill score to
+		 * prioritize killing the coldest, largest ones first.
 		 */
 		sort(&victims[old_vindex], *vindex - old_vindex,
-		     sizeof(*victims), victim_cmp, victim_swap);
+		     sizeof(*victims), victim_score_cmp, victim_swap);
 
 		/* Stop when we are out of space or have enough pages found */
 		if (*vindex == MAX_VICTIMS || pages_found >= target) {
@@ -187,27 +306,29 @@ static unsigned long find_victims(int *vindex, unsigned long target)
 			break;
 		}
 	}
+
+done:
 	rcu_read_unlock();
 
 	return pages_found;
 }
 
-static int process_victims(int vlen, unsigned long target)
+/*
+ * Decide which of the first @vlen victims to kill, releasing the task lock on
+ * every victim spared. Stops at whichever comes first: enough pages to satisfy
+ * the target, or the per-reclaim kill cap.
+ */
+static int process_victims(int vlen, unsigned long target, int kill_cap)
 {
 	unsigned long pages_found = 0;
 	int i, nr_to_kill = 0;
 
-	/*
-	 * Calculate the number of tasks that need to be killed and quickly
-	 * release the references to those that'll live.
-	 */
 	for (i = 0; i < vlen; i++) {
 		struct victim_info *victim = &victims[i];
-		struct task_struct *vtsk = victim->tsk;
 
-		/* The victim's mm lock is taken in find_victims; release it */
-		if (pages_found >= target) {
-			task_unlock(vtsk);
+		if (nr_to_kill >= kill_cap || pages_found >= target) {
+			/* The victim's mm lock is taken in find_victims */
+			task_unlock(victim->tsk);
 		} else {
 			pages_found += victim->size;
 			nr_to_kill++;
@@ -226,10 +347,26 @@ static void set_task_rt_prio(struct task_struct *tsk, int priority)
 	sched_setscheduler_nocheck(tsk, SCHED_RR, &rt_prio);
 }
 
-static unsigned long scan_and_kill(void)
+static unsigned long reclaim_target_pages(void)
 {
-	int i, nr_to_kill, nr_found = 0;
-	unsigned long pages_found, target = MIN_FREE_PAGES;
+	unsigned int mib = target_mib;
+
+	if (!mib)
+		mib = (totalram_pages >> (20 - PAGE_SHIFT)) /
+			TARGET_RAM_DIVISOR;
+
+	return clamp_t(unsigned long, mib, TARGET_MIN_MIB, TARGET_MAX_MIB) *
+		SZ_1M / PAGE_SIZE;
+}
+
+/* Returns whether any victim was killed */
+static bool scan_and_kill(short adj_floor)
+{
+	int i, nr_to_kill, nr_found = 0, kill_cap;
+	unsigned long pages_found, pages_freed = 0, target;
+
+	target = reclaim_target_pages();
+	kill_cap = clamp_t(unsigned int, max_kills, 1, MAX_VICTIMS);
 
 	/*
 	 * Reset nr_victims so the reaper thread and simple_lmk_mm_freed() are
@@ -239,33 +376,26 @@ static unsigned long scan_and_kill(void)
 	nr_victims = 0;
 	write_unlock(&mm_free_lock);
 
-	/* Populate the victims array with tasks sorted by adj and then size */
-	pages_found = find_victims(&nr_found, target);
+	/* Populate the victims array with tasks sorted by adj and then score */
+	pages_found = find_victims(&nr_found, target, adj_floor);
 	if (unlikely(!nr_found)) {
+		stat_no_victims++;
 		pr_err_ratelimited("No processes available to kill!\n");
-		return 0;
+		return false;
 	}
 
-	/* Minimize the number of victims if we found more pages than needed */
-	if (pages_found > target) {
-		/* First round of processing to weed out unneeded victims */
-		nr_to_kill = process_victims(nr_found, target);
-
-		/*
-		 * Try to kill as few of the chosen victims as possible by
-		 * sorting the chosen victims by size, which means larger
-		 * victims that have a lower adj can be killed in place of
-		 * smaller victims with a high adj.
-		 */
-		sort(victims, nr_to_kill, sizeof(*victims), victim_cmp,
-		     victim_swap);
-
-		/* Second round of processing to finally select the victims */
-		nr_to_kill = process_victims(nr_to_kill, target);
-	} else {
-		/* Too few pages found, so all the victims need to be killed */
-		nr_to_kill = nr_found;
-	}
+	/*
+	 * Minimize the body count: take victims in adj order until the target
+	 * is met, then re-sort that set by real size so that a few large
+	 * victims can replace many small ones. When fewer pages are available
+	 * than the target both passes simply take as many as the cap allows,
+	 * so a thrashing system can't empty out the whole cached-app set at
+	 * once.
+	 */
+	nr_to_kill = process_victims(nr_found, target, kill_cap);
+	sort(victims, nr_to_kill, sizeof(*victims), victim_size_cmp,
+	     victim_swap);
+	nr_to_kill = process_victims(nr_to_kill, target, kill_cap);
 
 	/*
 	 * Store the final number of victims for simple_lmk_mm_freed() and the
@@ -293,6 +423,17 @@ static unsigned long scan_and_kill(void)
 		do_send_sig_info(SIGKILL, SEND_SIG_FORCED, vtsk, PIDTYPE_TGID);
 
 		/*
+		 * Record the kill for the userspace-LMK bookkeeping that
+		 * should_ulmk_retry() reads to decide whether LMK is stuck.
+		 * This is done explicitly rather than by routing through
+		 * group_send_sig_info(), which would also run
+		 * check_kill_permission() and the add_to_oom_reaper() and
+		 * foreground-kill-panic hooks -- all three gated on the
+		 * caller being named "lmkd", which this thread is not.
+		 */
+		ulmk_update_last_kill();
+
+		/*
 		 * Mark the thread group dead so that other kernel code knows,
 		 * and then elevate the thread group to SCHED_RR with minimum RT
 		 * priority. The entire group needs to be elevated because
@@ -309,14 +450,21 @@ static unsigned long scan_and_kill(void)
 			set_task_rt_prio(t, 1);
 		rcu_read_unlock();
 
-		/* Allow the victim to run on any CPU. This won't schedule. */
+		/*
+		 * Allow the victim to run on any CPU. cpu_all_mask always
+		 * contains the task's current CPU, so __set_cpus_allowed_ptr()
+		 * takes its early-out and never calls stop_one_cpu(); widening
+		 * the mask to anything narrower here would make this sleep
+		 * while task_lock() is held.
+		 */
 		set_cpus_allowed_ptr(vtsk, cpu_all_mask);
 
 		/* Signals can't wake frozen tasks; only a thaw operation can */
 		__thaw_task(vtsk);
 
-		/* Store the number of anon pages to sort victims for reaping */
-		victim->size = get_mm_counter(mm, MM_ANONPAGES);
+		/* Store the anon page count to sort victims for reaping */
+		victim->anon = get_mm_counter(mm, MM_ANONPAGES);
+		pages_freed += victim->size;
 
 		/* Finally release the victim's task lock acquired earlier */
 		task_unlock(vtsk);
