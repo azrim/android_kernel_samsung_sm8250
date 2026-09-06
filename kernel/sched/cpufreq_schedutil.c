@@ -595,8 +595,8 @@ static bool sugov_iowait_reset(struct sugov_cpu *sg_cpu, u64 time,
 {
 	s64 delta_ns = time - sg_cpu->last_update;
 
-	/* Reset boost only if a tick has elapsed since last request */
-	if (delta_ns <= TICK_NSEC)
+	/* Use half tick for iowait boost reset to allow faster decay at idle. */
+	if (delta_ns <= (TICK_NSEC >> 1))
 		return false;
 
 	sg_cpu->iowait_boost = set_iowait_boost ? sg_cpu->min : 0;
