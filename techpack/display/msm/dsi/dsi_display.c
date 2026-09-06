@@ -5161,6 +5161,9 @@ static int dsi_display_force_update_dsi_clk(struct dsi_display *display)
 {
 	int rc = 0, i = 0;
 	struct dsi_display_ctrl *ctrl;
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	struct samsung_display_driver_data *vdd;
+#endif
 
 	/*
 	 * The force update dsi clock, is the only clock update function that toggles the state of
@@ -5177,8 +5180,7 @@ static int dsi_display_force_update_dsi_clk(struct dsi_display *display)
 	}
 
 #if defined(CONFIG_DISPLAY_SAMSUNG)
-	struct samsung_display_driver_data *vdd = display->panel->panel_private;
-
+	vdd = display->panel->panel_private;
 	if (vdd->panel_func.samsung_dyn_mipi_pre)
 		vdd->panel_func.samsung_dyn_mipi_pre(vdd);
 

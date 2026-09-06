@@ -1912,13 +1912,13 @@ static const struct attribute_group *a6xx_coresight_groups_cx[] = {
 	NULL,
 };
 
-static struct adreno_coresight a6xx_coresight = {
+static struct adreno_coresight __maybe_unused a6xx_coresight = {
 	.registers = a6xx_coresight_regs,
 	.count = ARRAY_SIZE(a6xx_coresight_regs),
 	.groups = a6xx_coresight_groups,
 };
 
-static struct adreno_coresight a6xx_coresight_cx = {
+static struct adreno_coresight __maybe_unused a6xx_coresight_cx = {
 	.registers = a6xx_coresight_regs_cx,
 	.count = ARRAY_SIZE(a6xx_coresight_regs_cx),
 	.groups = a6xx_coresight_groups_cx,
