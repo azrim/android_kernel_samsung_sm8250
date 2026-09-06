@@ -38,6 +38,10 @@
 /* psi_trigger_create() accepts windows between 500ms and 10s */
 #define PSI_WINDOW_MIN_US 500000
 #define PSI_WINDOW_MAX_US 10000000
+#define PSI_THRESHOLD_MIN_US 1000
+#define PSI_THRESHOLD_MAX_US 10000000
+#define POLL_MSEC_MIN 10
+#define POLL_MSEC_MAX 1000
 
 /*
  * oom_score_adj floors. The routine, PSI-driven path never touches adj 0,
@@ -733,7 +737,9 @@ static bool psi_spec_valid(void)
 {
 	return psi_window_us >= PSI_WINDOW_MIN_US &&
 		psi_window_us <= PSI_WINDOW_MAX_US &&
-		psi_threshold_us > 0 && psi_threshold_us <= psi_window_us;
+		psi_threshold_us >= PSI_THRESHOLD_MIN_US &&
+		psi_threshold_us <= PSI_THRESHOLD_MAX_US &&
+		psi_threshold_us <= psi_window_us;
 }
 
 /* Caller holds slmk_lock. psi_trigger_create() parses buf but keeps no copy */
@@ -787,7 +793,8 @@ static int set_psi_threshold_us(const char *val, const struct kernel_param *kp)
 	if (ret)
 		return ret;
 	/* Validate before committing so a rejected write changes nothing */
-	if (!v || v > psi_window_us)
+	if (v < PSI_THRESHOLD_MIN_US || v > PSI_THRESHOLD_MAX_US ||
+	    v > psi_window_us)
 		return -EINVAL;
 
 	psi_threshold_us = v;
@@ -816,6 +823,61 @@ static const struct kernel_param_ops psi_threshold_ops = {
 
 static const struct kernel_param_ops psi_window_ops = {
 	.set = set_psi_window_us,
+	.get = param_get_uint,
+};
+
+static int set_poll_msec(const char *val, const struct kernel_param *kp)
+{
+	unsigned int v = poll_msec;
+	int ret = kstrtouint(val, 0, &v);
+
+	if (ret)
+		return ret;
+	if (v < POLL_MSEC_MIN || v > POLL_MSEC_MAX)
+		return -EINVAL;
+	poll_msec = v;
+	return 0;
+}
+
+static int set_max_kills(const char *val, const struct kernel_param *kp)
+{
+	unsigned int v = max_kills;
+	int ret = kstrtouint(val, 0, &v);
+
+	if (ret)
+		return ret;
+	if (v < 1 || v > 1024)
+		return -EINVAL;
+	max_kills = v;
+	return 0;
+}
+
+static int set_target_mib(const char *val, const struct kernel_param *kp)
+{
+	unsigned int v = target_mib;
+	int ret = kstrtouint(val, 0, &v);
+
+	if (ret)
+		return ret;
+	/* 0 means auto (totalram/64 clamped to [64,256] MiB) */
+	if (v != 0 && (v < TARGET_MIN_MIB || v > 1024))
+		return -EINVAL;
+	target_mib = v;
+	return 0;
+}
+
+static const struct kernel_param_ops poll_msec_ops = {
+	.set = set_poll_msec,
+	.get = param_get_uint,
+};
+
+static const struct kernel_param_ops max_kills_ops = {
+	.set = set_max_kills,
+	.get = param_get_uint,
+};
+
+static const struct kernel_param_ops target_mib_ops = {
+	.set = set_target_mib,
 	.get = param_get_uint,
 };
 
@@ -887,11 +949,11 @@ MODULE_PARM_DESC(psi_threshold_us,
 		 "Microseconds of memory stall per window before reclaiming; not a percentage");
 module_param_cb(psi_window_us, &psi_window_ops, &psi_window_us, 0644);
 MODULE_PARM_DESC(psi_window_us, "PSI stall window in microseconds");
-module_param(target_mib, uint, 0644);
+module_param_cb(target_mib, &target_mib_ops, &target_mib, 0644);
 MODULE_PARM_DESC(target_mib, "MiB to free per reclaim; 0 derives it from RAM");
-module_param(max_kills, uint, 0644);
+module_param_cb(max_kills, &max_kills_ops, &max_kills, 0644);
 MODULE_PARM_DESC(max_kills, "Maximum processes killed by a single reclaim");
-module_param(poll_msec, uint, 0644);
+module_param_cb(poll_msec, &poll_msec_ops, &poll_msec, 0644);
 MODULE_PARM_DESC(poll_msec, "How often the reclaim thread checks the PSI trigger");
 
 module_param(stat_events, ulong, 0444);
