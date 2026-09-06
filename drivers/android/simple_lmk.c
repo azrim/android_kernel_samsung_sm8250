@@ -477,21 +477,47 @@ static bool scan_and_kill(short adj_floor)
 	 * orders the needs_reap store before waitqueue_active().
 	 */
 	write_lock(&mm_free_lock);
-	sort(victims, nr_to_kill, sizeof(*victims), victim_cmp, victim_swap);
+	sort(victims, nr_to_kill, sizeof(*victims), victim_anon_cmp,
+	     victim_swap);
 	atomic_set(&needs_reap, 1);
 	reclaim_active = false;
 	write_unlock(&mm_free_lock);
 	if (waitqueue_active(&reaper_waitq))
 		wake_up(&reaper_waitq);
 
-	return pages_found;
+	stat_reclaims++;
+	stat_kills += nr_to_kill;
+	stat_pages_freed += pages_freed;
+
+	return nr_to_kill > 0;
 }
 
-static bool reclaim_needed(void)
+static bool reclaim_needed(int *adj_floor)
 {
-	if (mem_trigger && cmpxchg(&mem_trigger->event, 1, 0))
+	struct psi_trigger *t;
+	bool needed;
+
+	/* A reclaim deferred by the OOM notifier while one was running */
+	if (atomic_cmpxchg(&needs_emergency, 1, 0)) {
+		*adj_floor = ADJ_FLOOR_EMERGENCY;
 		return true;
-	return atomic_cmpxchg_relaxed(&needs_reclaim, 1, 0);
+	}
+
+	mutex_lock(&slmk_lock);
+	t = mem_trigger;
+	/*
+	 * Consuming the event is what psi_trigger_poll() would do for a
+	 * userspace reader, so pet the userspace-LMK watchdog here. Without
+	 * this the watchdog stays armed but is never petted: it latches
+	 * expired after the first event, and should_ulmk_retry() then decides
+	 * forever that the stall consumer is stuck.
+	 */
+	needed = t && cmpxchg(&t->event, 1, 0);
+	if (needed)
+		ulmk_watchdog_pet(&t->wdog_timer);
+	mutex_unlock(&slmk_lock);
+
+	return needed;
 }
 
 static int simple_lmk_reclaim_thread(void *data)
@@ -501,12 +527,31 @@ static int simple_lmk_reclaim_thread(void *data)
 	set_freezable();
 
 	while (1) {
-		wait_event_freezable(*reclaim_waitq,
-				     kthread_should_stop() || reclaim_needed());
+		int adj_floor = ADJ_FLOOR_ROUTINE;
+		/*
+		 * Clamped: this is user-writable, and a zero timeout would
+		 * turn the wait into a busy loop running at RT priority 98.
+		 */
+		unsigned long timeout = msecs_to_jiffies(clamp(poll_msec,
+							       10u, 1000u));
+
+		/*
+		 * The PSI trigger's event flag is polled rather than waited
+		 * on, so that the trigger can be recreated at runtime to sweep
+		 * its threshold. The OOM notifier still wakes this queue
+		 * directly, so a real OOM is not delayed by the poll interval.
+		 */
+		wait_event_freezable_timeout(reclaim_waitq,
+					     kthread_should_stop() ||
+					     atomic_read(&needs_emergency),
+					     timeout);
 		if (kthread_should_stop())
 			break;
+		if (!reclaim_needed(&adj_floor))
+			continue;
+		stat_events++;
 		if (mutex_trylock(&reclaim_lock)) {
-			scan_and_kill();
+			scan_and_kill(adj_floor);
 			mutex_unlock(&reclaim_lock);
 		}
 	}
@@ -549,8 +594,10 @@ static struct mm_struct *next_reap_victim(void)
 		 * No mmgrab() is needed because the reclaim thread sets
 		 * MMF_OOM_VICTIM under task_lock() for the mm's task, which
 		 * guarantees that MMF_OOM_VICTIM is always set before the
-		 * victim mm can enter exit_mmap(). Therefore, an mmap read lock
-		 * is sufficient to keep the mm struct itself from being freed.
+		 * victim mm can enter exit_mmap(). exit_mmap() then takes
+		 * mmap_sem for write after setting MMF_OOM_SKIP, which is what
+		 * actually holds off the mm's release while this read lock is
+		 * held. MMF_OOM_VICTIM is therefore never cleared here.
 		 */
 		if (!test_bit(MMF_OOM_SKIP, &mm->flags))
 			break;
@@ -584,7 +631,7 @@ static void reap_victims(void)
 			/*
 			 * Give up after the reclaim timeout if the victims'
 			 * mmap_sem stays contended; exit_mmap() will reap them
-			 * when they die.  Bounding the retry prevents a stuck
+			 * when they die. Bounding the retry prevents a stuck
 			 * victim from keeping the reaper spinning forever.
 			 */
 			if (++retries >= RECLAIM_EXPIRES)
@@ -594,16 +641,17 @@ static void reap_victims(void)
 			continue;
 		}
 
-		/* Reset the retry counter on a successful reap */
-		retries = 0;
-
 		/*
-		 * Try to reap the victim. Unflag the mm for exit_mmap() reaping
-		 * and mark it as reaped with MMF_OOM_SKIP if successful.
+		 * Try to reap the victim, and mark it as reaped so that
+		 * exit_mmap() skips it. The retry counter is reset only on
+		 * success: a victim whose mmu notifier blocks the reap keeps
+		 * neither MMF_OOM_SKIP nor a cleared MMF_OOM_VICTIM, so it is
+		 * offered again, and resetting on every acquisition would turn
+		 * that into an endless loop at RT priority.
 		 */
 		if (__oom_reap_task_mm(mm)) {
-			clear_bit(MMF_OOM_VICTIM, &mm->flags);
 			set_bit(MMF_OOM_SKIP, &mm->flags);
+			retries = 0;
 		}
 		up_read(&mm->mmap_sem);
 	}
@@ -638,7 +686,8 @@ void simple_lmk_mm_freed(struct mm_struct *mm)
 	if (!test_bit(MMF_OOM_SKIP, &mm->flags))
 		return;
 
-	read_lock(&mm_free_lock);
+	/* This writes the array, so it needs the write side of the lock */
+	write_lock(&mm_free_lock);
 	for (i = 0; i < nr_victims; i++) {
 		if (victims[i].mm == mm) {
 			/* Prevent the reaper from touching a freed victim */
@@ -646,7 +695,7 @@ void simple_lmk_mm_freed(struct mm_struct *mm)
 			break;
 		}
 	}
-	read_unlock(&mm_free_lock);
+	write_unlock(&mm_free_lock);
 }
 
 static int simple_lmk_oom_cb(struct notifier_block *nb,
@@ -655,19 +704,21 @@ static int simple_lmk_oom_cb(struct notifier_block *nb,
 	int *freed = data;
 
 	/*
-	 * Try to reclaim synchronously so the kernel OOM killer is
-	 * preempted.  If another reclaim is in progress, fall back to
-	 * waking the reclaim thread.
+	 * The page allocator is out of memory now, so reclaim synchronously
+	 * instead of waiting for the next poll. This is the only path allowed
+	 * to consider adj 0. If a reclaim is already running, defer it and
+	 * leave *freed alone: out_of_memory() then falls through to the stock
+	 * OOM killer rather than reporting progress that wasn't made.
 	 */
 	if (mutex_trylock(&reclaim_lock)) {
-		if (scan_and_kill() && freed)
+		if (scan_and_kill(ADJ_FLOOR_EMERGENCY) && freed)
 			*freed = 1;
 		mutex_unlock(&reclaim_lock);
 	} else {
-		atomic_set(&needs_reclaim, 1);
+		atomic_set(&needs_emergency, 1);
 		smp_mb__after_atomic();
-		if (waitqueue_active(reclaim_waitq))
-			wake_up(reclaim_waitq);
+		if (waitqueue_active(&reclaim_waitq))
+			wake_up(&reclaim_waitq);
 	}
 
 	return NOTIFY_OK;
@@ -678,31 +729,123 @@ static struct notifier_block oom_notif = {
 	.priority = INT_MAX
 };
 
+static bool psi_spec_valid(void)
+{
+	return psi_window_us >= PSI_WINDOW_MIN_US &&
+		psi_window_us <= PSI_WINDOW_MAX_US &&
+		psi_threshold_us > 0 && psi_threshold_us <= psi_window_us;
+}
+
+/* Caller holds slmk_lock. psi_trigger_create() parses buf but keeps no copy */
+static int psi_trigger_swap(void)
+{
+	char spec[32];
+	struct psi_trigger *old, *new;
+	int len;
+
+	len = snprintf(spec, sizeof(spec), "some %u %u", psi_threshold_us,
+		       psi_window_us);
+	if (len >= (int)sizeof(spec))
+		return -EINVAL;
+
+	new = psi_trigger_create(&psi_system, spec, len, PSI_MEM);
+	if (IS_ERR(new))
+		return PTR_ERR(new);
+
+	old = mem_trigger;
+	mem_trigger = new;
+	/*
+	 * Safe to free the old trigger here: no thread is ever enqueued on its
+	 * waitqueue, since the reclaim thread polls the event flag instead.
+	 */
+	psi_trigger_destroy(old);
+
+	return 0;
+}
+
+/* Apply a changed threshold or window, if the trigger already exists */
+static int psi_trigger_apply(void)
+{
+	int ret = 0;
+
+	if (!psi_spec_valid())
+		return -EINVAL;
+
+	mutex_lock(&slmk_lock);
+	if (mem_trigger)
+		ret = psi_trigger_swap();
+	mutex_unlock(&slmk_lock);
+
+	return ret;
+}
+
+static int set_psi_threshold_us(const char *val, const struct kernel_param *kp)
+{
+	unsigned int v = psi_threshold_us;
+	int ret = kstrtouint(val, 0, &v);
+
+	if (ret)
+		return ret;
+	/* Validate before committing so a rejected write changes nothing */
+	if (!v || v > psi_window_us)
+		return -EINVAL;
+
+	psi_threshold_us = v;
+	return psi_trigger_apply();
+}
+
+static int set_psi_window_us(const char *val, const struct kernel_param *kp)
+{
+	unsigned int v = psi_window_us;
+	int ret = kstrtouint(val, 0, &v);
+
+	if (ret)
+		return ret;
+	if (v < PSI_WINDOW_MIN_US || v > PSI_WINDOW_MAX_US ||
+	    v < psi_threshold_us)
+		return -EINVAL;
+
+	psi_window_us = v;
+	return psi_trigger_apply();
+}
+
+static const struct kernel_param_ops psi_threshold_ops = {
+	.set = set_psi_threshold_us,
+	.get = param_get_uint,
+};
+
+static const struct kernel_param_ops psi_window_ops = {
+	.set = set_psi_window_us,
+	.get = param_get_uint,
+};
 
 /* Initialize Simple LMK when lmkd in Android writes to the minfree parameter */
 static int simple_lmk_init_set(const char *val, const struct kernel_param *kp)
 {
-	static atomic_t init_done = ATOMIC_INIT(0);
 	struct task_struct *reaper, *reclaim;
 
-	if (atomic_cmpxchg(&init_done, 0, 1))
+	mutex_lock(&slmk_lock);
+	if (slmk_running) {
+		mutex_unlock(&slmk_lock);
 		return 0;
-
-	mem_trigger = psi_trigger_create(&psi_system, PSI_MEM_SPEC,
-					 sizeof(PSI_MEM_SPEC) - 1, PSI_MEM);
-	if (IS_ERR(mem_trigger)) {
-		pr_err("Failed to create PSI trigger: %ld; relying on OOM notifications only\n",
-		       PTR_ERR(mem_trigger));
-		mem_trigger = NULL;
-	} else {
-		reclaim_waitq = &mem_trigger->event_wait;
 	}
+
+	if (!psi_spec_valid()) {
+		pr_err("Invalid PSI spec: threshold=%u window=%u\n",
+		       psi_threshold_us, psi_window_us);
+		mutex_unlock(&slmk_lock);
+		return 0;
+	}
+
+	if (psi_trigger_swap())
+		pr_info("PSI trigger unavailable; relying on OOM notifications\n");
+	mutex_unlock(&slmk_lock);
 
 	reaper = kthread_run(simple_lmk_reaper_thread, NULL,
 			     "simple_lmkd_reaper");
 	if (IS_ERR(reaper)) {
 		pr_err("Failed to create reaper thread: %ld\n", PTR_ERR(reaper));
-		goto err_trigger;
+		return 0;
 	}
 
 	reclaim = kthread_run(simple_lmk_reclaim_thread, NULL, "simple_lmkd");
@@ -710,29 +853,57 @@ static int simple_lmk_init_set(const char *val, const struct kernel_param *kp)
 		pr_err("Failed to create reclaim thread: %ld\n",
 		       PTR_ERR(reclaim));
 		kthread_stop(reaper);
-		goto err_trigger;
+		return 0;
 	}
 
 	if (register_oom_notifier(&oom_notif)) {
 		pr_err("Failed to register OOM notifier\n");
 		kthread_stop(reaper);
 		kthread_stop(reclaim);
-		goto err_trigger;
+		return 0;
 	}
 
-	return 0;
+	mutex_lock(&slmk_lock);
+	slmk_running = true;
+	mutex_unlock(&slmk_lock);
 
-err_trigger:
-	psi_trigger_destroy(mem_trigger);
-	mem_trigger = NULL;
-	reclaim_waitq = &oom_waitq;
-	atomic_set(&init_done, 0);
+	pr_info("Initialized: target=%lu MiB threshold=%u us window=%u us cap=%u\n",
+		reclaim_target_pages() * PAGE_SIZE / SZ_1M, psi_threshold_us,
+		psi_window_us, max_kills);
+
+	/* Always succeed: a failure here would make lmkd think LMK is absent */
 	return 0;
 }
 
 static const struct kernel_param_ops simple_lmk_init_ops = {
 	.set = simple_lmk_init_set
 };
+
+#undef MODULE_PARAM_PREFIX
+#define MODULE_PARAM_PREFIX "simple_lmk."
+
+module_param_cb(psi_threshold_us, &psi_threshold_ops, &psi_threshold_us, 0644);
+MODULE_PARM_DESC(psi_threshold_us,
+		 "Microseconds of memory stall per window before reclaiming; not a percentage");
+module_param_cb(psi_window_us, &psi_window_ops, &psi_window_us, 0644);
+MODULE_PARM_DESC(psi_window_us, "PSI stall window in microseconds");
+module_param(target_mib, uint, 0644);
+MODULE_PARM_DESC(target_mib, "MiB to free per reclaim; 0 derives it from RAM");
+module_param(max_kills, uint, 0644);
+MODULE_PARM_DESC(max_kills, "Maximum processes killed by a single reclaim");
+module_param(poll_msec, uint, 0644);
+MODULE_PARM_DESC(poll_msec, "How often the reclaim thread checks the PSI trigger");
+
+module_param(stat_events, ulong, 0444);
+MODULE_PARM_DESC(stat_events, "Reclaims triggered by memory pressure");
+module_param(stat_reclaims, ulong, 0444);
+MODULE_PARM_DESC(stat_reclaims, "Reclaims that ran a victim scan");
+module_param(stat_kills, ulong, 0444);
+MODULE_PARM_DESC(stat_kills, "Total processes killed");
+module_param(stat_pages_freed, ulong, 0444);
+MODULE_PARM_DESC(stat_pages_freed, "Total pages accounted as freed");
+module_param(stat_no_victims, ulong, 0444);
+MODULE_PARM_DESC(stat_no_victims, "Reclaims that found nothing killable");
 
 /* Needed to prevent Android from thinking there's no LMK and thus rebooting */
 #undef MODULE_PARAM_PREFIX
