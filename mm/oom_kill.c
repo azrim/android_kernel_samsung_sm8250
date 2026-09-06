@@ -510,7 +510,16 @@ static int oom_evaluate_task(struct task_struct *task, void *arg)
 	 * any memory is quite low.
 	 */
 	if (!is_sysrq_oom(oc) && tsk_is_oom_victim(task)) {
-		if (test_bit(MMF_OOM_SKIP, &task->signal->oom_mm->flags))
+		/*
+		 * Simple LMK marks its victims with TIF_MEMDIE directly rather
+		 * than through mark_oom_victim(), so signal->oom_mm is NULL for
+		 * them. Such a task is already dying and is reaped by Simple
+		 * LMK's own reaper, so skip it and keep looking; dereferencing
+		 * the NULL oom_mm here would crash the moment the OOM killer
+		 * runs again.
+		 */
+		if (!task->signal->oom_mm ||
+		    test_bit(MMF_OOM_SKIP, &task->signal->oom_mm->flags))
 			goto next;
 		goto abort;
 	}
@@ -1314,9 +1323,22 @@ bool out_of_memory(struct oom_control *oc)
 	unsigned long freed = 0;
 	enum oom_constraint constraint = CONSTRAINT_NONE;
 
-	/* Return true since Simple LMK automatically kills in the background */
-	if (IS_ENABLED(CONFIG_ANDROID_SIMPLE_LMK))
-		return true;
+	/*
+	 * Simple LMK owns process killing. The memory cgroup controller is
+	 * enabled only because OneUI's userspace expects it to exist; its
+	 * limits are not a kill policy here, so a memcg OOM must never select
+	 * a victim.
+	 *
+	 * Return false, not true. OOM_SUCCESS makes __mem_cgroup_try_charge()
+	 * reset its retry budget and jump back to retry the charge, so with no
+	 * victim ever chosen that is an unbounded loop -- which is exactly
+	 * what the blanket "return true" this replaced amounted to. OOM_FAILED
+	 * takes the force path instead: the group is charged past its limit,
+	 * the allocation succeeds, and global pressure stays Simple LMK's job
+	 * off PSI stalls.
+	 */
+	if (IS_ENABLED(CONFIG_ANDROID_SIMPLE_LMK) && is_memcg_oom(oc))
+		return false;
 
 	if (oom_killer_disabled)
 		return false;
@@ -1327,6 +1349,21 @@ bool out_of_memory(struct oom_control *oc)
 		return true;
 	}
 
+	/*
+	 * Give low memory killers the first chance to reclaim. Simple LMK
+	 * kills asynchronously off PSI stalls and registers here as its
+	 * synchronous emergency path.
+	 *
+	 * This used to be preceded by an unconditional "return true" when
+	 * CONFIG_ANDROID_SIMPLE_LMK was set, which made the notifier below
+	 * dead code that could never fire while also disabling the OOM killer
+	 * entirely. That left the page allocator with no way to make progress:
+	 * should_ulmk_retry() calls out_of_memory() as its own fallback and
+	 * was always told that memory had been freed. If Simple LMK frees
+	 * nothing, fall through to the OOM killer as the genuine last resort
+	 * -- it is the only path that will kill adj 0, i.e. the foreground
+	 * app, which Simple LMK's routine path refuses to touch.
+	 */
 	if (!is_memcg_oom(oc)) {
 		blocking_notifier_call_chain(&oom_notify_list, 0, &freed);
 		if (freed > 0)
