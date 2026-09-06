@@ -1304,10 +1304,12 @@ bool uclamp_latency_sensitive(struct task_struct *p)
 	if (!css)
 		return false;
 	tg = container_of(css, struct task_group, css);
-
-	return tg->latency_sensitive;
-#else
-	return false;
+	/* On OneUI, cgroup latency_sensitive is never set. Allow top-app
+	 * tasks (prio < 120) to prefer idle for EAS/CASS packing.
+	 */
+	if (tg->latency_sensitive)
+		return true;
+	return p->prio < 120;
 #endif
 }
 #endif /* CONFIG_SMP */
@@ -1349,6 +1351,8 @@ static void __init init_uclamp(void)
 		root_task_group.uclamp[clamp_id] = uc_max;
 #endif
 	}
+	/* Enable uclamp early for CASS/EAS prefer_idle handling. */
+	static_branch_enable(&sched_uclamp_used);
 }
 
 #else /* CONFIG_UCLAMP_TASK */
