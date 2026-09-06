@@ -75,12 +75,35 @@ config ANDROID_SIMPLE_LMK
 
 if ANDROID_SIMPLE_LMK
 
-config ANDROID_SIMPLE_LMK_MINFREE
-	int "Minimum MiB of memory to free per reclaim"
-	range 8 512
-	default 128
+config ANDROID_SIMPLE_LMK_PSI_THRESHOLD_US
+	int "PSI memory stall threshold in microseconds"
+	range 1000 10000000
+	default 70000
 	help
-	  Simple LMK will try to free at least this much memory per reclaim.
+	  Simple LMK reclaims once per PSI window in which at least this many
+	  microseconds were spent stalled on memory. This is an ABSOLUTE
+	  duration, not a percentage: 70000 over the default 2s window means
+	  3.5%. Both values are writable at runtime under
+	  /sys/module/simple_lmk/parameters/ to tune the trigger.
+
+config ANDROID_SIMPLE_LMK_PSI_WINDOW_US
+	int "PSI memory stall window in microseconds"
+	range 500000 10000000
+	default 2000000
+	help
+	  The window over which the stall threshold above is measured. PSI
+	  rate-limits the trigger to one event per window, so this also caps
+	  how often Simple LMK can reclaim.
+
+config ANDROID_SIMPLE_LMK_MAX_KILLS
+	int "Maximum processes killed per reclaim"
+	range 1 1024
+	default 6
+	help
+	  Upper bound on how many processes a single reclaim may kill,
+	  independent of how much memory that frees. This is the hard stop on
+	  over-kill: a reclaim that cannot reach its target kills at most this
+	  many processes and lets the next PSI window finish the job.
 
 config ANDROID_SIMPLE_LMK_TIMEOUT_MSEC
 	int "Reaper retry timeout in milliseconds"
