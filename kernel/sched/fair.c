@@ -6218,7 +6218,7 @@ void cpu_load_update_active(struct rq *this_rq)
  * We want to under-estimate the load of migration sources, to
  * balance conservatively.
  */
-static unsigned long source_load(int cpu, int type)
+static unsigned long __maybe_unused source_load(int cpu, int type)
 {
 	struct rq *rq = cpu_rq(cpu);
 	unsigned long total = weighted_cpuload(rq);
@@ -6233,7 +6233,7 @@ static unsigned long source_load(int cpu, int type)
  * Return a high guess at the load of a migration-target CPU weighted
  * according to the scheduling class and "nice" value.
  */
-static unsigned long target_load(int cpu, int type)
+static unsigned long __maybe_unused target_load(int cpu, int type)
 {
 	struct rq *rq = cpu_rq(cpu);
 	unsigned long total = weighted_cpuload(rq);
@@ -10135,9 +10135,6 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 				      struct sg_lb_stats *sgs,
 				      int *sg_status)
 {
-	int local_group = cpumask_test_cpu(env->dst_cpu, sched_group_span(group));
-	int load_idx = get_sd_load_idx(env->sd, env->idle);
-	unsigned long load;
 	int i, nr_running;
 
 	memset(sgs, 0, sizeof(*sgs));
