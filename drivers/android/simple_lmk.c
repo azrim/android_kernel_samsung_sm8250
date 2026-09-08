@@ -13,6 +13,7 @@
 #include <linux/mutex.h>
 #include <linux/oom.h>
 #include <linux/sched/mm.h>
+#include <linux/sched/task.h>
 #include <linux/psi.h>
 #include <linux/psi_types.h>
 #include <uapi/linux/sched/types.h>
@@ -102,7 +103,10 @@ static unsigned int target_mib;
 static unsigned int max_kills = CONFIG_ANDROID_SIMPLE_LMK_MAX_KILLS;
 
 /* How often the reclaim thread polls the PSI trigger, in ms */
-static unsigned int poll_msec = 100;
+static unsigned int poll_msec = 500;
+
+/* Skip routine reclaim while at least this much memory is available, in MiB */
+static unsigned int reserve_mib = 1024;
 
 /* Counters for measuring kill volume in the field; read-only */
 static unsigned long stat_events;
@@ -212,11 +216,13 @@ static unsigned long find_victims(int *vindex, unsigned long target,
 		/*
 		 * Never target adj 0 (FOREGROUND_APP_ADJ) from the routine
 		 * path. A negative adj marks tasks that must not be killed,
-		 * which also excludes init and kthreads. The adj bound is
+		 * but init and kthreads share adj 0 with ordinary tasks, so
+		 * they need an explicit exclusion. The adj bound is
 		 * re-checked here rather than trusted: oom_score_adj is
 		 * user-writable and indexes a fixed-size array.
 		 */
 		if (adj < adj_floor || adj > OOM_SCORE_ADJ_MAX ||
+		    is_global_init(tsk) || (tsk->flags & PF_KTHREAD) ||
 		    sig->flags & (SIGNAL_GROUP_EXIT | SIGNAL_GROUP_COREDUMP) ||
 		    (thread_group_empty(tsk) && tsk->flags & PF_EXITING))
 			continue;
@@ -455,23 +461,34 @@ static bool scan_and_kill(short adj_floor)
 		rcu_read_unlock();
 
 		/*
-		 * Allow the victim to run on any CPU. cpu_all_mask always
-		 * contains the task's current CPU, so __set_cpus_allowed_ptr()
-		 * takes its early-out and never calls stop_one_cpu(); widening
-		 * the mask to anything narrower here would make this sleep
-		 * while task_lock() is held.
+		 * Pin the task so it stays valid after its lock is dropped.
+		 */
+		get_task_struct(vtsk);
+
+		/* Store the anon page count to sort victims for reaping */
+		victim->anon = get_mm_counter(mm, MM_ANONPAGES);
+		pages_freed += victim->size;
+
+		/*
+		 * Release the victim's task lock acquired in find_victims()
+		 * before touching affinity: set_cpus_allowed_ptr() may sleep
+		 * (stop_one_cpu migration) for an affinity-restricted victim,
+		 * which must never run under task_lock().
+		 */
+		task_unlock(vtsk);
+
+		/*
+		 * Allow the victim to run on any CPU so a task pinned to an
+		 * offline or isolated CPU can still run to die. A failure is
+		 * benign (e.g. perf/prime-affine tasks that must keep their
+		 * mask); the kill signal is already delivered.
 		 */
 		set_cpus_allowed_ptr(vtsk, cpu_all_mask);
 
 		/* Signals can't wake frozen tasks; only a thaw operation can */
 		__thaw_task(vtsk);
 
-		/* Store the anon page count to sort victims for reaping */
-		victim->anon = get_mm_counter(mm, MM_ANONPAGES);
-		pages_freed += victim->size;
-
-		/* Finally release the victim's task lock acquired earlier */
-		task_unlock(vtsk);
+		put_task_struct(vtsk);
 	}
 
 	/*
@@ -521,10 +538,11 @@ static bool reclaim_needed(int *adj_floor)
 		ulmk_watchdog_pet(&t->wdog_timer);
 	mutex_unlock(&slmk_lock);
 
-	/* Avoid PSI thrash when memory is still available (>1GB).
+	/* Avoid PSI thrash when memory is still available.
 	 * PSI can fire with 2.7GB available at boot.
 	 */
-	if (needed && si_mem_available() > (1UL << (30 - PAGE_SHIFT)))
+	if (needed && reserve_mib && si_mem_available() >
+	    ((unsigned long)reserve_mib << (20 - PAGE_SHIFT)))
 		return false;
 
 	return needed;
@@ -634,7 +652,7 @@ static struct mm_struct *next_reap_victim(void)
 static void reap_victims(void)
 {
 	struct mm_struct *mm;
-	int retries = 0;
+	int retries = 0, fails = 0;
 
 	while ((mm = next_reap_victim())) {
 		if (IS_ERR(mm)) {
@@ -653,15 +671,21 @@ static void reap_victims(void)
 
 		/*
 		 * Try to reap the victim, and mark it as reaped so that
-		 * exit_mmap() skips it. The retry counter is reset only on
-		 * success: a victim whose mmu notifier blocks the reap keeps
-		 * neither MMF_OOM_SKIP nor a cleared MMF_OOM_VICTIM, so it is
-		 * offered again, and resetting on every acquisition would turn
-		 * that into an endless loop at RT priority.
+		 * exit_mmap() skips it. The mmap retry counter is reset only
+		 * on success: a victim whose mmu notifier blocks the reap
+		 * keeps neither MMF_OOM_SKIP nor a cleared MMF_OOM_VICTIM, so
+		 * it is offered again, and resetting on every acquisition
+		 * would turn that into an endless loop at RT priority. Bound
+		 * consecutive reap failures the same way, since this loop
+		 * otherwise spins forever on a victim that can never reap.
 		 */
 		if (__oom_reap_task_mm(mm)) {
 			set_bit(MMF_OOM_SKIP, &mm->flags);
 			retries = 0;
+			fails = 0;
+		} else if (++fails >= RECLAIM_EXPIRES) {
+			up_read(&mm->mmap_sem);
+			break;
 		}
 		up_read(&mm->mmap_sem);
 	}
@@ -872,6 +896,20 @@ static int set_target_mib(const char *val, const struct kernel_param *kp)
 	return 0;
 }
 
+static int set_reserve_mib(const char *val, const struct kernel_param *kp)
+{
+	unsigned int v = reserve_mib;
+	int ret = kstrtouint(val, 0, &v);
+
+	if (ret)
+		return ret;
+	/* 0 disables the floor; anything above 4 GiB would skip every reclaim */
+	if (v > 4096)
+		return -EINVAL;
+	reserve_mib = v;
+	return 0;
+}
+
 static const struct kernel_param_ops poll_msec_ops = {
 	.set = set_poll_msec,
 	.get = param_get_uint,
@@ -884,6 +922,11 @@ static const struct kernel_param_ops max_kills_ops = {
 
 static const struct kernel_param_ops target_mib_ops = {
 	.set = set_target_mib,
+	.get = param_get_uint,
+};
+
+static const struct kernel_param_ops reserve_mib_ops = {
+	.set = set_reserve_mib,
 	.get = param_get_uint,
 };
 
@@ -957,6 +1000,9 @@ module_param_cb(psi_window_us, &psi_window_ops, &psi_window_us, 0644);
 MODULE_PARM_DESC(psi_window_us, "PSI stall window in microseconds");
 module_param_cb(target_mib, &target_mib_ops, &target_mib, 0644);
 MODULE_PARM_DESC(target_mib, "MiB to free per reclaim; 0 derives it from RAM");
+module_param_cb(reserve_mib, &reserve_mib_ops, &reserve_mib, 0644);
+MODULE_PARM_DESC(reserve_mib,
+		"MiB of free memory below which routine reclaim may run; 0 disables");
 module_param_cb(max_kills, &max_kills_ops, &max_kills, 0644);
 MODULE_PARM_DESC(max_kills, "Maximum processes killed by a single reclaim");
 module_param_cb(poll_msec, &poll_msec_ops, &poll_msec, 0644);
