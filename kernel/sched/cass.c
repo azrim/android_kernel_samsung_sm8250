@@ -37,6 +37,18 @@ struct cass_cpu_cand {
 	unsigned long util;
 };
 
+/*
+ * Per-CPU relative-utilization thresholds below which a CPU counts as lightly
+ * loaded for low-capacity packing in cass_cpu_better(). CPUs 0-3 are little,
+ * 4-6 big, 7 prime on sm8250; values use the same relative-util scale as
+ * cass_cpu_cand::util. The prime threshold follows freqbench-derived
+ * most-efficient-frequency analysis.
+ * (Ported from sixteen: cfdf97aa1e541, a6bd572b12f78)
+ */
+unsigned int sched_util_threshold[NR_CPUS] = {
+	646, 646, 646, 646, 500, 500, 500, 450
+};
+
 static __always_inline
 void cass_cpu_util(struct cass_cpu_cand *c, int this_cpu, bool sync)
 {
@@ -96,11 +108,13 @@ bool cass_prime_cpu(const struct cass_cpu_cand *c)
 static __always_inline
 bool cass_cpu_better(const struct cass_cpu_cand *a,
 		     const struct cass_cpu_cand *b, unsigned long p_util,
-		     int this_cpu, int prev_cpu, bool sync)
+		     int this_cpu, int prev_cpu, bool sync,
+		     struct task_struct *p)
 {
 #define cass_cmp(a, b) ({ res = (a) - (b); })
 #define cass_eq(a, b) ({ res = (a) == (b); })
 	long res;
+	bool low_util, boosted;
 
 	/* Prefer the CPU that's not overloaded */
 	if (cass_cmp(b->eff_util / b->cap_max, a->eff_util / a->cap_max))
@@ -119,6 +133,22 @@ bool cass_cpu_better(const struct cass_cpu_cand *a,
 
 	/* Prefer the CPU that isn't the single fastest one in the system */
 	if (cass_cmp(cass_prime_cpu(b), cass_prime_cpu(a)))
+		goto done;
+
+	/*
+	 * Prefer the CPU with lower original capacity when both are lightly
+	 * loaded: smaller CPUs are more energy-efficient, and keeping light
+	 * work off big/prime saves power.
+	 * Exempt boosted important tasks (uclamp-min plus high priority) so
+	 * latency-sensitive work still ramps onto bigger CPUs.
+	 * (Ported from sixteen: cfdf97aa1e541, 4ddab4547e39d)
+	 */
+	low_util = a->cpu < NR_CPUS && b->cpu < NR_CPUS &&
+		   a->util <= sched_util_threshold[a->cpu] &&
+		   b->util <= sched_util_threshold[b->cpu];
+	boosted = uclamp_boosted(p) && p->prio <= DEFAULT_PRIO - 10;
+	if (low_util && !boosted &&
+	    cass_cmp(b->cap_orig, a->cap_orig))
 		goto done;
 
 	/* Prefer the CPU with lower relative utilization */
@@ -265,30 +295,38 @@ static int cass_best_cpu(struct task_struct *p, int prev_cpu, bool sync, bool rt
 		if (curr->util < uc_min)
 			curr->util = uc_min;
 
-		/*
-		 * Calculate the relative utilization for this CPU candidate
-		 * without thermal pressure included. Thermal pressure needs to
-		 * be disregarded in order to fairly distribute load such that
-		 * higher P-states aren't pushed on CPUs that are throttled to a
-		 * lesser degree. For example, if CPU A were throttled to 50% of
-		 * its maximum possible capacity, and CASS targeted 20% relative
-		 * load on all CPUs, CPU A would receive (20% * 50%) = 10% load
-		 * relative to its maximum possible P-state. This burden would
-		 * then be redistributed to other CPUs, causing a load imbalance
-		 * that would reduce CASS's energy efficiency due to
-		 * disproportionate P-states.
-		 */
-		curr->util =
-			curr->util * SCHED_CAPACITY_SCALE / curr->cap_no_therm;
+	/*
+	 * Calculate the relative utilization for this CPU candidate
+	 * without thermal pressure included. Thermal pressure needs to
+	 * be disregarded in order to fairly distribute load such that
+	 * higher P-states aren't pushed on CPUs that are throttled to a
+	 * lesser degree. For example, if CPU A were throttled to 50% of
+	 * its maximum possible capacity, and CASS targeted 20% relative
+	 * load on all CPUs, CPU A would receive (20% * 50%) = 10% load
+	 * relative to its maximum possible P-state. This burden would
+	 * then be redistributed to other CPUs, causing a load imbalance
+	 * that would reduce CASS's energy efficiency due to
+	 * disproportionate P-states.
+	 *
+	 * Clamp so an overutilized CPU compares equal to (not worse than)
+	 * a saturated one in the low-cap packing and relative-util steps
+	 * above; the overload ordering at the top of cass_cpu_better()
+	 * already handles the truly-overloaded distinction. Keeps the
+	 * relative-util scale within [0, SCHED_CAPACITY_SCALE] so threshold
+	 * comparisons stay meaningful.
+	 * (Ported from sixteen: f3265126fcad0)
+	 */
+		curr->util = min_t(unsigned long, SCHED_CAPACITY_SCALE,
+			curr->util * SCHED_CAPACITY_SCALE / curr->cap_no_therm);
 
-		/*
-		 * Check if this CPU is better than the best CPU found so far.
-		 * If @best == @curr then there's no need to compare them, but
-		 * cidx still needs to be changed to the other candidate slot.
-		 */
+	/*
+	 * Check if this CPU is better than the best CPU found so far.
+	 * If @best == @curr then there's no need to compare them, but
+	 * cidx still needs to be changed to the other candidate slot.
+	 */
 		if (best == curr ||
 		    cass_cpu_better(curr, best, p_util, this_cpu, prev_cpu,
-				    sync)) {
+				    sync, p)) {
 			best = curr;
 			cidx ^= 1;
 		}
