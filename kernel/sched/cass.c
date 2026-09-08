@@ -195,10 +195,6 @@ static int cass_best_cpu(struct task_struct *p, int prev_cpu, bool sync, bool rt
 		/* Get the _current_, throttled maximum capacity of this CPU */
 		curr->cap_max = curr->cap_orig - thermal_load_avg(rq);
 
-		/* Prefer the CPU that more closely meets the uclamp minimum */
-		if (curr->cap_max < uc_min && curr->cap_max < best->cap_max)
-			continue;
-
 		/*
 		 * Check if this CPU is idle or only has SCHED_IDLE tasks. For
 		 * sync wakes, treat the current CPU as idle if @current is the
@@ -213,9 +209,16 @@ static int cass_best_cpu(struct task_struct *p, int prev_cpu, bool sync, bool rt
 			 * minimum capacity, or when the only idle candidate
 			 * found so far is the prime CPU. Otherwise, prefer idle
 			 * candidates.
+			 *
+			 * Only let an idle CPU discard busy candidates if it can
+			 * meet @p's uclamp minimum at its current throttled
+			 * capacity. Otherwise a throttled idle CPU would poison
+			 * has_idle and block better-fitting busy CPUs. Tasks
+			 * without a uclamp minimum (uc_min == 0) are unaffected.
 			 */
 			if (!has_idle &&
 			    uc_min <= arch_scale_min_freq_capacity(cpu) &&
+			    uc_min <= curr->cap_max &&
 			    !cass_prime_cpu(curr)) {
 				/* Discard any previous non-idle candidate */
 				best = curr;

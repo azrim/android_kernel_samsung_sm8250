@@ -19,9 +19,22 @@
 
 #define IOWAIT_BOOST_MIN	(SCHED_CAPACITY_SCALE / 8)
 
+/*
+ * r8q: asymmetric DVFS rate limits for an 8-CPU phone SoC.
+ *
+ * Ramp up fast (500us) so interactive bursts get frequency immediately;
+ * decay slow (2ms) so frequency doesn't flap down between consecutive
+ * wakeups in a burst. A single limit can't do both: 2ms makes the UI
+ * wait up to 2ms for ramp, 500us both ways causes up/down flapping.
+ */
+#define SUGOV_UP_RATE_LIMIT_US		500
+#define SUGOV_DOWN_RATE_LIMIT_US	2000
+
 struct sugov_tunables {
 	struct gov_attr_set	attr_set;
 	unsigned int		rate_limit_us;
+	unsigned int		up_rate_limit_us;
+	unsigned int		down_rate_limit_us;
 };
 
 struct sugov_policy {
@@ -32,7 +45,8 @@ struct sugov_policy {
 
 	raw_spinlock_t		update_lock;	/* For shared policies */
 	u64			last_freq_update_time;
-	s64			freq_update_delay_ns;
+	s64			up_rate_delay_ns;
+	s64			down_rate_delay_ns;
 	unsigned int		next_freq;
 	unsigned int		cached_raw_freq;
 	unsigned int		prev_cached_raw_freq;
@@ -74,11 +88,18 @@ static unsigned int stale_ns;
 
 /************************ Governor internals ***********************/
 
-static bool sugov_should_rate_limit(struct sugov_policy *sg_policy, u64 time)
+static bool sugov_up_rate_limit(struct sugov_policy *sg_policy, u64 time)
 {
 	s64 delta_ns = time - sg_policy->last_freq_update_time;
 
-	return delta_ns < sg_policy->freq_update_delay_ns;
+	return delta_ns < sg_policy->up_rate_delay_ns;
+}
+
+static bool sugov_down_rate_limit(struct sugov_policy *sg_policy, u64 time)
+{
+	s64 delta_ns = time - sg_policy->last_freq_update_time;
+
+	return delta_ns < sg_policy->down_rate_delay_ns;
 }
 
 static bool sugov_should_update_freq(struct sugov_policy *sg_policy, u64 time)
@@ -118,10 +139,17 @@ static bool sugov_should_update_freq(struct sugov_policy *sg_policy, u64 time)
 		return true;
 	}
 
-	/* Rate-limit frequency increases even with invariant tracking to
-	 * avoid pinning at max while idle.
+	/* Rate-limit frequency decreases only. Frequency-invariant
+	 * utilization means increases are demand-driven, which pairs with
+	 * CASS's uclamp-aware placement: boosted tasks ramp fast, idle
+	 * decay is damped by the down rate limit below. Restoring the
+	 * upstream up-bypass reverts the freq-pinning workaround in
+	 * 6d0811e83fec5 now that the down path holds frequency steady.
 	 */
-	return !sugov_should_rate_limit(sg_policy, time);
+	if (arch_scale_freq_invariant())
+		return true;
+
+	return !sugov_up_rate_limit(sg_policy, time);
 }
 
 static bool sugov_update_next_freq(struct sugov_policy *sg_policy, u64 time,
@@ -142,19 +170,20 @@ static bool sugov_update_next_freq(struct sugov_policy *sg_policy, u64 time,
 	}
 
 	/*
-	 * When a frequency update isn't mandatory (!need_freq_update), the rate
-	 * limit is checked again upon frequency reduction because systems with
-	 * frequency-invariant utilization bypass the rate limit check entirely
-	 * in sugov_should_update_freq(). This is done so that the rate limit
-	 * can be applied only for frequency reduction when frequency-invariant
-	 * utilization is present. Now that the next frequency is known, the
-	 * rate limit can be selectively applied to frequency reduction on such
-	 * systems. A check for arch_scale_freq_invariant() is omitted here
-	 * because unconditionally rechecking the rate limit is cheaper.
+	 * When a frequency update isn't mandatory (!need_freq_update), the
+	 * down rate limit is checked upon frequency reduction because systems
+	 * with frequency-invariant utilization bypass the rate limit check
+	 * entirely in sugov_should_update_freq(). This is done so that the
+	 * rate limit can be applied only for frequency reduction when
+	 * frequency-invariant utilization is present. Now that the next
+	 * frequency is known, the down rate limit can be selectively applied
+	 * to frequency reduction on such systems. A check for
+	 * arch_scale_freq_invariant() is omitted here because unconditionally
+	 * rechecking the rate limit is cheaper.
 	 */
 	if (next_freq == sg_policy->next_freq ||
 	    (next_freq < sg_policy->next_freq &&
-	     sugov_should_rate_limit(sg_policy, time)))
+	     sugov_down_rate_limit(sg_policy, time)))
 		return false;
 
 must_update:
@@ -705,17 +734,59 @@ rate_limit_us_store(struct gov_attr_set *attr_set, const char *buf, size_t count
 		return -EINVAL;
 
 	tunables->rate_limit_us = rate_limit_us;
+	tunables->up_rate_limit_us = rate_limit_us;
+	tunables->down_rate_limit_us = rate_limit_us;
 
-	list_for_each_entry(sg_policy, &attr_set->policy_list, tunables_hook)
-		sg_policy->freq_update_delay_ns = rate_limit_us * NSEC_PER_USEC;
+	list_for_each_entry(sg_policy, &attr_set->policy_list, tunables_hook) {
+		sg_policy->up_rate_delay_ns = rate_limit_us * NSEC_PER_USEC;
+		sg_policy->down_rate_delay_ns = rate_limit_us * NSEC_PER_USEC;
+	}
 
 	return count;
 }
 
 static struct governor_attr rate_limit_us = __ATTR_RW(rate_limit_us);
 
+#define SUGOV_RATE_LIMIT_ATTR(name, field)				\
+static ssize_t name##_show(struct gov_attr_set *attr_set, char *buf)	\
+{									\
+	struct sugov_tunables *tunables = to_sugov_tunables(attr_set);	\
+									\
+	return sprintf(buf, "%u\n", tunables->field);			\
+}									\
+									\
+static ssize_t name##_store(struct gov_attr_set *attr_set,		\
+			    const char *buf, size_t count)		\
+{									\
+	struct sugov_tunables *tunables = to_sugov_tunables(attr_set);	\
+	struct sugov_policy *sg_policy;					\
+	unsigned int val;						\
+									\
+	if (kstrtouint(buf, 10, &val))					\
+		return -EINVAL;						\
+									\
+	tunables->field = val;						\
+									\
+	list_for_each_entry(sg_policy, &attr_set->policy_list,		\
+			    tunables_hook) {				\
+		sg_policy->up_rate_delay_ns =				\
+			tunables->up_rate_limit_us * NSEC_PER_USEC;	\
+		sg_policy->down_rate_delay_ns =				\
+			tunables->down_rate_limit_us * NSEC_PER_USEC;	\
+	}								\
+									\
+	return count;							\
+}									\
+									\
+static struct governor_attr name = __ATTR_RW(name)
+
+SUGOV_RATE_LIMIT_ATTR(up_rate_limit_us, up_rate_limit_us);
+SUGOV_RATE_LIMIT_ATTR(down_rate_limit_us, down_rate_limit_us);
+
 static struct attribute *sugov_attributes[] = {
 	&rate_limit_us.attr,
+	&up_rate_limit_us.attr,
+	&down_rate_limit_us.attr,
 	NULL
 };
 
@@ -885,7 +956,9 @@ static int sugov_init(struct cpufreq_policy *policy)
 		goto stop_kthread;
 	}
 
-	tunables->rate_limit_us = 2000;
+	tunables->rate_limit_us = SUGOV_DOWN_RATE_LIMIT_US;
+	tunables->up_rate_limit_us = SUGOV_UP_RATE_LIMIT_US;
+	tunables->down_rate_limit_us = SUGOV_DOWN_RATE_LIMIT_US;
 
 	policy->governor_data = sg_policy;
 	sg_policy->tunables = tunables;
@@ -947,7 +1020,8 @@ static int sugov_start(struct cpufreq_policy *policy)
 	struct sugov_policy *sg_policy = policy->governor_data;
 	unsigned int cpu;
 
-	sg_policy->freq_update_delay_ns	= sg_policy->tunables->rate_limit_us * NSEC_PER_USEC;
+	sg_policy->up_rate_delay_ns	= sg_policy->tunables->up_rate_limit_us * NSEC_PER_USEC;
+	sg_policy->down_rate_delay_ns	= sg_policy->tunables->down_rate_limit_us * NSEC_PER_USEC;
 	sg_policy->last_freq_update_time	= 0;
 	sg_policy->next_freq			= 0;
 	sg_policy->work_in_progress		= false;

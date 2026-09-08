@@ -1304,12 +1304,20 @@ bool uclamp_latency_sensitive(struct task_struct *p)
 	if (!css)
 		return false;
 	tg = container_of(css, struct task_group, css);
-	/* On OneUI, cgroup latency_sensitive is never set. Allow top-app
-	 * tasks (prio < 120) to prefer idle for EAS/CASS packing.
-	 */
 	if (tg->latency_sensitive)
 		return true;
-	return p->prio < 120;
+	/*
+	 * r8q: narrow the OneUI fallback. Treating every task with prio <
+	 * DEFAULT_PRIO (i.e. all nice < 0, incl. every display/compositor
+	 * thread) as latency-sensitive made CASS/EAS prefer idle CPUs for
+	 * background work too, spreading load onto big/prime and hurting
+	 * battery. Only RT tasks and tasks with an explicit uclamp-min
+	 * boost get idle preference; ordinary top-app still packs via
+	 * CASS relative-utilization without the idle fast-path.
+	 */
+	if (rt_task(p))
+		return true;
+	return uclamp_eff_value(p, UCLAMP_MIN) > 0;
 #endif
 }
 #endif /* CONFIG_SMP */
