@@ -14,13 +14,13 @@
 #define DRAWQUEUE_NEXT(_i, _s) (((_i) + 1) % (_s))
 
 /* Number of commands that can be queued in a context before it sleeps */
-static unsigned int _context_drawqueue_size = 50;
+static unsigned int _context_drawqueue_size = 64;
 
 /* Number of milliseconds to wait for the context queue to clear */
 static unsigned int _context_queue_wait = 10000;
 
 /* Number of drawobjs sent at a time from a single context */
-static unsigned int _context_drawobj_burst = 5;
+static unsigned int _context_drawobj_burst = 8;
 
 /*
  * GFT throttle parameters. If GFT recovered more than
@@ -41,13 +41,13 @@ static unsigned int _dispatcher_q_inflight_hi = 15;
  * Minimum inflight for the multiple context case - this should sufficiently low
  * to allow for lower latency context switching
  */
-static unsigned int _dispatcher_q_inflight_lo = 4;
+static unsigned int _dispatcher_q_inflight_lo = 8;
 
 /* Command batch timeout (in milliseconds) */
 unsigned int adreno_drawobj_timeout = 2000;
 
 /* Interval for reading and comparing fault detection registers */
-static unsigned int _fault_timer_interval = 200;
+static unsigned int _fault_timer_interval = 100;
 
 #define DRAWQUEUE_RB(_drawqueue) \
 	((struct adreno_ringbuffer *) \
@@ -593,6 +593,13 @@ static int sendcmd(struct adreno_device *adreno_dev,
 
 	if (dispatcher->inflight == 1) {
 		if (ret == 0) {
+			/*
+			 * The queue was drained before this submit, so the
+			 * TZ governor has no recent busy sample.  Step one
+			 * level up now instead of waiting for the first
+			 * retired sample to ramp.
+			 */
+			kgsl_pwrscale_submit_boost(device);
 
 			/* Stop fault timer before reading fault registers */
 			del_timer_sync(&dispatcher->fault_timer);

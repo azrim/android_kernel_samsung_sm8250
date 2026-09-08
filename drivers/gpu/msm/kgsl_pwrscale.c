@@ -100,6 +100,37 @@ void kgsl_pwrscale_busy(struct kgsl_device *device)
 EXPORT_SYMBOL(kgsl_pwrscale_busy);
 
 /**
+ * kgsl_pwrscale_submit_boost() - pre-warm the GPU level on new submissions
+ * @device: The device
+ *
+ * Called when the first command is submitted after the dispatcher queue
+ * drained.  The TZ governor only acts on retired samples, so an idle GPU
+ * serving a new frame starts one or two windows behind the workload.
+ * Step one level up immediately so the new batch starts closer to the
+ * frequency the governor would settle at; constraints and thermal limits
+ * in kgsl_pwrctrl_pwrlevel_change() still bound the step.
+ *
+ * This function must be called with the device mutex locked.
+ */
+void kgsl_pwrscale_submit_boost(struct kgsl_device *device)
+{
+	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
+
+	if (!device->pwrscale.enabled)
+		return;
+
+	if (device->state != KGSL_STATE_ACTIVE)
+		return;
+
+	/* Already at or above the UI sweet spot, nothing to pre-warm */
+	if (pwr->active_pwrlevel <= 1)
+		return;
+
+	kgsl_pwrctrl_pwrlevel_change(device, pwr->active_pwrlevel - 1);
+}
+EXPORT_SYMBOL(kgsl_pwrscale_submit_boost);
+
+/**
  * kgsl_pwrscale_update_stats() - update device busy statistics
  * @device: The device
  *
@@ -744,8 +775,8 @@ int kgsl_pwrscale_init(struct device *dev, const char *governor)
 
 	profile->initial_freq =
 		pwr->pwrlevels[pwr->num_pwrlevels - 1].gpu_freq;
-	/* Let's start with 10 ms and tune in later */
-	profile->polling_ms = 10;
+	/* Sample every governor window so ramp decisions track frames */
+	profile->polling_ms = 5;
 
 	/* do not include the 'off' level or duplicate freq. levels */
 	for (i = 0; i < (pwr->num_pwrlevels - 1); i++)
