@@ -197,6 +197,8 @@ struct zram {
 	u64 disksize;	/* bytes */
 	char compressor[CRYPTO_MAX_ALG_NAME];
 	struct delayed_work compact_work;
+	/* writestall count consumed by the last compaction pass */
+	unsigned long compact_stall_seen;
 	/*
 	 * zram is claimed so open request will be failed
 	 */
