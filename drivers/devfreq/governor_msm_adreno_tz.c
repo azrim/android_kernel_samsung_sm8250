@@ -22,21 +22,21 @@ static DEFINE_SPINLOCK(tz_lock);
 static DEFINE_SPINLOCK(sample_lock);
 static DEFINE_SPINLOCK(suspend_lock);
 /*
- * FLOOR is 5msec to capture up to 3 re-draws
- * per frame for 60fps content.
+ * FLOOR is 3msec to capture up to 2 re-draws
+ * per frame for 120fps content.
  */
-#define FLOOR		        5000
+#define FLOOR		        3000
 /*
- * MIN_BUSY is 1 msec for the sample to be sent
+ * MIN_BUSY is 0.5 msec for the sample to be sent
  */
-#define MIN_BUSY		1000
+#define MIN_BUSY		500
 #define MAX_TZ_VERSION		0
 
 /*
- * CEILING is 50msec, larger than any standard
+ * CEILING is 25msec, larger than any standard
  * frame length, but less than the idle timer.
  */
-#define CEILING			50000
+#define CEILING			25000
 #define TZ_RESET_ID		0x3
 #define TZ_UPDATE_ID		0x4
 #define TZ_INIT_ID		0x6
@@ -387,6 +387,17 @@ static int tz_get_target_freq(struct devfreq *devfreq, unsigned long *freq)
 
 	/* Update the GPU load statistics */
 	compute_work_load(stats, priv, devfreq);
+	/*
+	 * An idle sample means the previous batch fully retired.  Drop the
+	 * window accumulated so far: keeping idle time dilutes the busy
+	 * ratio of the next burst and delays the ramp by one extra window.
+	 * Only the busy tail below matters for the next decision.
+	 */
+	if (stats->busy_time == 0 && priv->bin.total_time >= FLOOR / 2) {
+		priv->bin.total_time = 0;
+		priv->bin.busy_time = 0;
+		return 0;
+	}
 	/*
 	 * Do not waste CPU cycles running this algorithm if
 	 * the GPU just started, or if less than FLOOR time
