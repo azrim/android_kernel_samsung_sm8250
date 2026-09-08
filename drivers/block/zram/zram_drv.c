@@ -2271,6 +2271,15 @@ static ssize_t compact_store(struct device *dev,
 	zs_compact(zram->mem_pool);
 	up_read(&zram->init_lock);
 
+	/*
+	 * Best-effort only: re-arm the backoff timer so the next
+	 * background pass stays distant. mod_delayed_work() also
+	 * collapses a race with the worker's own reschedule into a
+	 * single timer instead of stacking two.
+	 */
+	mod_delayed_work(system_wq, &zram->compact_work,
+			 msecs_to_jiffies(300000));
+
 	return len;
 }
 
@@ -2278,29 +2287,64 @@ static void zram_auto_compact_work(struct work_struct *work)
 {
 	struct zram *zram = container_of(to_delayed_work(work),
 			struct zram, compact_work);
-	unsigned long interval = msecs_to_jiffies(60000);
+	unsigned long interval = msecs_to_jiffies(300000);
 	unsigned long total_before, total_after;
+	unsigned long writestall;
 
+	/*
+	 * Best-effort background pass only: take the read side so a
+	 * racing reset (write side) cancels this run instead of
+	 * compacting a pool that is being torn down.
+	 */
+	if (!down_read_trylock(&zram->init_lock))
+		goto resched;
+	if (!init_done(zram) || !zram->mem_pool) {
+		up_read(&zram->init_lock);
+		goto resched;
+	}
+
+	total_before = zs_get_total_pages(zram->mem_pool);
+	writestall = (unsigned long)atomic64_read(&zram->stats.writestall);
+	up_read(&zram->init_lock);
+
+	/*
+	 * Nothing has stalled since the last pass: the pool is not
+	 * fragmented in a way that matters, so stay backed off.
+	 */
+	if (writestall == zram->compact_stall_seen)
+		goto resched;
+
+	zs_compact(zram->mem_pool);
+	zram->compact_stall_seen = writestall;
+
+	if (!down_read_trylock(&zram->init_lock))
+		goto resched;
 	if (init_done(zram) && zram->mem_pool) {
-		total_before = zs_get_total_pages(zram->mem_pool);
-		zs_compact(zram->mem_pool);
 		total_after = zs_get_total_pages(zram->mem_pool);
 
-		/* Adaptive interval: compact frequently while compaction
-		 * yields pages (fragmentation present), back off when it
-		 * doesn't. Under high pool usage (>= 90% of disksize)
+		/*
+		 * Compaction only earns its CPU when the write path is
+		 * actually stalling on allocation: compact frequently
+		 * while it yields pages or pressure is high, back off
+		 * otherwise. Under high pool usage (>= 90% of disksize)
 		 * compact as aggressively as possible.
 		 */
 		if (total_after < total_before)
 			interval = msecs_to_jiffies(30000);
-		else
-			interval = msecs_to_jiffies(300000);
 
 		if (total_after > (zram->disksize >> PAGE_SHIFT) * 9 / 10)
 			interval = min(interval, msecs_to_jiffies(10000));
 	}
+	up_read(&zram->init_lock);
 
-	schedule_delayed_work(&zram->compact_work, interval);
+resched:
+	/*
+	 * mod_delayed_work() keeps exactly one instance queued: without
+	 * it a racing compact_store() plus the self-reschedule below
+	 * stack two timers and compact twice as often as intended.
+	 */
+	if (likely(init_done(zram)))
+		mod_delayed_work(system_wq, &zram->compact_work, interval);
 }
 
 static ssize_t io_stat_show(struct device *dev,
@@ -2855,21 +2899,16 @@ compress_again:
 			goto compress_again;
 		}
 		/*
-		 * Pool may be fragmented. Compact and retry once before
-		 * giving up — a failed swap write forces page eviction
-		 * and can cause trashing.
+		 * Still nothing free. Kick the background compaction
+		 * worker closer instead of compacting inline: zs_compact()
+		 * walks every size class with preemption enabled, which
+		 * stalls this swap write (and every writer behind it) and
+		 * then gets re-done by the timer anyway. Fail the write
+		 * and let the worker defragment the pool; the writestall
+		 * counter it left behind pulls the next pass nearer.
 		 */
-		zs_compact(zram->mem_pool);
-		entry = zram_entry_alloc(zram, comp_len,
-				GFP_NOIO | __GFP_HIGHMEM |
-				__GFP_MOVABLE | __GFP_CMA);
-		if (entry) {
-			if (comp_len == PAGE_SIZE) {
-				zstrm = zcomp_stream_get(zram->comp);
-				goto alloced_entry;
-			}
-			goto compress_again;
-		}
+		mod_delayed_work(system_wq, &zram->compact_work,
+				 msecs_to_jiffies(30000));
 		return -ENOMEM;
 	}
 
