@@ -805,6 +805,16 @@ static int psi_trigger_swap(void)
 	if (IS_ERR(new))
 		return PTR_ERR(new);
 
+	/*
+	 * psi identifies the ULMK trigger by t->comm: update_triggers() arms
+	 * its watchdog timer, and psi_emergency_trigger()/psi_is_trigger_active()
+	 * match on it. psi_trigger_create() stamps the comm of whichever task
+	 * called it, which is lmkd on the minfree init write but an arbitrary
+	 * shell when the threshold or window is swept at runtime. Force the
+	 * magic name so those paths keep working regardless of the writer.
+	 */
+	memcpy(new->comm, ULMK_MAGIC, sizeof(ULMK_MAGIC));
+
 	old = mem_trigger;
 	mem_trigger = new;
 	/*
