@@ -691,8 +691,18 @@ static void reap_victims(void)
 			retries = 0;
 			fails = 0;
 		} else if (++fails >= RECLAIM_EXPIRES) {
-			up_read(&mm->mmap_sem);
-			break;
+			/*
+			 * This victim's mmu notifier persistently refuses to
+			 * invalidate (e.g. a GPU or DMA-BUF mapping), so the
+			 * reap can never succeed. Mark the mm skipped so that
+			 * next_reap_victim() moves on to the remaining victims
+			 * instead of abandoning the whole batch -- which is
+			 * what upstream oom_reap_task() does after exhausting
+			 * its retries. The victim is still dying, so
+			 * exit_mmap() will unmap the rest.
+			 */
+			set_bit(MMF_OOM_SKIP, &mm->flags);
+			fails = 0;
 		}
 		up_read(&mm->mmap_sem);
 	}
