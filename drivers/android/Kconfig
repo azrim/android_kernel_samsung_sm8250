@@ -97,13 +97,15 @@ config ANDROID_SIMPLE_LMK_PSI_WINDOW_US
 
 config ANDROID_SIMPLE_LMK_MAX_KILLS
 	int "Maximum processes killed per reclaim"
-	range 1 1024
+	range 1 256
 	default 6
 	help
 	  Upper bound on how many processes a single reclaim may kill,
 	  independent of how much memory that frees. This is the hard stop on
 	  over-kill: a reclaim that cannot reach its target kills at most this
 	  many processes and lets the next PSI window finish the job.
+	  The victim array holds 256 entries, so a larger cap cannot take
+	  effect.
 
 config ANDROID_SIMPLE_LMK_TIMEOUT_MSEC
 	int "Reaper retry timeout in milliseconds"
