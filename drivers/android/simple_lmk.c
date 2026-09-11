@@ -903,7 +903,12 @@ static int set_max_kills(const char *val, const struct kernel_param *kp)
 
 	if (ret)
 		return ret;
-	if (v < 1 || v > 1024)
+	/*
+	 * A single reclaim can never kill more than MAX_VICTIMS: the victim
+	 * array is that size. Reject a larger request rather than accepting
+	 * it and silently clamping the effective cap in scan_and_kill().
+	 */
+	if (v < 1 || v > MAX_VICTIMS)
 		return -EINVAL;
 	max_kills = v;
 	return 0;
