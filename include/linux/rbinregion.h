@@ -56,7 +56,7 @@ int region_load_cache(struct rr_handle *handle, struct page *page,
 int region_flush_cache(struct rr_handle *handle);
 bool try_get_rbincache(void);
 void put_rbincache(void);
-void init_region(unsigned long pfn, unsigned long nr_pages,
+int init_region(unsigned long pfn, unsigned long nr_pages,
 		const struct region_ops *ops);
 /* rbin region api's end */
 

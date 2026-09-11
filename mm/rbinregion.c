@@ -183,7 +183,7 @@ int region_flush_cache(struct rr_handle *handle)
 	return region_load_cache(handle, NULL, 0, 0, 0);
 }
 
-void init_region(unsigned long pfn, unsigned long nr_pages,
+int init_region(unsigned long pfn, unsigned long nr_pages,
 		const struct region_ops *ops)
 {
 	struct rr_handle *handle;
@@ -197,6 +197,10 @@ void init_region(unsigned long pfn, unsigned long nr_pages,
 	spin_lock_init(&region.region_lock);
 	region.handles = (struct rr_handle *)vzalloc(nr_pages *
 			sizeof(struct rr_handle));
+	if (!region.handles) {
+		pr_err("Failed to allocate %lu region handles\n", nr_pages);
+		return -ENOMEM;
+	}
 	INIT_LIST_HEAD(&region.freelist);
 	INIT_LIST_HEAD(&region.usedlist);
 	for (i = 0; i < nr_pages; i++) {
@@ -205,6 +209,7 @@ void init_region(unsigned long pfn, unsigned long nr_pages,
 		list_add(&handle->lru, &region.freelist);
 	}
 	mod_zone_page_state(region.zone, NR_FREE_RBIN_PAGES, totalrbin_pages);
+	return 0;
 }
 /* region management end */
 
