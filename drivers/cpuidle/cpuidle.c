@@ -135,6 +135,15 @@ static void enter_s2idle_proper(struct cpuidle_driver *drv,
 {
 	ktime_t time_start, time_end;
 
+	/*
+	 * FIE excludes the idle window from its frequency sample by banking
+	 * the counters on entry and refreshing them on exit. The regular
+	 * cpuidle path does that in cpuidle_enter_state(), but
+	 * suspend-to-idle enters the state through ->enter_s2idle() instead,
+	 * so without the same hooks here the whole suspend window would be
+	 * folded into one sample.
+	 */
+	fie_idle_enter();
 	time_start = ns_to_ktime(local_clock());
 
 	/*
@@ -163,6 +172,7 @@ static void enter_s2idle_proper(struct cpuidle_driver *drv,
 	start_critical_timings();
 
 	time_end = ns_to_ktime(local_clock());
+	fie_idle_exit();
 
 	dev->states_usage[index].s2idle_time += ktime_us_delta(time_end, time_start);
 	dev->states_usage[index].s2idle_usage++;
