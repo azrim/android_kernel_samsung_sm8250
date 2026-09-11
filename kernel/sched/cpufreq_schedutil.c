@@ -181,10 +181,21 @@ static bool sugov_update_next_freq(struct sugov_policy *sg_policy, u64 time,
 	 * arch_scale_freq_invariant() is omitted here because unconditionally
 	 * rechecking the rate limit is cheaper.
 	 */
-	if (next_freq == sg_policy->next_freq ||
-	    (next_freq < sg_policy->next_freq &&
-	     sugov_down_rate_limit(sg_policy, time)))
+	if (next_freq == sg_policy->next_freq)
 		return false;
+
+	if (next_freq < sg_policy->next_freq &&
+	    sugov_down_rate_limit(sg_policy, time)) {
+		/*
+		 * The decrease is rejected, so next_freq keeps its previous
+		 * (higher) value. Put back the raw frequency that was cached
+		 * before this request, otherwise get_next_freq() would
+		 * short-circuit on the rejected value and the decrease would
+		 * never be retried once the rate limit window has expired.
+		 */
+		sg_policy->cached_raw_freq = sg_policy->prev_cached_raw_freq;
+		return false;
+	}
 
 must_update:
 	sg_policy->next_freq = next_freq;
