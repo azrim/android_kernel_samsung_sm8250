@@ -361,12 +361,19 @@ static unsigned long reclaim_target_pages(void)
 {
 	unsigned int mib = target_mib;
 
+	/*
+	 * Clamp only the value derived from RAM. A value written to
+	 * target_mib is already range-checked by set_target_mib(), and
+	 * silently shrinking it to TARGET_MAX_MIB would make the parameter
+	 * a lie for anything above 256.
+	 */
 	if (!mib)
-		mib = (totalram_pages >> (20 - PAGE_SHIFT)) /
-			TARGET_RAM_DIVISOR;
+		mib = clamp_t(unsigned long,
+			      (totalram_pages >> (20 - PAGE_SHIFT)) /
+			      TARGET_RAM_DIVISOR,
+			      TARGET_MIN_MIB, TARGET_MAX_MIB);
 
-	return clamp_t(unsigned long, mib, TARGET_MIN_MIB, TARGET_MAX_MIB) *
-		SZ_1M / PAGE_SIZE;
+	return (unsigned long)mib * SZ_1M / PAGE_SIZE;
 }
 
 /* Returns whether any victim was killed */
