@@ -655,7 +655,11 @@ int init_rbincache(unsigned long pfn, unsigned long nr_pages)
 	int err = 0;
 
 	totalrbin_pages = nr_pages;
-	init_region(pfn, nr_pages, &rc_region_ops);
+	err = init_region(pfn, nr_pages, &rc_region_ops);
+	if (err) {
+		pr_err("region initialization failed\n");
+		goto error;
+	}
 
 	err = rc_rbnode_cache_create();
 	if (err) {
