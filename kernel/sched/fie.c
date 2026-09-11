@@ -675,7 +675,18 @@ static int __init fie_init(void)
 	/* Register the CPU hotplug notifier with calls to all online CPUs */
 	cpuhp_state = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "fie",
 					fie_cpuhp_up, fie_cpuhp_down);
-	BUG_ON(cpuhp_state <= 0);
+	if (cpuhp_state <= 0) {
+		/*
+		 * The arch scale_freq_data callback was cleared above and FIE
+		 * is not going to install its own, so frequency invariance
+		 * falls back to whatever cpufreq provides. FIE is built into
+		 * the kernel and has no way to recover here, but a failed perf
+		 * event registration must not turn a boot into a panic.
+		 */
+		pr_err("FIE: failed to register CPU hotplug state (%d)\n",
+		       cpuhp_state);
+		return cpuhp_state;
+	}
 
 	/* Precompute arithmetic to convert between ticks and nanoseconds */
 	calc_cntpct_arith();
