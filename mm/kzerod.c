@@ -995,14 +995,28 @@ skip_hugepage_pool_init:
 #endif
 	ret = kzerod_mount();
 	if (ret)
-		goto out;
-	if (kzerod_register_migration())
-		goto out;
+		goto err_disable;
+	if (kzerod_register_migration()) {
+		ret = -ENOMEM;
+		goto err_unmount;
+	}
 
 	return 0;
-out:
-	BUG();
-	return -EINVAL;
+
+err_unmount:
+	kern_unmount(kzerod_mnt);
+	kzerod_mnt = NULL;
+err_disable:
+	/*
+	 * The mount and the anonymous inode are what make a prezeroed page
+	 * migratable, so without them the prezeroing thread must not hand
+	 * pages out. Disable the feature and let the boot continue: this is
+	 * built into the kernel, and panicking here would only turn a failed
+	 * allocation into an unbootable device.
+	 */
+	kzerod_enabled = false;
+	pr_err("Failed to initialize kzerod (%d), feature disabled\n", ret);
+	return ret;
 }
 
 static void __exit kzerod_exit(void)
