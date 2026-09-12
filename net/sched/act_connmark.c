@@ -161,14 +161,16 @@ static inline int tcf_connmark_dump(struct sk_buff *skb, struct tc_action *a,
 	unsigned char *b = skb_tail_pointer(skb);
 	struct tcf_connmark_info *ci = to_connmark(a);
 
-	struct tc_connmark opt = {
-		.index   = ci->tcf_index,
-		.refcnt  = refcount_read(&ci->tcf_refcnt) - ref,
-		.bindcnt = atomic_read(&ci->tcf_bindcnt) - bind,
-		.action  = ci->tcf_action,
-		.zone   = ci->zone,
-	};
+	struct tc_connmark opt;
 	struct tcf_t t;
+
+	memset(&opt, 0, sizeof(opt));
+
+	opt.index   = ci->tcf_index;
+	opt.refcnt  = refcount_read(&ci->tcf_refcnt) - ref;
+	opt.bindcnt = atomic_read(&ci->tcf_bindcnt) - bind;
+	opt.action  = ci->tcf_action;
+	opt.zone    = ci->zone;
 
 	if (nla_put(skb, TCA_CONNMARK_PARMS, sizeof(opt), &opt))
 		goto nla_put_failure;
