@@ -7236,7 +7236,12 @@ static int rtl8152_probe(struct usb_interface *intf,
 	if (intf->cur_altsetting->desc.bNumEndpoints < 3)
 		return -ENODEV;
 
-	usb_reset_device(udev);
+	ret = usb_reset_device(udev);
+	if (ret < 0) {
+		dev_err(&intf->dev, "USB reset failed, errno=%d\n", ret);
+		return ret;
+	}
+
 	netdev = alloc_etherdev(sizeof(struct r8152));
 	if (!netdev) {
 		dev_err(&intf->dev, "Out of memory\n");
