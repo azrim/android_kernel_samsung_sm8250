@@ -47,7 +47,7 @@ static int tcf_bpf_act(struct sk_buff *skb, const struct tc_action *act,
 	bstats_cpu_update(this_cpu_ptr(prog->common.cpu_bstats), skb);
 
 	rcu_read_lock();
-	filter = rcu_dereference(prog->filter);
+	filter = rcu_dereference_bh(prog->filter);
 	if (at_ingress) {
 		__skb_push(skb, skb->mac_len);
 		bpf_compute_data_pointers(skb);
