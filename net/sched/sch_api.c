@@ -964,6 +964,9 @@ static int qdisc_graft(struct net_device *dev, struct Qdisc *parent,
 	if (parent == NULL) {
 		unsigned int i, num_q, ingress;
 
+		if (new)
+			new->depth = 0;
+
 		ingress = 0;
 		num_q = dev->num_tx_queues;
 		if ((q && q->flags & TCQ_F_INGRESS) ||
@@ -1029,8 +1032,13 @@ skip:
 				if (new && new->ops == &noqueue_qdisc_ops) {
 					NL_SET_ERR_MSG(extack, "Cannot assign noqueue to a class");
 					err = -EINVAL;
+				} else if (new && parent->depth >= 7) {
+					NL_SET_ERR_MSG(extack, "Qdisc hierarchy is too deep");
+					err = -E2BIG;
 				} else {
 					err = cops->graft(parent, cl, new, &old, extack);
+					if (!err && new)
+						new->depth = parent->depth + 1;
 				}
 			} else {
 				NL_SET_ERR_MSG(extack, "Specified class not found");
