@@ -380,7 +380,8 @@ out_undo:
 
 static int __net_init net_defaults_init_net(struct net *net)
 {
-	net->core.sysctl_somaxconn = SOMAXCONN;
+	/* SOMAXCONN (128) is too small for modern app listen backlogs */
+	net->core.sysctl_somaxconn = 1024;
 	return 0;
 }
 
