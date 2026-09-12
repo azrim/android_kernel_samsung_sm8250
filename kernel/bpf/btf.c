@@ -1460,7 +1460,16 @@ static void btf_free_id(struct btf *btf)
 	 * of the _bh() version.
 	 */
 	spin_lock_irqsave(&btf_idr_lock, flags);
-	idr_remove(&btf_idr, btf->id);
+	if (btf->id) {
+		idr_remove(&btf_idr, btf->id);
+		/*
+		 * Clear the id here to make this function idempotent, since it will get
+		 * called a couple of times for module BTFs: on module unload, and then
+		 * the final btf_put(). btf_alloc_id() starts IDs with 1, so we can use
+		 * 0 as sentinel value.
+		 */
+		WRITE_ONCE(btf->id, 0);
+	}
 	spin_unlock_irqrestore(&btf_idr_lock, flags);
 }
 
@@ -5427,7 +5436,7 @@ static void bpf_btf_show_fdinfo(struct seq_file *m, struct file *filp)
 {
 	const struct btf *btf = filp->private_data;
 
-	seq_printf(m, "btf_id:\t%u\n", btf->id);
+	seq_printf(m, "btf_id:\t%u\n", READ_ONCE(btf->id));
 }
 #endif
 
@@ -5520,7 +5529,7 @@ int btf_get_info_by_fd(const struct btf *btf,
 	if (copy_from_user(&info, uinfo, info_copy))
 		return -EFAULT;
 
-	info.id = btf->id;
+	info.id = READ_ONCE(btf->id);
 	ubtf = u64_to_user_ptr(info.btf);
 	btf_copy = min_t(u32, btf->data_size, info.btf_size);
 	if (copy_to_user(ubtf, btf->data, btf_copy))
@@ -5557,7 +5566,7 @@ int btf_get_fd_by_id(u32 id)
 
 u32 btf_id(const struct btf *btf)
 {
-	return btf->id;
+	return READ_ONCE(btf->id);
 }
 
 static int btf_id_cmp_func(const void *a, const void *b)
