@@ -4652,7 +4652,6 @@ try_onemore:
 		}
 	} else {
 		err = f2fs_recover_fsync_data(sbi, true);
-
 		if (err > 0) {
 			if (!f2fs_readonly(sb)) {
 				f2fs_err(sbi, "Need to recover fsync data");
