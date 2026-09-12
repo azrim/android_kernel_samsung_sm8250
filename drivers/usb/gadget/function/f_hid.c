@@ -1338,6 +1338,7 @@ static struct usb_function *hidg_alloc(struct usb_function_instance *fi)
 	hidg->dev.devt = MKDEV(major, opts->minor);
 	ret = dev_set_name(&hidg->dev, "hidg%d", opts->minor);
 	if (ret) {
+		put_device(&hidg->dev);
 		--opts->refcnt;
 		mutex_unlock(&opts->lock);
 		return ERR_PTR(ret);
