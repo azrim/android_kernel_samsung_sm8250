@@ -655,7 +655,7 @@ event_trigger_callback(struct event_command *cmd_ops,
 
 	if (glob[0] == '!') {
 		cmd_ops->unreg(glob+1, trigger_ops, trigger_data, file);
-		kfree(trigger_data);
+		trigger_data_free(trigger_data);
 		ret = 0;
 		goto out;
 	}
@@ -709,7 +709,7 @@ event_trigger_callback(struct event_command *cmd_ops,
  out_free:
 	if (cmd_ops->set_filter)
 		cmd_ops->set_filter(NULL, trigger_data, NULL);
-	kfree(trigger_data);
+	trigger_data_free(trigger_data);
 	goto out;
 }
 
