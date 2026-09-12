@@ -1512,7 +1512,8 @@ page_hit:
 			  ofs_of_node(page), cpver_of_node(page),
 			  next_blkaddr_of_node(page));
 	set_sbi_flag(sbi, SBI_NEED_FSCK);
-	err = -EINVAL;
+	f2fs_handle_error(sbi, ERROR_INCONSISTENT_FOOTER);
+	err = -EFSCORRUPTED;
 out_err:
 	if (PageUptodate(page)) {
 		print_block_data(sbi->sb, nid, page_address(page), 0, F2FS_BLKSIZE);
