@@ -617,7 +617,10 @@ EXPORT_SYMBOL_GPL(__page_mapcount);
 int sysctl_overcommit_memory __read_mostly = OVERCOMMIT_GUESS;
 int sysctl_overcommit_ratio __read_mostly = 50;
 unsigned long sysctl_overcommit_kbytes __read_mostly;
-int sysctl_max_map_count __read_mostly = DEFAULT_MAX_MAP_COUNT;
+/* DEFAULT_MAX_MAP_COUNT (65530) is too low for memory-heavy apps; Android
+ * raises this at runtime, so make it the kernel default too.
+ */
+int sysctl_max_map_count __read_mostly = 262144;
 unsigned long sysctl_user_reserve_kbytes __read_mostly = 1UL << 17; /* 128MB */
 unsigned long sysctl_admin_reserve_kbytes __read_mostly = 1UL << 13; /* 8MB */
 
