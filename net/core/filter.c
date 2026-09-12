@@ -5347,7 +5347,7 @@ static int bpf_ipv4_fib_lookup(struct net *net, struct bpf_fib_lookup *params,
 	struct net_device *dev;
 	struct fib_result res;
 	struct fib_nh *nh;
-	struct flowi4 fl4;
+	struct flowi4 fl4 = {};
 	int err;
 	u32 mtu;
 
@@ -5454,7 +5454,7 @@ static int bpf_ipv6_fib_lookup(struct net *net, struct bpf_fib_lookup *params,
 	struct net_device *dev;
 	struct inet6_dev *idev;
 	struct fib6_info *f6i;
-	struct flowi6 fl6;
+	struct flowi6 fl6 = {};
 	int strict = 0;
 	int oif;
 	u32 mtu;
