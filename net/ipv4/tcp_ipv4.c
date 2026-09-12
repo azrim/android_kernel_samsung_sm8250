@@ -85,6 +85,7 @@
 
 #include <crypto/algapi.h>
 #include <crypto/hash.h>
+#include <crypto/algapi.h>
 #include <linux/scatterlist.h>
 
 #include <trace/events/tcp.h>
