@@ -375,6 +375,7 @@ struct hci_dev {
 	struct discovery_state	discovery;
 	struct hci_conn_hash	conn_hash;
 
+	struct mutex		mgmt_pending_lock;
 	struct list_head	mgmt_pending;
 	struct list_head	blacklist;
 	struct list_head	whitelist;
