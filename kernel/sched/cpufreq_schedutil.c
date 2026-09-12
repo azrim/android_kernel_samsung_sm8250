@@ -22,12 +22,12 @@
 /*
  * r8q: asymmetric DVFS rate limits for an 8-CPU phone SoC.
  *
- * Ramp up fast (500us) so interactive bursts get frequency immediately;
+ * Ramp up fast (150us) so interactive bursts get frequency immediately;
  * decay slow (2ms) so frequency doesn't flap down between consecutive
  * wakeups in a burst. A single limit can't do both: 2ms makes the UI
- * wait up to 2ms for ramp, 500us both ways causes up/down flapping.
+ * wait up to 2ms for ramp, 150us both ways causes up/down flapping.
  */
-#define SUGOV_UP_RATE_LIMIT_US		500
+#define SUGOV_UP_RATE_LIMIT_US		150
 #define SUGOV_DOWN_RATE_LIMIT_US	2000
 
 struct sugov_tunables {
