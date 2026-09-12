@@ -87,6 +87,7 @@ struct Qdisc {
 	u32			handle;
 	u32			parent;
 	int			depth;
+	int			owner;
 
 	struct netdev_queue	*dev_queue;
 
