@@ -192,7 +192,7 @@ ext4_xattr_check_entries(struct ext4_xattr_entry *entry, void *end,
 	/* Find the end of the names list */
 	while (!IS_LAST_ENTRY(e)) {
 		struct ext4_xattr_entry *next = EXT4_XATTR_NEXT(e);
-		if ((void *)next >= end)
+		if ((void *)next + sizeof(u32) > end)
 			return -EFSCORRUPTED;
 		if (strnlen(e->e_name, e->e_name_len) != e->e_name_len)
 			return -EFSCORRUPTED;
