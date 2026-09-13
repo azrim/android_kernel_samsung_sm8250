@@ -4455,7 +4455,8 @@ void lru_gen_look_around(struct page_vma_mapped_walk *pvmw)
  *                          the eviction
  ******************************************************************************/
 
-static bool sort_page(struct lruvec *lruvec, struct page *page, int tier_idx)
+static bool sort_page(struct lruvec *lruvec, struct page *page,
+		      struct scan_control *sc, int tier_idx)
 {
 	bool success;
 	int gen = page_lru_gen(page);
@@ -4500,6 +4501,20 @@ static bool sort_page(struct lruvec *lruvec, struct page *page, int tier_idx)
 		return true;
 	}
 
+	/*
+	 * Pages from zones not eligible for this reclaim have to be promoted
+	 * out of the oldest generation as well: eviction only scans the
+	 * eligible zones, so if we left them here, min_seq could never advance
+	 * when the eligible zones of the oldest generation are empty, and
+	 * reclaim would stall (OOM) despite reclaimable pages being available
+	 * in the next generation.
+	 */
+	if (zone > sc->reclaim_idx) {
+		gen = page_inc_gen(lruvec, page, false);
+		list_move_tail(&page->lru, &lrugen->lists[gen][type][zone]);
+		return true;
+	}
+
 	if (PageLocked(page) || PageWriteback(page) ||
 	    (type == LRU_GEN_FILE && PageDirty(page))) {
 		gen = page_inc_gen(lruvec, page, true);
@@ -4535,7 +4550,8 @@ static bool isolate_page(struct lruvec *lruvec, struct page *page, struct scan_c
 static int scan_pages(struct lruvec *lruvec, struct scan_control *sc,
 		      int type, int tier, struct list_head *list)
 {
-	int gen, zone;
+	int i;
+	int gen;
 	enum vm_event_item item;
 	int sorted = 0;
 	int scanned = 0;
@@ -4551,9 +4567,15 @@ static int scan_pages(struct lruvec *lruvec, struct scan_control *sc,
 
 	gen = lru_gen_from_seq(lrugen->min_seq[type]);
 
-	for (zone = sc->reclaim_idx; zone >= 0; zone--) {
+	/*
+	 * Scan eligible zones first, then the ineligible ones, so that pages
+	 * which cannot be evicted now are still promoted by sort_page() and
+	 * unblock min_seq advancement.
+	 */
+	for (i = MAX_NR_ZONES; i > 0; i--) {
 		LIST_HEAD(moved);
 		int skipped = 0;
+		int zone = (sc->reclaim_idx + i) % MAX_NR_ZONES;
 		struct list_head *head = &lrugen->lists[gen][type][zone];
 
 		while (!list_empty(head)) {
@@ -4570,7 +4592,7 @@ static int scan_pages(struct lruvec *lruvec, struct scan_control *sc,
 
 			scanned += delta;
 
-			if (sort_page(lruvec, page, tier))
+			if (sort_page(lruvec, page, sc, tier))
 				sorted += delta;
 			else if (isolate_page(lruvec, page, sc)) {
 				list_add(&page->lru, list);
