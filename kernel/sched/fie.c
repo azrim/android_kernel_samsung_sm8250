@@ -594,6 +594,15 @@ static int fie_cpuhp_up(unsigned int cpu)
 	local_irq_enable();
 	reset_sfd_data(sfd);
 
+	/*
+	 * The generic topology code prefers the arch's scale_freq_data over
+	 * any other source, so it has to be cleared before FIE's own callback
+	 * can be installed. Do this per CPU, and only after the perf events
+	 * for this CPU are set up, so a CPU where that failed keeps the arch
+	 * callback instead of losing frequency invariance entirely.
+	 */
+	topology_clear_scale_freq_source(SCALE_FREQ_SOURCE_ARCH,
+					 cpumask_of(cpu));
 	topology_set_scale_freq_source(&fie_sfd, cpumask_of(cpu));
 	return 0;
 }
@@ -659,29 +668,27 @@ static int __init fie_init(void)
 		return ret;
 
 	/*
-	 * Delete the arch's scale_freq_data callback to get rid of the
-	 * duplicated work by the arch's callback, since we read the same
-	 * values. This also lets the frequency invariance engine work on cores
-	 * that lack the AMU const cycles counter, since we use a workaround for
-	 * such CPUs by using cpuidle callbacks to deduct time spent in WFE/WFI,
-	 * which is good enough despite not tracking WFE/WFI usage outside of
-	 * cpuidle (such as WFE/WFI usage in __delay()).
-	 *
-	 * A new scale_freq_data callback is installed in fie_cpuhp_up().
+	 * Register the CPU hotplug notifier with calls to all online CPUs.
+	 * fie_cpuhp_up() replaces the arch's scale_freq_data callback with
+	 * FIE's own on each CPU, which gets rid of the duplicated work by the
+	 * arch's callback since we read the same values. This also lets the
+	 * frequency invariance engine work on cores that lack the AMU const
+	 * cycles counter, since we use a workaround for such CPUs by using
+	 * cpuidle callbacks to deduct time spent in WFE/WFI, which is good
+	 * enough despite not tracking WFE/WFI usage outside of cpuidle (such
+	 * as WFE/WFI usage in __delay()). Swapping the callback per CPU means
+	 * a CPU where the perf events cannot be created keeps the arch
+	 * callback rather than losing frequency invariance entirely.
 	 */
-	topology_clear_scale_freq_source(SCALE_FREQ_SOURCE_ARCH,
-					 cpu_possible_mask);
-
-	/* Register the CPU hotplug notifier with calls to all online CPUs */
 	cpuhp_state = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "fie",
 					fie_cpuhp_up, fie_cpuhp_down);
 	if (cpuhp_state <= 0) {
 		/*
-		 * The arch scale_freq_data callback was cleared above and FIE
-		 * is not going to install its own, so frequency invariance
-		 * falls back to whatever cpufreq provides. FIE is built into
-		 * the kernel and has no way to recover here, but a failed perf
-		 * event registration must not turn a boot into a panic.
+		 * FIE is not going to install its callback on any CPU, but
+		 * frequency invariance still falls back to the arch or cpufreq
+		 * source. FIE is built into the kernel and has no way to
+		 * recover here, but a failed perf event registration must not
+		 * turn a boot into a panic.
 		 */
 		pr_err("FIE: failed to register CPU hotplug state (%d)\n",
 		       cpuhp_state);
