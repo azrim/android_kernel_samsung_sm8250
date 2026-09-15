@@ -187,6 +187,7 @@ extern struct kobject *cpufreq_global_kobject;
 unsigned int cpufreq_get(unsigned int cpu);
 unsigned int cpufreq_quick_get(unsigned int cpu);
 unsigned int cpufreq_quick_get_max(unsigned int cpu);
+unsigned int cpufreq_get_hw_max_freq(unsigned int cpu);
 void disable_cpufreq(void);
 
 u64 get_cpu_idle_time(unsigned int cpu, u64 *wall, int io_busy);
@@ -298,7 +299,7 @@ __ATTR(_name, 0644, show_##_name, store_##_name)
 
 struct cpufreq_driver {
 	char		name[CPUFREQ_NAME_LEN];
-	u8		flags;
+	u16		flags;
 	void		*driver_data;
 
 	/* needed by all drivers */
@@ -371,15 +372,14 @@ struct cpufreq_driver {
 };
 
 /* flags */
-#define CPUFREQ_STICKY		(1 << 0)	/* driver isn't removed even if
-						   all ->init() calls failed */
-#define CPUFREQ_CONST_LOOPS	(1 << 1)	/* loops_per_jiffy or other
-						   kernel "constants" aren't
-						   affected by frequency
-						   transitions */
-#define CPUFREQ_PM_NO_WARN	(1 << 2)	/* don't warn on suspend/resume
-						   speed mismatches */
-
+#define CPUFREQ_NEED_UPDATE_LIMITS	(1 << 0)	/* driver isn't removed even if
+							   all ->init() calls failed */
+#define CPUFREQ_CONST_LOOPS		(1 << 1)	/* loops_per_jiffy or other
+							   kernel "constants" aren't
+							   affected by frequency
+							   transitions */
+#define CPUFREQ_PM_NO_WARN		(1 << 2)	/* don't warn on suspend/resume
+							   speed mismatches */
 /*
  * This should be set by platforms having multiple clock-domains, i.e.
  * supporting multiple policies. With this sysfs directories of governor would
@@ -413,6 +413,7 @@ struct cpufreq_driver {
 int cpufreq_register_driver(struct cpufreq_driver *driver_data);
 int cpufreq_unregister_driver(struct cpufreq_driver *driver_data);
 
+bool cpufreq_driver_test_flags(u16 flags);
 const char *cpufreq_get_current_driver(void);
 void *cpufreq_get_driver_data(void);
 
@@ -462,6 +463,8 @@ static inline void cpufreq_resume(void) {}
 /* Policy Notifiers  */
 #define CPUFREQ_ADJUST			(0)
 #define CPUFREQ_NOTIFY			(1)
+#define CPUFREQ_CREATE_POLICY		(2)
+#define CPUFREQ_REMOVE_POLICY		(3)
 #define CPUFREQ_INCOMPATIBLE	(6)
 
 #ifdef CONFIG_CPU_FREQ
@@ -976,10 +979,20 @@ static inline void sched_cpufreq_governor_change(struct cpufreq_policy *policy,
 extern void arch_freq_prepare_all(void);
 extern unsigned int arch_freq_get_on_cpu(int cpu);
 
-extern void arch_set_freq_scale(struct cpumask *cpus, unsigned long cur_freq,
-				unsigned long max_freq);
 extern void arch_set_max_freq_scale(struct cpumask *cpus,
 				    unsigned long policy_max_freq);
+extern void arch_set_min_freq_scale(const struct cpumask *cpus,
+				    unsigned long min_freq,
+				    unsigned long max_freq);
+
+#ifndef arch_set_freq_scale
+static __always_inline
+void arch_set_freq_scale(const struct cpumask *cpus,
+			 unsigned long cur_freq,
+			 unsigned long max_freq)
+{
+}
+#endif
 
 /* the following are really really optional */
 extern struct freq_attr cpufreq_freq_attr_scaling_available_freqs;

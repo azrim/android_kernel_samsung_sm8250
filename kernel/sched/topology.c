@@ -201,31 +201,34 @@ sd_parent_degenerate(struct sched_domain *sd, struct sched_domain *parent)
 	return 1;
 }
 
-DEFINE_STATIC_KEY_FALSE(sched_energy_present);
 #ifdef CONFIG_ENERGY_MODEL
+DEFINE_STATIC_KEY_FALSE(sched_energy_present);
 unsigned int sysctl_sched_energy_aware = 1;
 DEFINE_MUTEX(sched_energy_mutex);
 bool sched_energy_update;
+
+void rebuild_sched_domains_energy(void)
+{
+	mutex_lock(&sched_energy_mutex);
+	sched_energy_update = true;
+	rebuild_sched_domains();
+	sched_energy_update = false;
+	mutex_unlock(&sched_energy_mutex);
+}
 
 #ifdef CONFIG_PROC_SYSCTL
 int sched_energy_aware_handler(struct ctl_table *table, int write,
 		void *buffer, size_t *lenp, loff_t *ppos)
 {
-	int ret, state;
+	int ret;
 
 	if (write && !capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
 	ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
 	if (!ret && write) {
-		state = static_branch_unlikely(&sched_energy_present);
-		if (state != sysctl_sched_energy_aware) {
-			mutex_lock(&sched_energy_mutex);
-			sched_energy_update = 1;
-			rebuild_sched_domains();
-			sched_energy_update = 0;
-			mutex_unlock(&sched_energy_mutex);
-		}
+		if (sysctl_sched_energy_aware != sched_energy_enabled())
+			rebuild_sched_domains_energy();
 	}
 
 	return ret;
@@ -318,6 +321,7 @@ static void sched_energy_set(bool has_eas)
  *    1. an Energy Model (EM) is available;
  *    2. the SD_ASYM_CPUCAPACITY flag is set in the sched_domain hierarchy.
  *    3. the EM complexity is low enough to keep scheduling overheads low;
+ *    4. frequency invariance support is present;
  *
  * The complexity of the Energy Model is defined as:
  *
@@ -363,6 +367,14 @@ static bool build_perf_domains(const struct cpumask *cpu_map)
 		goto free;
 	}
 #endif
+
+	if (!arch_scale_freq_invariant()) {
+		if (sched_debug()) {
+			pr_warn("rd %*pbl: Disabling EAS: frequency-invariant load tracking not yet supported",
+				cpumask_pr_args(cpu_map));
+		}
+		goto free;
+	}
 
 	for_each_cpu(i, cpu_map) {
 		/* Skip already covered CPUs. */
@@ -502,9 +514,10 @@ static int init_rootdomain(struct root_domain *rd)
 	if (cpupri_init(&rd->cpupri) != 0)
 		goto free_cpudl;
 
+#ifdef CONFIG_SCHED_WALT
 	rd->max_cap_orig_cpu = rd->min_cap_orig_cpu = -1;
 	rd->mid_cap_orig_cpu = -1;
-
+#endif
 	init_max_cpu_capacity(&rd->max_cpu_capacity);
 
 	return 0;
@@ -1138,17 +1151,21 @@ build_sched_groups(struct sched_domain *sd, int cpu)
 void init_sched_groups_capacity(int cpu, struct sched_domain *sd)
 {
 	struct sched_group *sg = sd->groups;
+#ifdef CONFIG_SCHED_WALT
 	cpumask_t avail_mask;
-
+#endif
 	WARN_ON(!sg);
 
 	do {
 		int cpu, max_cpu = -1;
 
+#ifdef CONFIG_SCHED_WALT
 		cpumask_andnot(&avail_mask, sched_group_span(sg),
 							cpu_isolated_mask);
 		sg->group_weight = cpumask_weight(&avail_mask);
-
+#else
+		sg->group_weight = cpumask_weight(sched_group_span(sg));
+#endif
 		if (!(sd->flags & SD_ASYM_PACKING))
 			goto next;
 
@@ -1870,10 +1887,10 @@ static struct sched_domain_topology_level
 	unsigned long cap;
 
 	/* Is there any asymmetry? */
-	cap = arch_scale_cpu_capacity(NULL, cpumask_first(cpu_map));
+	cap = arch_scale_cpu_capacity(cpumask_first(cpu_map));
 
 	for_each_cpu(i, cpu_map) {
-		if (arch_scale_cpu_capacity(NULL, i) != cap) {
+		if (arch_scale_cpu_capacity(i) != cap) {
 			asym = true;
 			break;
 		}
@@ -1888,7 +1905,7 @@ static struct sched_domain_topology_level
 	 * to everyone.
 	 */
 	for_each_cpu(i, cpu_map) {
-		unsigned long max_capacity = arch_scale_cpu_capacity(NULL, i);
+		unsigned long max_capacity = arch_scale_cpu_capacity(i);
 		int tl_id = 0;
 
 		for_each_sd_topology(tl) {
@@ -1898,7 +1915,7 @@ static struct sched_domain_topology_level
 			for_each_cpu_and(j, tl->mask(i), cpu_map) {
 				unsigned long capacity;
 
-				capacity = arch_scale_cpu_capacity(NULL, j);
+				capacity = arch_scale_cpu_capacity(j);
 
 				if (capacity <= max_capacity)
 					continue;
@@ -1991,31 +2008,33 @@ build_sched_domains(const struct cpumask *cpu_map, struct sched_domain_attr *att
 	/* Attach the domains */
 	rcu_read_lock();
 	for_each_cpu(i, cpu_map) {
+#ifdef CONFIG_SCHED_WALT
 		int max_cpu = READ_ONCE(d.rd->max_cap_orig_cpu);
 		int min_cpu = READ_ONCE(d.rd->min_cap_orig_cpu);
-
+#endif
 		sd = *per_cpu_ptr(d.sd, i);
-
-		if ((max_cpu < 0) || (arch_scale_cpu_capacity(NULL, i) >
-				arch_scale_cpu_capacity(NULL, max_cpu)))
+#ifdef CONFIG_SCHED_WALT
+		if ((max_cpu < 0) || (arch_scale_cpu_capacity(i) >
+				arch_scale_cpu_capacity(max_cpu)))
 			WRITE_ONCE(d.rd->max_cap_orig_cpu, i);
 
-		if ((min_cpu < 0) || (arch_scale_cpu_capacity(NULL, i) <
-				arch_scale_cpu_capacity(NULL, min_cpu)))
+		if ((min_cpu < 0) || (arch_scale_cpu_capacity(i) <
+				arch_scale_cpu_capacity(min_cpu)))
 			WRITE_ONCE(d.rd->min_cap_orig_cpu, i);
-
+#endif
 		cpu_attach_domain(sd, d.rd, i);
 	}
 
+#ifdef CONFIG_SCHED_WALT
 	/* set the mid capacity cpu (assumes only 3 capacities) */
 	for_each_cpu(i, cpu_map) {
 		int max_cpu = READ_ONCE(d.rd->max_cap_orig_cpu);
 		int min_cpu = READ_ONCE(d.rd->min_cap_orig_cpu);
 
-		if ((arch_scale_cpu_capacity(NULL, i)
-				!=  arch_scale_cpu_capacity(NULL, min_cpu)) &&
-				(arch_scale_cpu_capacity(NULL, i)
-				!=  arch_scale_cpu_capacity(NULL, max_cpu))) {
+		if ((arch_scale_cpu_capacity(i)
+				!=  arch_scale_cpu_capacity(min_cpu)) &&
+				(arch_scale_cpu_capacity(i)
+				!=  arch_scale_cpu_capacity(max_cpu))) {
 			WRITE_ONCE(d.rd->mid_cap_orig_cpu, i);
 			break;
 		}
@@ -2028,14 +2047,13 @@ build_sched_domains(const struct cpumask *cpu_map, struct sched_domain_attr *att
 	 */
 	if (d.rd->max_cap_orig_cpu != -1) {
 		d.rd->max_cpu_capacity.cpu = d.rd->max_cap_orig_cpu;
-		d.rd->max_cpu_capacity.val = arch_scale_cpu_capacity(NULL,
-						d.rd->max_cap_orig_cpu);
+		d.rd->max_cpu_capacity.val = arch_scale_cpu_capacity(d.rd->max_cap_orig_cpu);
 	}
-
+#endif
 	rcu_read_unlock();
 
 	if (has_asym)
-		static_branch_inc_cpuslocked(&sched_asym_cpucapacity);
+		static_branch_enable_cpuslocked(&sched_asym_cpucapacity);
 
 	ret = 0;
 error:
@@ -2126,11 +2144,7 @@ int sched_init_domains(const struct cpumask *cpu_map)
  */
 static void detach_destroy_domains(const struct cpumask *cpu_map)
 {
-	unsigned int cpu = cpumask_any(cpu_map);
 	int i;
-
-	if (rcu_access_pointer(per_cpu(sd_asym_cpucapacity, cpu)))
-		static_branch_dec_cpuslocked(&sched_asym_cpucapacity);
 
 	rcu_read_lock();
 	for_each_cpu(i, cpu_map)

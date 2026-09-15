@@ -11,7 +11,9 @@ struct cpu_topology {
 	int llc_id;
 	cpumask_t thread_sibling;
 	cpumask_t core_sibling;
+#ifdef CONFIG_SCHED_WALT
 	cpumask_t core_possible_sibling;
+#endif
 	cpumask_t llc_sibling;
 };
 
@@ -22,8 +24,10 @@ extern struct cpu_topology cpu_topology[NR_CPUS];
 #define topology_core_cpumask(cpu)	(&cpu_topology[cpu].core_sibling)
 #define topology_sibling_cpumask(cpu)	(&cpu_topology[cpu].thread_sibling)
 #define topology_llc_cpumask(cpu)	(&cpu_topology[cpu].llc_sibling)
+#ifdef CONFIG_SCHED_WALT
 #define topology_possible_sibling_cpumask(cpu)		\
 				(&cpu_topology[cpu].core_possible_sibling)
+#endif
 
 void init_cpu_topology(void);
 void store_cpu_topology(unsigned int cpuid);
@@ -42,20 +46,19 @@ int pcibus_to_node(struct pci_bus *bus);
 
 #include <linux/arch_topology.h>
 
-#ifdef CONFIG_ARM64_AMU_EXTN
-/*
- * Replace task scheduler's default counter-based
- * frequency-invariance scale factor setting.
- */
-void topology_scale_freq_tick(void);
-#define arch_scale_freq_tick topology_scale_freq_tick
-#endif /* CONFIG_ARM64_AMU_EXTN */
+void update_freq_counters_refs(void);
 
 /* Replace task scheduler's default frequency-invariant accounting */
+#define arch_scale_freq_tick topology_scale_freq_tick
+#define arch_set_freq_scale topology_set_freq_scale
 #define arch_scale_freq_capacity topology_get_freq_scale
+#define arch_scale_freq_invariant topology_scale_freq_invariant
 
 /* Replace task scheduler's default max-frequency-invariant accounting */
 #define arch_scale_max_freq_capacity topology_get_max_freq_scale
+
+/* Replace task scheduler's default min-frequency-invariant accounting */
+#define arch_scale_min_freq_capacity topology_get_min_freq_scale
 
 /* Replace task scheduler's default cpu-invariant accounting */
 #define arch_scale_cpu_capacity topology_get_cpu_scale

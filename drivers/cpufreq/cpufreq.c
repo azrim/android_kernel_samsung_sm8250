@@ -163,17 +163,18 @@ u64 get_cpu_idle_time(unsigned int cpu, u64 *wall, int io_busy)
 }
 EXPORT_SYMBOL_GPL(get_cpu_idle_time);
 
-__weak void arch_set_freq_scale(struct cpumask *cpus, unsigned long cur_freq,
-		unsigned long max_freq)
-{
-}
-EXPORT_SYMBOL_GPL(arch_set_freq_scale);
-
 __weak void arch_set_max_freq_scale(struct cpumask *cpus,
 				    unsigned long policy_max_freq)
 {
 }
 EXPORT_SYMBOL_GPL(arch_set_max_freq_scale);
+
+__weak void arch_set_min_freq_scale(const struct cpumask *cpus,
+				    unsigned long min_freq,
+				    unsigned long max_freq)
+{
+}
+EXPORT_SYMBOL_GPL(arch_set_min_freq_scale);
 
 /*
  * This is a generic cpufreq init() routine which can be used by cpufreq
@@ -1217,6 +1218,9 @@ static void cpufreq_policy_free(struct cpufreq_policy *policy)
 		per_cpu(cpufreq_cpu_data, cpu) = NULL;
 	write_unlock_irqrestore(&cpufreq_driver_lock, flags);
 
+	blocking_notifier_call_chain(&cpufreq_policy_notifier_list,
+				     CPUFREQ_REMOVE_POLICY, policy);
+
 	cpufreq_policy_put_kobj(policy);
 	free_cpumask_var(policy->real_cpus);
 	free_cpumask_var(policy->related_cpus);
@@ -1302,6 +1306,9 @@ static int cpufreq_online(unsigned int cpu)
 			goto out_destroy_policy;
 		}
 	}
+
+	blocking_notifier_call_chain(&cpufreq_policy_notifier_list,
+				CPUFREQ_CREATE_POLICY, policy);
 
 	/*
 	 * Sometimes boot loaders set CPU frequency to a value outside of
@@ -1581,6 +1588,26 @@ unsigned int cpufreq_quick_get_max(unsigned int cpu)
 }
 EXPORT_SYMBOL(cpufreq_quick_get_max);
 
+/**
+ * cpufreq_get_hw_max_freq - get the max hardware frequency of the CPU
+ * @cpu: CPU number
+ *
+ * The default return value is the max_freq field of cpuinfo.
+ */
+__weak unsigned int cpufreq_get_hw_max_freq(unsigned int cpu)
+{
+	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);
+	unsigned int ret_freq = 0;
+
+	if (policy) {
+		ret_freq = policy->cpuinfo.max_freq;
+		cpufreq_cpu_put(policy);
+	}
+
+	return ret_freq;
+}
+EXPORT_SYMBOL(cpufreq_get_hw_max_freq);
+
 static unsigned int __cpufreq_get(struct cpufreq_policy *policy)
 {
 	unsigned int ret_freq = 0;
@@ -1758,6 +1785,18 @@ void cpufreq_resume(void)
 				       __func__, policy);
 		}
 	}
+}
+
+/**
+ * cpufreq_driver_test_flags - Test cpufreq driver's flags against given ones.
+ * @flags: Flags to test against the current cpufreq driver's flags.
+ *
+ * Assumes that the driver is there, so callers must ensure that this is the
+ * case.
+ */
+bool cpufreq_driver_test_flags(u16 flags)
+{
+	return !!(cpufreq_driver->flags & flags);
 }
 
 /**
@@ -2034,6 +2073,10 @@ int __cpufreq_driver_target(struct cpufreq_policy *policy,
 
 	pr_debug("target for CPU %u: %u kHz, relation %u, requested %u kHz\n",
 		 policy->cpu, target_freq, relation, old_target_freq);
+
+	if (target_freq == policy->cur &&
+	    !(cpufreq_driver->flags & CPUFREQ_NEED_UPDATE_LIMITS))
+		return 0;
 
 	/* Save last value to restore later on errors */
 	policy->restore_freq = policy->cur;
@@ -2314,6 +2357,8 @@ static int cpufreq_set_policy(struct cpufreq_policy *policy,
 	}
 
 	arch_set_max_freq_scale(policy->cpus, policy->max);
+	arch_set_min_freq_scale(policy->related_cpus, policy->min,
+				policy->cpuinfo.max_freq);
 
 	policy->cached_target_freq = UINT_MAX;
 
@@ -2582,15 +2627,6 @@ int cpufreq_register_driver(struct cpufreq_driver *driver_data)
 	cpufreq_driver = driver_data;
 	write_unlock_irqrestore(&cpufreq_driver_lock, flags);
 
-	/*
-	 * Mark support for the scheduler's frequency invariance engine for
-	 * drivers that implement target(), target_index() or fast_switch().
-	 */
-	if (!cpufreq_driver->setpolicy) {
-		static_branch_enable_cpuslocked(&cpufreq_freq_invariance);
-		pr_debug("supports frequency invariance");
-	}
-
 	if (driver_data->setpolicy)
 		driver_data->flags |= CPUFREQ_CONST_LOOPS;
 
@@ -2613,8 +2649,7 @@ int cpufreq_register_driver(struct cpufreq_driver *driver_data)
 	if (ret)
 		goto err_boost_unreg;
 
-	if (!(cpufreq_driver->flags & CPUFREQ_STICKY) &&
-	    list_empty(&cpufreq_policy_list)) {
+	if (unlikely(list_empty(&cpufreq_policy_list))) {
 		/* if all ->init() calls failed, unregister */
 		ret = -ENODEV;
 		pr_debug("%s: No CPU initialized for driver %s\n", __func__,

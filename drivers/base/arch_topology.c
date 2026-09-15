@@ -23,32 +23,115 @@
 #include <linux/uaccess.h>
 #endif
 
-__weak bool arch_freq_counters_available(struct cpumask *cpus)
+static DEFINE_PER_CPU(struct scale_freq_data *, sft_data);
+static struct cpumask scale_freq_counters_mask;
+static bool scale_freq_invariant;
+
+static bool supports_scale_freq_counters(const struct cpumask *cpus)
 {
-	return false;
+	return cpumask_subset(cpus, &scale_freq_counters_mask);
 }
-DEFINE_PER_CPU(unsigned long, freq_scale) = SCHED_CAPACITY_SCALE;
+
+bool topology_scale_freq_invariant(void)
+{
+	return cpufreq_supports_freq_invariance() ||
+	       supports_scale_freq_counters(cpu_online_mask);
+}
+
+static void update_scale_freq_invariant(bool status)
+{
+	if (scale_freq_invariant == status)
+		return;
+
+	/*
+	 * Task scheduler behavior depends on frequency invariance support,
+	 * either cpufreq or counter driven. If the support status changes as
+	 * a result of counter initialisation and use, retrigger the build of
+	 * scheduling domains to ensure the information is propagated properly.
+	 */
+	if (topology_scale_freq_invariant() == status) {
+		scale_freq_invariant = status;
+		rebuild_sched_domains_energy();
+	}
+}
+
+void topology_set_scale_freq_source(struct scale_freq_data *data,
+				    const struct cpumask *cpus)
+{
+	struct scale_freq_data *sfd;
+	int cpu;
+
+	/*
+	 * Avoid calling rebuild_sched_domains() unnecessarily if FIE is
+	 * supported by cpufreq.
+	 */
+	if (cpumask_empty(&scale_freq_counters_mask))
+		scale_freq_invariant = topology_scale_freq_invariant();
+
+	for_each_cpu(cpu, cpus) {
+		sfd = per_cpu(sft_data, cpu);
+
+		/* Use ARCH provided counters whenever possible */
+		if (!sfd || sfd->source != SCALE_FREQ_SOURCE_ARCH) {
+			per_cpu(sft_data, cpu) = data;
+			cpumask_set_cpu(cpu, &scale_freq_counters_mask);
+		}
+	}
+
+	update_scale_freq_invariant(true);
+}
+
+void topology_clear_scale_freq_source(enum scale_freq_source source,
+				      const struct cpumask *cpus)
+{
+	struct scale_freq_data *sfd;
+	int cpu;
+
+	for_each_cpu(cpu, cpus) {
+		sfd = per_cpu(sft_data, cpu);
+
+		if (sfd && sfd->source == source) {
+			per_cpu(sft_data, cpu) = NULL;
+			cpumask_clear_cpu(cpu, &scale_freq_counters_mask);
+		}
+	}
+
+	update_scale_freq_invariant(false);
+}
+
+void topology_scale_freq_tick(void)
+{
+	struct scale_freq_data *sfd = *this_cpu_ptr(&sft_data);
+
+	if (sfd)
+		sfd->set_freq_scale();
+}
+
+DEFINE_PER_CPU(unsigned long, arch_freq_scale) = SCHED_CAPACITY_SCALE;
 DEFINE_PER_CPU(unsigned long, max_cpu_freq);
 DEFINE_PER_CPU(unsigned long, max_freq_scale) = SCHED_CAPACITY_SCALE;
 
-void arch_set_freq_scale(struct cpumask *cpus, unsigned long cur_freq,
-			 unsigned long max_freq)
+void topology_set_freq_scale(const struct cpumask *cpus, unsigned long cur_freq,
+			     unsigned long max_freq)
 {
 	unsigned long scale;
 	int i;
+
+	if (WARN_ON_ONCE(!cur_freq || !max_freq))
+		return;
 
 	/*
 	 * If the use of counters for FIE is enabled, just return as we don't
 	 * want to update the scale factor with information from CPUFREQ.
 	 * Instead the scale factor will be updated from arch_scale_freq_tick.
 	 */
-	if (arch_freq_counters_available(cpus))
+	if (supports_scale_freq_counters(cpus))
 		return;
 
 	scale = (cur_freq << SCHED_CAPACITY_SHIFT) / max_freq;
 
 	for_each_cpu(i, cpus) {
-		per_cpu(freq_scale, i) = scale;
+		per_cpu(arch_freq_scale, i) = scale;
 		per_cpu(max_cpu_freq, i) = max_freq;
 	}
 }
@@ -74,6 +157,22 @@ void arch_set_max_freq_scale(struct cpumask *cpus,
 
 static DEFINE_MUTEX(cpu_scale_mutex);
 DEFINE_PER_CPU(unsigned long, cpu_scale) = SCHED_CAPACITY_SCALE;
+DEFINE_PER_CPU(unsigned long, arch_min_freq_scale);
+
+void arch_set_min_freq_scale(const struct cpumask *cpus,
+			     unsigned long min_freq, unsigned long max_freq)
+{
+	unsigned long scale;
+	int i;
+
+	if (WARN_ON_ONCE(!max_freq))
+		return;
+
+	scale = (min_freq * per_cpu(cpu_scale, cpumask_any(cpus))) / max_freq;
+
+	for_each_cpu(i, cpus)
+		per_cpu(arch_min_freq_scale, i) = scale;
+}
 
 void topology_set_cpu_scale(unsigned int cpu, unsigned long capacity)
 {
@@ -146,16 +245,16 @@ static ssize_t cpu_capacity_show(struct device *dev,
 			strnlen(current->comm, TASK_COMM_LEN)) == 0) {
 		unsigned long curr, left, right;
 
-		curr = topology_get_cpu_scale(NULL, cpu->dev.id);
-		left = topology_get_cpu_scale(NULL, 0);
-		right = topology_get_cpu_scale(NULL, num_possible_cpus() - 1);
+		curr = topology_get_cpu_scale(cpu->dev.id);
+		left = topology_get_cpu_scale(0);
+		right = topology_get_cpu_scale(num_possible_cpus() - 1);
 
 		if (curr != left && curr != right)
 			return sprintf(buf, "%lu\n", left > right ? left : right);
 	}
 #endif
 
-	return sprintf(buf, "%lu\n", topology_get_cpu_scale(NULL, cpu->dev.id));
+	return sprintf(buf, "%lu\n", topology_get_cpu_scale(cpu->dev.id));
 }
 
 static void update_topology_flags_workfn(struct work_struct *work);
@@ -266,7 +365,7 @@ void topology_normalize_cpu_scale(void)
 			/ capacity_scale;
 		topology_set_cpu_scale(cpu, capacity);
 		pr_debug("cpu_capacity: CPU%d cpu_capacity=%lu\n",
-			cpu, topology_get_cpu_scale(NULL, cpu));
+			cpu, topology_get_cpu_scale(cpu));
 	}
 	mutex_unlock(&cpu_scale_mutex);
 }
@@ -336,7 +435,7 @@ init_cpu_capacity_callback(struct notifier_block *nb,
 	cpumask_andnot(cpus_to_visit, cpus_to_visit, policy->related_cpus);
 
 	for_each_cpu(cpu, policy->related_cpus) {
-		raw_capacity[cpu] = topology_get_cpu_scale(NULL, cpu) *
+		raw_capacity[cpu] = topology_get_cpu_scale(cpu) *
 				    policy->cpuinfo.max_freq / 1000UL;
 		capacity_scale = max(raw_capacity[cpu], capacity_scale);
 	}
