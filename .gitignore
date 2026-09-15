@@ -114,6 +114,7 @@ GTAGS
 # id-utils files
 ID
 
+*.orig
 *~
 \#*#
 
@@ -141,4 +142,17 @@ kernel/configs/android-*.cfg
 Android.bp
 
 # Ignore build environment
+build_env/
 out/
+*.zip
+*.gz
+*.pyc
+*.out
+zImage
+dtbo.img
+
+# local
+AGENTS.md
+*.env
+AnyKernel3/dtb
+AnyKernel3/Image
