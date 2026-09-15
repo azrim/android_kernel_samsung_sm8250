@@ -369,9 +369,6 @@ static void f2fs_write_end_io(struct bio *bio)
 		if (f2fs_in_warm_node_list(sbi, page))
 			f2fs_del_fsync_node_entry(sbi, page);
 
-		if (f2fs_in_warm_node_list(sbi, page))
-			f2fs_del_fsync_node_entry(sbi, page);
-
 		dec_page_count(sbi, type);
 
 		/*
