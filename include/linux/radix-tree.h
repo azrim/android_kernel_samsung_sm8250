@@ -52,6 +52,7 @@
  */
 #define RADIX_TREE_ENTRY_MASK		3UL
 #define RADIX_TREE_INTERNAL_NODE	2UL
+#define RADIX_TREE_EXCEPTIONAL_ENTRY	2
 
 #define RADIX_TREE_INDIRECT_PTR		1
 
@@ -231,6 +232,17 @@ static inline int radix_tree_deref_retry(void *arg)
 static inline int radix_tree_exception(void *arg)
 {
 	return unlikely((unsigned long)arg & RADIX_TREE_ENTRY_MASK);
+}
+
+/**
+ * radix_tree_exceptional_entry	- radix_tree_deref_slot gave exceptional entry?
+ * @arg:	value returned by radix_tree_deref_slot
+ * Returns:	0 if well-aligned pointer, non-0 if exceptional entry.
+ */
+static inline int radix_tree_exceptional_entry(void *arg)
+{
+	/* Not unlikely because radix_tree_exception often tested first */
+	return (unsigned long)arg & RADIX_TREE_EXCEPTIONAL_ENTRY;
 }
 
 int __radix_tree_insert(struct radix_tree_root *, unsigned long index,
