@@ -41,6 +41,44 @@ static struct devfreq_dev_status last_status = { .private_data = &last_xstats };
  *
  * Called shortly after all pending work is completed.
  */
+/**
+ * kgsl_popp_check - Check whether a POPP (performance on power collapse)
+ * boost window is active for the device.
+ */
+bool kgsl_popp_check(struct kgsl_device *device)
+{
+	int i;
+	unsigned int index;
+	struct kgsl_pwrscale *psc = &device->pwrscale;
+	struct kgsl_pwr_event *e;
+
+	if (!test_bit(POPP_ON, &psc->popp_state))
+		return false;
+	if (!test_bit(POPP_PUSH, &psc->popp_state))
+		return false;
+	if (psc->history[KGSL_PWREVENT_STATE].events == NULL) {
+		clear_bit(POPP_PUSH, &psc->popp_state);
+		return false;
+	}
+	index = psc->history[KGSL_PWREVENT_STATE].index;
+
+	e = &psc->history[KGSL_PWREVENT_STATE].events[index];
+	if (e->data == KGSL_STATE_SLUMBER)
+		e->duration = ktime_us_delta(ktime_get(), e->start);
+
+	/* If there's been a long SLUMBER in recent history, clear the _PUSH */
+	for (i = 0; i < psc->history[KGSL_PWREVENT_STATE].size; i++) {
+		e = &psc->history[KGSL_PWREVENT_STATE].events[i];
+		if ((e->data == KGSL_STATE_SLUMBER) &&
+			 (e->duration > POPP_RESET_TIME)) {
+			clear_bit(POPP_PUSH, &psc->popp_state);
+			return false;
+		}
+	}
+	return true;
+}
+EXPORT_SYMBOL(kgsl_popp_check);
+
 void kgsl_pwrscale_sleep(struct kgsl_device *device)
 {
 	if (!device->pwrscale.enabled)
