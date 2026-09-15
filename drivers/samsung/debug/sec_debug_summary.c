@@ -23,6 +23,7 @@
 
 #include <asm/stacktrace.h>
 #include <asm/system_misc.h>
+#include <asm/io.h>
 
 #include <linux/sec_debug.h>
 

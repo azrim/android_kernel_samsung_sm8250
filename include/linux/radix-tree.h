@@ -247,6 +247,9 @@ static inline int radix_tree_exceptional_entry(void *arg)
 
 int __radix_tree_insert(struct radix_tree_root *, unsigned long index,
 			unsigned order, void *);
+int __radix_tree_create(struct radix_tree_root *, unsigned long index,
+			unsigned order, struct radix_tree_node **nodep,
+			void __rcu ***slotp);
 static inline int radix_tree_insert(struct radix_tree_root *root,
 			unsigned long index, void *entry)
 {

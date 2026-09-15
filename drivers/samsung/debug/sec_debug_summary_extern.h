@@ -14,8 +14,10 @@ extern const u16 kallsyms_token_index[] __weak;
 extern const unsigned long kallsyms_markers[] __weak;
 
 /* kernel/sched/walt.c */
-#ifdef CONFIG_SCHED_WALT
+/* sched.h is needed unconditionally: sec_debug_summary_coreinfo.c applies
+ * offsetof()/sizeof() to struct rq even with CONFIG_SCHED_WALT disabled. */
 #include "../../kernel/sched/sched.h"
+#ifdef CONFIG_SCHED_WALT
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,4,0)
 extern struct walt_sched_cluster *sched_cluster[NR_CPUS];
 #else
