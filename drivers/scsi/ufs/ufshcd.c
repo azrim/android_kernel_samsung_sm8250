@@ -11756,7 +11756,7 @@ out:
  * @pwr_mode: device power mode to set
  *
  * Returns 0 if requested power mode is set successfully
- * Returns non-zero if failed to set the requested power mode
+ * Returns < 0 if failed to set the requested power mode
  */
 static int ufshcd_set_dev_pwr_mode(struct ufs_hba *hba,
 				     enum ufs_dev_pwr_mode pwr_mode)
@@ -11819,6 +11819,15 @@ static int ufshcd_set_dev_pwr_mode(struct ufs_hba *hba,
 			break;
 		}
 	}
+
+	/*
+	 * The return value is passed to device PM core which doesn't
+	 * understand a positive SCSI result. Convert to a generic error
+	 * code to avoid unexpected behavior in userland (e.g. platform
+	 * reset).
+	 */
+	if (ret > 0)
+		ret = -EIO;
 
 	if (!ret)
 		hba->curr_dev_pwr_mode = pwr_mode;
