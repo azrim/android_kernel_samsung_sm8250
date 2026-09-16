@@ -8832,6 +8832,7 @@ again:
 		 * entity, update_curr() will update its vruntime, otherwise
 		 * forget we've ever seen it.
 		 */
+		if (curr) {
 #ifdef CONFIG_FAST_TRACK
 			if (curr->on_rq) {
 				update_curr(cfs_rq);

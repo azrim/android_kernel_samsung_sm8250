@@ -114,7 +114,7 @@ void show_swap_cache_info(void)
  */
 int __add_to_swap_cache(struct page *page, swp_entry_t entry, void **shadowp)
 {
-	int error, i, nr = hpage_nr_pages(page);
+	int error = 0, i, nr = hpage_nr_pages(page);
 	struct address_space *address_space;
 	pgoff_t idx = swp_offset(entry);
 
@@ -128,29 +128,25 @@ int __add_to_swap_cache(struct page *page, swp_entry_t entry, void **shadowp)
 	address_space = swap_address_space(entry);
 	xa_lock_irq(&address_space->i_pages);
 	for (i = 0; i < nr; i++) {
-		void *item;
-		void __rcu **slot;
-		struct radix_tree_node *node;
+		XA_STATE(xas, &address_space->i_pages, idx + i);
+		void *curr;
 
 		set_page_private(page + i, entry.val + i);
-		error = __radix_tree_create(&address_space->i_pages,
-					    idx + i, 0, &node, &slot);
-		if (unlikely(error))
-			break;
-
-		item = radix_tree_deref_slot_protected(slot,
-				&address_space->i_pages.xa_lock);
-		if (WARN_ON_ONCE(item && !radix_tree_exceptional_entry(item))) {
+		curr = xas_load(&xas);
+		if (WARN_ON_ONCE(curr && !xa_is_value(curr))) {
 			error = -EEXIST;
 			break;
 		}
 
-		__radix_tree_replace(&address_space->i_pages, node, slot,
-				     page + i, NULL);
+		xas_store(&xas, page + i);
+		if (xas_error(&xas)) {
+			error = xas_error(&xas);
+			break;
+		}
 
 		if (shadowp) {
 			VM_BUG_ON(i);
-			*shadowp = item;
+			*shadowp = curr;
 		}
 	}
 	if (likely(!error)) {
@@ -204,23 +200,20 @@ void __delete_from_swap_cache(struct page *page, void *shadow)
 	VM_BUG_ON_PAGE(!PageLocked(page), page);
 	VM_BUG_ON_PAGE(!PageSwapCache(page), page);
 	VM_BUG_ON_PAGE(PageWriteback(page), page);
-	VM_BUG_ON(shadow && !radix_tree_exceptional_entry(shadow));
+	VM_BUG_ON(shadow && !xa_is_value(shadow));
 
 	entry.val = page_private(page);
 	address_space = swap_address_space(entry);
 	idx = swp_offset(entry);
 	for (i = 0; i < nr; i++) {
-		void *item;
-		void __rcu **slot;
-		struct radix_tree_node *node;
+		XA_STATE(xas, &address_space->i_pages, idx + i);
+		void *curr;
 
-		item = __radix_tree_lookup(&address_space->i_pages,
-					   idx + i, &node, &slot);
-		if (WARN_ON_ONCE(item != page + i))
+		curr = xas_load(&xas);
+		if (WARN_ON_ONCE(curr != page + i))
 			continue;
 
-		__radix_tree_replace(&address_space->i_pages,
-				     node, slot, shadow, NULL);
+		xas_store(&xas, shadow);
 		set_page_private(page + i, 0);
 	}
 	ClearPageSwapCache(page);
@@ -326,7 +319,7 @@ void clear_shadow_from_swap_cache(int type, unsigned long begin,
 					 &iter, curr) {
 			item = radix_tree_deref_slot_protected(slot,
 					&address_space->i_pages.xa_lock);
-			if (radix_tree_exceptional_entry(item))
+			if (xa_is_value(item))
 				radix_tree_iter_delete(&address_space->i_pages,
 						       &iter, slot);
 			if (iter.next_index > end)
