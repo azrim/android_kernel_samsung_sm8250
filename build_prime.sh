@@ -61,6 +61,31 @@ CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
 CONFIG_LOCALVERSION="-Solvege"
 EOF
 
+    # The concatenated fragments assign some symbols more than once (e.g. AUDIT
+    # in both the defconfig and ksu.config, LOCALVERSION/LTO_CLANG here vs the
+    # defconfig). kconfig warns "override: reassigning to symbol ..." on every
+    # reassignment even when the value is identical, and the later assignment
+    # already wins. Drop all but the last assignment of each symbol so the
+    # generated .config is unchanged but the override warnings disappear.
+    awk '
+    {
+        line = $0; sym = ""
+        if (match(line, /^CONFIG_[A-Za-z0-9_]+=/)) {
+            sym = substr(line, 1, RLENGTH - 1)
+        } else if (match(line, /^# CONFIG_[A-Za-z0-9_]+ is not set$/)) {
+            sym = line; sub(/^# /, "", sym); sub(/ is not set$/, "", sym)
+        }
+        if (sym != "") last[sym] = NR
+        lines[NR] = line; sym_of[NR] = sym
+    }
+    END {
+        for (i = 1; i <= NR; i++) {
+            s = sym_of[i]
+            if (s == "" || last[s] == i) print lines[i]
+        }
+    }' arch/arm64/configs/temp_defconfig > arch/arm64/configs/temp_defconfig.dedup
+    mv -f arch/arm64/configs/temp_defconfig.dedup arch/arm64/configs/temp_defconfig
+
     make CC="ccache clang" CXX="ccache clang++" HOSTCC="ccache clang" HOSTCXX="ccache clang++" $BUILD_VAR temp_defconfig
     rm arch/arm64/configs/temp_defconfig
 }
