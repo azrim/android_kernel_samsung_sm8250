@@ -316,3 +316,35 @@
 		};
 	};
 };
+
+/*
+ * QTI reference hardware not populated on r8q: the SMB1390 charge pump
+ * never ACKs on i2c (probe fails with -ENOTCONN and defers forever), and
+ * the ToF / haptics-boost fixed regulators depend on a pm8009 PMIC and
+ * pinctrl states that do not exist on this board. Leaving the nodes
+ * enabled trips the deferred-probe timeout WARNINGs at boot and taints
+ * the kernel. r8q charges via max77705 and vibrates via the SSC motor.
+ */
+&smb1390 {
+	status = "disabled";
+};
+
+&smb1390_charger {
+	status = "disabled";
+};
+
+&smb1390_slave {
+	status = "disabled";
+};
+
+&smb1390_slave_charger {
+	status = "disabled";
+};
+
+&vreg_tof {
+	status = "disabled";
+};
+
+&vreg_hap_boost {
+	status = "disabled";
+};
