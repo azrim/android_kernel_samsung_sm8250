@@ -154,7 +154,7 @@ static void init_srcu_struct_nodes(struct srcu_struct *sp, bool is_static)
 		sdp->cpu = cpu;
 		INIT_DELAYED_WORK(&sdp->work, srcu_invoke_callbacks);
 		sdp->sp = sp;
-		sdp->grpmask = 1 << (cpu - sdp->mynode->grplo);
+		sdp->grpmask = 1UL << (cpu - sdp->mynode->grplo);
 		if (is_static)
 			continue;
 
@@ -516,7 +516,7 @@ static void srcu_schedule_cbs_snp(struct srcu_struct *sp, struct srcu_node *snp,
 	int cpu;
 
 	for (cpu = snp->grplo; cpu <= snp->grphi; cpu++) {
-		if (!(mask & (1 << (cpu - snp->grplo))))
+		if (!(mask & (1UL << (cpu - snp->grplo))))
 			continue;
 		srcu_schedule_cbs_sdp(per_cpu_ptr(sp->sda, cpu), delay);
 	}
