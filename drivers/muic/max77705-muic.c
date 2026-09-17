@@ -2113,13 +2113,13 @@ static void max77705_muic_print_reg_log(struct work_struct *work)
 	max77705_muic_read_reg(i2c, MAX77705_USBC_REG_PD_STATUS0, &status[6]);
 	max77705_muic_read_reg(i2c, MAX77705_USBC_REG_PD_STATUS1, &status[7]);
 
-	pr_info("%s:%s USBC1:0x%02x, USBC2:0x%02x, BC:0x%02x, UICINTM:0x%x, attached_dev:%d\n",
+	pr_debug("%s:%s USBC1:0x%02x, USBC2:0x%02x, BC:0x%02x, UICINTM:0x%x, attached_dev:%d\n",
 		MUIC_DEV_NAME, __func__, status[0], status[1], status[2], status[3],
 		muic_data->attached_dev);
-	pr_info("%s:%s CC_STATUS0:0x%x, CC_STATUS1:0x%x, PD_STATUS0:0x%x, PD_STATUS1:0x%x, WDT:%d, POR:%d\n",
+	pr_debug("%s:%s CC_STATUS0:0x%x, CC_STATUS1:0x%x, PD_STATUS0:0x%x, PD_STATUS1:0x%x, WDT:%d, POR:%d\n",
 		MUIC_DEV_NAME, __func__, status[4], status[5], status[6], status[7],
 		muic_data->usbc_pdata->watchdog_count, muic_data->usbc_pdata->por_count);
-	pr_info("%s fail to read uiadc(%d), chgtyp(%d), spr(%d), dcdtmo(%d), vbadc(%d), vbusdet(%d), unknown(%d)\n",
+	pr_debug("%s fail to read uiadc(%d), chgtyp(%d), spr(%d), dcdtmo(%d), vbadc(%d), vbusdet(%d), unknown(%d)\n",
 		__func__, muic_data->irq_fail_count[MAX77705_MUIC_IRQ_UIADC], 
 			muic_data->irq_fail_count[MAX77705_MUIC_IRQ_CHGTYP], 
 			muic_data->irq_fail_count[MAX77705_MUIC_IRQ_SPR], 
