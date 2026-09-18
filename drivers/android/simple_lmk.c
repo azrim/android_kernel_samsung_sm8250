@@ -937,8 +937,16 @@ static int set_target_mib(const char *val, const struct kernel_param *kp)
 
 	if (ret)
 		return ret;
-	/* 0 means auto (totalram/64 clamped to [64,256] MiB) */
-	if (v != 0 && (v < TARGET_MIN_MIB || v > 1024))
+	/*
+	 * 0 means auto (totalram/64 clamped to [64,256] MiB). An explicit
+	 * value is bounded by TARGET_MAX_MIB: the victim array holds only
+	 * MAX_VICTIMS entries, so a larger target cannot be reached in one
+	 * reclaim. It would never satisfy pages_found >= target, and every
+	 * subsequent PSI window would scan and kill again -- the repeated
+	 * under-sized-reclaim pattern that the auto-derived target exists
+	 * to avoid.
+	 */
+	if (v != 0 && (v < TARGET_MIN_MIB || v > TARGET_MAX_MIB))
 		return -EINVAL;
 	target_mib = v;
 	return 0;
