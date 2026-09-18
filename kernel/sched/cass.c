@@ -222,8 +222,21 @@ static int cass_best_cpu(struct task_struct *p, int prev_cpu, bool sync, bool rt
 		/* Get the original, maximum _possible_ capacity of this CPU */
 		curr->cap_orig = arch_scale_cpu_capacity(cpu);
 
-		/* Get the _current_, throttled maximum capacity of this CPU */
+		/*
+		 * Get the _current_, throttled maximum capacity of this CPU.
+		 *
+		 * thermal_load_avg() is a PELT average of the thermal pressure,
+		 * which the thermal governor sets to (cap_orig - clipped_freq
+		 * capacity). Under sustained throttling to the lowest cooling
+		 * state it converges to cap_orig, making the subtraction below
+		 * zero. cap_max is used as a divisor in cass_cpu_better() and as
+		 * the min() bound of (cap_max - 1) in cass_cpu_util(), so a zero
+		 * value would silently corrupt the placement decision (AArch64
+		 * udiv by zero yields 0 without faulting) and underflow the
+		 * unsigned (cap_max - 1). Keep it at least 1.
+		 */
 		curr->cap_max = curr->cap_orig - thermal_load_avg(rq);
+		curr->cap_max = max(curr->cap_max, 1UL);
 
 		/*
 		 * Check if this CPU is idle or only has SCHED_IDLE tasks. For
