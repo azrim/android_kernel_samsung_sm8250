@@ -336,7 +336,15 @@ static int process_victims(int vlen, unsigned long target, int kill_cap)
 	for (i = 0; i < vlen; i++) {
 		struct victim_info *victim = &victims[i];
 
-		if (nr_to_kill >= kill_cap || pages_found >= target) {
+		/*
+		 * Spare a victim with nothing left to reclaim: an mm that has
+		 * mapped but not faulted, or that just swapped everything out,
+		 * has size == 0. Killing it frees no memory but would consume
+		 * a slot from the kill cap, leaving the target unmet and
+		 * provoking another sweep in the next PSI window.
+		 */
+		if (nr_to_kill >= kill_cap || pages_found >= target ||
+		    !victim->size) {
 			/* The victim's mm lock is taken in find_victims */
 			task_unlock(victim->tsk);
 		} else {
