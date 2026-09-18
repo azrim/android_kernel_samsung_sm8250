@@ -114,6 +114,7 @@ static unsigned long stat_reclaims;
 static unsigned long stat_kills;
 static unsigned long stat_pages_freed;
 static unsigned long stat_no_victims;
+static unsigned long stat_gated;
 
 /*
  * Descending by the named field. Comparing explicitly rather than subtracting
@@ -553,12 +554,19 @@ static bool reclaim_needed(int *adj_floor)
 		ulmk_watchdog_pet(&t->wdog_timer);
 	mutex_unlock(&slmk_lock);
 
-	/* Avoid PSI thrash when memory is still available.
+	/*
+	 * Avoid PSI thrash when memory is still available.
 	 * PSI can fire with 2.7GB available at boot.
+	 *
+	 * Count the suppression: the event was already consumed above, so
+	 * returning false here makes it invisible to stat_events, and the
+	 * counter would otherwise under-report real memory pressure.
 	 */
 	if (needed && reserve_mib && si_mem_available() >
-	    ((unsigned long)reserve_mib << (20 - PAGE_SHIFT)))
+	    ((unsigned long)reserve_mib << (20 - PAGE_SHIFT))) {
+		stat_gated++;
 		return false;
+	}
 
 	return needed;
 }
@@ -1058,6 +1066,9 @@ module_param(stat_pages_freed, ulong, 0444);
 MODULE_PARM_DESC(stat_pages_freed, "Total pages accounted as freed");
 module_param(stat_no_victims, ulong, 0444);
 MODULE_PARM_DESC(stat_no_victims, "Reclaims that found nothing killable");
+module_param(stat_gated, ulong, 0444);
+MODULE_PARM_DESC(stat_gated,
+		 "Pressure events whose reclaim was suppressed by reserve_mib");
 
 /* Needed to prevent Android from thinking there's no LMK and thus rebooting */
 #undef MODULE_PARAM_PREFIX
