@@ -102,8 +102,14 @@ static unsigned int target_mib;
 /* Hard cap on victims killed per reclaim; bounds worst-case kill volume */
 static unsigned int max_kills = CONFIG_ANDROID_SIMPLE_LMK_MAX_KILLS;
 
-/* How often the reclaim thread polls the PSI trigger, in ms */
-static unsigned int poll_msec = 500;
+/*
+ * How often the reclaim thread polls the PSI trigger, in ms. PSI generates an
+ * event at most once per window and polls the trigger itself every
+ * window/10, so at the default 2s window there is nothing to see more often
+ * than every 200ms: a longer interval just adds that much latency to noticing
+ * an event that is already set, and a shorter one burns wakeups for no gain.
+ */
+static unsigned int poll_msec = 200;
 
 /* Skip routine reclaim while at least this much memory is available, in MiB */
 static unsigned int reserve_mib = 1024;
