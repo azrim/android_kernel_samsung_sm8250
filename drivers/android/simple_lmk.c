@@ -997,9 +997,20 @@ static int simple_lmk_init_set(const char *val, const struct kernel_param *kp)
 		return 0;
 	}
 
+	/*
+	 * Claim the init slot before dropping slmk_lock. Thread creation and
+	 * notifier registration take long enough for a second write to
+	 * minfree (init and lmkd both write it) to land in the gap: it would
+	 * see slmk_running == false, spawn a duplicate pair of kthreads, and
+	 * re-register oom_notif -- list-adding the same notifier_block twice
+	 * corrupts the notifier chain and hangs every out_of_memory().
+	 */
+	slmk_running = true;
+
 	if (!psi_spec_valid()) {
 		pr_err("Invalid PSI spec: threshold=%u window=%u\n",
 		       psi_threshold_us, psi_window_us);
+		slmk_running = false;
 		mutex_unlock(&slmk_lock);
 		return 0;
 	}
@@ -1012,7 +1023,7 @@ static int simple_lmk_init_set(const char *val, const struct kernel_param *kp)
 			     "simple_lmkd_reaper");
 	if (IS_ERR(reaper)) {
 		pr_err("Failed to create reaper thread: %ld\n", PTR_ERR(reaper));
-		return 0;
+		goto unclaim;
 	}
 
 	reclaim = kthread_run(simple_lmk_reclaim_thread, NULL, "simple_lmkd");
@@ -1020,25 +1031,28 @@ static int simple_lmk_init_set(const char *val, const struct kernel_param *kp)
 		pr_err("Failed to create reclaim thread: %ld\n",
 		       PTR_ERR(reclaim));
 		kthread_stop(reaper);
-		return 0;
+		goto unclaim;
 	}
 
 	if (register_oom_notifier(&oom_notif)) {
 		pr_err("Failed to register OOM notifier\n");
 		kthread_stop(reaper);
 		kthread_stop(reclaim);
-		return 0;
+		goto unclaim;
 	}
-
-	mutex_lock(&slmk_lock);
-	slmk_running = true;
-	mutex_unlock(&slmk_lock);
 
 	pr_info("Initialized: target=%lu MiB threshold=%u us window=%u us cap=%u\n",
 		reclaim_target_pages() * PAGE_SIZE / SZ_1M, psi_threshold_us,
 		psi_window_us, max_kills);
 
 	/* Always succeed: a failure here would make lmkd think LMK is absent */
+	return 0;
+
+unclaim:
+	/* Free the slot so a later write can retry the failed setup */
+	mutex_lock(&slmk_lock);
+	slmk_running = false;
+	mutex_unlock(&slmk_lock);
 	return 0;
 }
 
