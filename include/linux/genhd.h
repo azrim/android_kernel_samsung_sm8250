@@ -335,6 +335,12 @@ extern struct hd_struct *disk_map_sector_rcu(struct gendisk *disk,
 #define __part_stat_add(cpu, part, field, addnd)			\
 	(per_cpu_ptr((part)->dkstats, (cpu))->field += (addnd))
 
+#define part_stat_get_cpu(part, field, cpu)					\
+	(per_cpu_ptr((part)->dkstats, (cpu))->field)
+
+#define part_stat_get(part, field)					\
+	part_stat_get_cpu(part, field, smp_processor_id())
+
 #define part_stat_read(part, field)					\
 ({									\
 	typeof((part)->dkstats->field) res = 0;				\
@@ -372,6 +378,9 @@ static inline void free_part_stats(struct hd_struct *part)
 
 #define __part_stat_add(cpu, part, field, addnd)				\
 	((part)->dkstats.field += addnd)
+
+#define part_stat_get(part, field)		((part)->dkstats.field)
+#define part_stat_get_cpu(part, field, cpu)	part_stat_get(part, field)
 
 #define part_stat_read(part, field)	((part)->dkstats.field)
 
