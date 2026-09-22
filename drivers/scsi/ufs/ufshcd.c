@@ -13233,10 +13233,15 @@ int ufshcd_alloc_host(struct device *dev, struct ufs_hba **hba_handle)
 	}
 
 	/*
-	 * Do not use blk-mq at this time because blk-mq does not support
-	 * runtime pm.
+	 * TEST (r8q A/B): upstream pins this off because blk-mq has no
+	 * request-based runtime PM, and that is still the case here --
+	 * blk_pm_runtime_init() does pm_runtime_disable() for mq queues
+	 * (block/blk-core.c:4186), so the UFS disk loses runtime suspend when
+	 * this is set.  Flipped on only to make the mq elevators
+	 * (none/mq-deadline) selectable on sd*; measure idle drain as well as
+	 * I/O.  Revert to `false` to restore legacy SQ + runtime PM.
 	 */
-	host->use_blk_mq = false;
+	host->use_blk_mq = true;
 
 	hba = shost_priv(host);
 	hba->host = host;
