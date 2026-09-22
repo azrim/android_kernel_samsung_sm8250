@@ -631,10 +631,14 @@ static struct mm_struct *next_reap_victim(void)
 			continue;
 
 		/*
-		 * Skip victims that haven't been killed yet. New victims are
-		 * published to this array before the reclaim thread sends them
-		 * SIGKILL, so a reaper left over from a timed-out reclaim must
-		 * not unmap a not-yet-dying victim's memory.
+		 * Skip victims the reclaim thread hasn't gotten to yet. It
+		 * publishes nr_victims before running its kill loop, so a
+		 * reaper left over from a timed-out reclaim can see fresh
+		 * entries whose mm isn't marked MMF_OOM_VICTIM yet. That bit
+		 * is set before the SIGKILL on purpose: the mm must already be
+		 * a victim if the signal takes it into exit_mmap(), else
+		 * exit_mmap() skips its reap and never sets MMF_OOM_SKIP,
+		 * leaving this array entry pointing into a freed mm.
 		 */
 		if (!test_bit(MMF_OOM_VICTIM, &mm->flags))
 			continue;
