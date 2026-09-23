@@ -161,6 +161,7 @@ static void susfs_update_sus_mount_inode(char *target_pathname) {
 	if (mnt->mnt_group_id > 0 && // 0 means no peer group
 		mnt->mnt_group_id < DEFAULT_SUS_MNT_GROUP_ID) {
 		SUSFS_LOGE("skip setting SUS_MOUNT inode state for path '%s' since its source mount has a legit peer group id\n", target_pathname);
+		path_put(&p);
 		return;
 	}
 
