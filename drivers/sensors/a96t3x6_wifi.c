@@ -2324,7 +2324,8 @@ static int a96t3x6_load_fw(struct a96t3x6_data *data, u8 cmd)
 	return ret;
 
 fail_sdcard_size:
-	kfree(&data->firm_data_ums);
+	kfree(data->firm_data_ums);
+	data->firm_data_ums = NULL;
 fail_sdcard_kzalloc:
 	filp_close(fp, current->files);
 fail_sdcard_open:
