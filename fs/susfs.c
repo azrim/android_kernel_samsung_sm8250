@@ -725,8 +725,9 @@ int susfs_set_cmdline_or_bootconfig(char* __user user_fake_cmdline_or_bootconfig
 
 	spin_lock(&susfs_spin_lock);
 	memset(fake_cmdline_or_bootconfig, 0, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE);
-	res = strncpy_from_user(fake_cmdline_or_bootconfig, user_fake_cmdline_or_bootconfig, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE-1);
 	spin_unlock(&susfs_spin_lock);
+	// strncpy_from_user() can fault and sleep, so it must not run under the spinlock
+	res = strncpy_from_user(fake_cmdline_or_bootconfig, user_fake_cmdline_or_bootconfig, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE-1);
 
 	if (res > 0) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,0)
