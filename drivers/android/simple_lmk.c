@@ -114,6 +114,20 @@ static unsigned int poll_msec = 200;
 /* Skip routine reclaim while at least this much memory is available, in MiB */
 static unsigned int reserve_mib = 1024;
 
+/*
+ * Minimum settle time after a reclaim that killed victims, in ms. The victims
+ * only return their memory as they finish exit_mmap(), so reclaiming again
+ * inside that window double-charges the deficit. 0 disables it. Like
+ * poll_msec and reserve_mib, this deliberately has no Kconfig default: it is
+ * a tunable, not a policy switch, and adding a config symbol would churn
+ * out/.config for no functional gain.
+ */
+static unsigned int grace_msec = 2000;
+#define GRACE_MSEC_MAX 30000
+
+/* jiffies at which the last reclaim that killed victims finished */
+static unsigned long last_reclaim_end;
+
 /* Counters for measuring kill volume in the field; read-only */
 static unsigned long stat_events;
 static unsigned long stat_reclaims;
@@ -121,6 +135,7 @@ static unsigned long stat_kills;
 static unsigned long stat_pages_freed;
 static unsigned long stat_no_victims;
 static unsigned long stat_gated;
+static unsigned long stat_grace_dropped;
 
 /*
  * Descending by the named field. Comparing explicitly rather than subtracting
@@ -532,6 +547,15 @@ static bool scan_and_kill(short adj_floor)
 	stat_kills += nr_to_kill;
 	stat_pages_freed += pages_freed;
 
+	/*
+	 * Arm the grace period only for a reclaim that killed someone: an
+	 * empty scan freed nothing, so there is nothing to wait for. Both
+	 * callers hold reclaim_lock, so the write is serialized; readers
+	 * pair it with READ_ONCE().
+	 */
+	if (nr_to_kill > 0)
+		WRITE_ONCE(last_reclaim_end, jiffies);
+
 	return nr_to_kill > 0;
 }
 
@@ -559,6 +583,25 @@ static bool reclaim_needed(int *adj_floor)
 	if (needed)
 		ulmk_watchdog_pet(&t->wdog_timer);
 	mutex_unlock(&slmk_lock);
+
+	/*
+	 * Grace period: the previous reclaim's victims only return their
+	 * memory as they finish exit_mmap(), which under load takes hundreds
+	 * of milliseconds. Reclaiming again inside that window double-charges
+	 * the deficit -- the pages the last batch promised are still en route
+	 * -- and sweeps more cached apps than the pressure justifies. The
+	 * event is consumed and counted, like the reserve gate below: PSI
+	 * re-fires next window if the pressure is real. A reclaim that killed
+	 * nobody doesn't arm the grace period. The OOM emergency path above
+	 * is never gated: when the allocator is out of memory, waiting is a
+	 * luxury.
+	 */
+	if (needed && grace_msec && READ_ONCE(last_reclaim_end) &&
+	    time_before(jiffies, READ_ONCE(last_reclaim_end) +
+			msecs_to_jiffies(grace_msec))) {
+		stat_grace_dropped++;
+		return false;
+	}
 
 	/*
 	 * Avoid PSI thrash when memory is still available.
@@ -976,6 +1019,20 @@ static int set_reserve_mib(const char *val, const struct kernel_param *kp)
 	return 0;
 }
 
+static int set_grace_msec(const char *val, const struct kernel_param *kp)
+{
+	unsigned int v = grace_msec;
+	int ret = kstrtouint(val, 0, &v);
+
+	if (ret)
+		return ret;
+	/* 0 disables the grace period; beyond 30s LMK is effectively off */
+	if (v > GRACE_MSEC_MAX)
+		return -EINVAL;
+	grace_msec = v;
+	return 0;
+}
+
 static const struct kernel_param_ops poll_msec_ops = {
 	.set = set_poll_msec,
 	.get = param_get_uint,
@@ -993,6 +1050,11 @@ static const struct kernel_param_ops target_mib_ops = {
 
 static const struct kernel_param_ops reserve_mib_ops = {
 	.set = set_reserve_mib,
+	.get = param_get_uint,
+};
+
+static const struct kernel_param_ops grace_msec_ops = {
+	.set = set_grace_msec,
 	.get = param_get_uint,
 };
 
@@ -1051,9 +1113,9 @@ static int simple_lmk_init_set(const char *val, const struct kernel_param *kp)
 		goto unclaim;
 	}
 
-	pr_info("Initialized: target=%lu MiB threshold=%u us window=%u us cap=%u\n",
+	pr_info("Initialized: target=%lu MiB threshold=%u us window=%u us cap=%u grace=%u ms\n",
 		reclaim_target_pages() * PAGE_SIZE / SZ_1M, psi_threshold_us,
-		psi_window_us, max_kills);
+		psi_window_us, max_kills, grace_msec);
 
 	/* Always succeed: a failure here would make lmkd think LMK is absent */
 	return 0;
@@ -1083,6 +1145,9 @@ MODULE_PARM_DESC(target_mib, "MiB to free per reclaim; 0 derives it from RAM");
 module_param_cb(reserve_mib, &reserve_mib_ops, &reserve_mib, 0644);
 MODULE_PARM_DESC(reserve_mib,
 		"MiB of free memory below which routine reclaim may run; 0 disables");
+module_param_cb(grace_msec, &grace_msec_ops, &grace_msec, 0644);
+MODULE_PARM_DESC(grace_msec,
+		"Minimum settle time after a killing reclaim, ms; 0 disables");
 module_param_cb(max_kills, &max_kills_ops, &max_kills, 0644);
 MODULE_PARM_DESC(max_kills, "Maximum processes killed by a single reclaim");
 module_param_cb(poll_msec, &poll_msec_ops, &poll_msec, 0644);
@@ -1101,6 +1166,9 @@ MODULE_PARM_DESC(stat_no_victims, "Reclaims that found nothing killable");
 module_param(stat_gated, ulong, 0444);
 MODULE_PARM_DESC(stat_gated,
 		 "Pressure events whose reclaim was suppressed by reserve_mib");
+module_param(stat_grace_dropped, ulong, 0444);
+MODULE_PARM_DESC(stat_grace_dropped,
+		 "Pressure events whose reclaim was suppressed by grace_msec");
 
 /* Needed to prevent Android from thinking there's no LMK and thus rebooting */
 #undef MODULE_PARAM_PREFIX
