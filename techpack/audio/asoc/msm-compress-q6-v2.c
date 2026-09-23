@@ -3103,8 +3103,17 @@ static int msm_compr_capture_copy(struct snd_compr_stream *cstream,
 	source = prtd->buffer + prtd->app_pointer;
 	/* check if we have requested amount of data to copy to user*/
 	if (count <= prtd->received_total - prtd->bytes_copied)	{
+		size_t copy = prtd->buffer_size - prtd->app_pointer;
 		spin_unlock_irqrestore(&prtd->lock, flags);
-		if (copy_to_user(buf, source, count)) {
+		/* capture reads span the ring wrap: split at the end of the
+		 * capture buffer, mirroring the playback write path, so we never
+		 * copy stale bytes from outside the ring buffer to userspace
+		 */
+		if (copy > count)
+			copy = count;
+		if (copy_to_user(buf, source, copy) ||
+				copy_to_user(buf + copy, prtd->buffer,
+					count - copy)) {
 			pr_err("copy_to_user failed");
 			return -EFAULT;
 		}
