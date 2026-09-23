@@ -204,10 +204,11 @@ int susfs_add_sus_mount(struct st_susfs_sus_mount* __user user_info) {
 		if (unlikely(!strcmp(cursor->info.target_pathname, info.target_pathname))) {
 			spin_lock(&susfs_spin_lock);
 			memcpy(&cursor->info, &info, sizeof(info));
+			spin_unlock(&susfs_spin_lock);
+			// susfs_update_sus_mount_inode() calls kern_path(), which may sleep
 			susfs_update_sus_mount_inode(cursor->info.target_pathname);
 			SUSFS_LOGI("target_pathname: '%s', target_dev: '%lu', is successfully updated to LH_SUS_MOUNT\n",
 						cursor->info.target_pathname, cursor->info.target_dev);
-			spin_unlock(&susfs_spin_lock);
 			return 0;
 		}
 	}
