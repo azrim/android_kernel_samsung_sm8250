@@ -3991,7 +3991,7 @@ static irqreturn_t pca9468_interrupt_handler(int irq, void *data)
 			int1[REG_INT1], int1[REG_INT1_STS], sts[REG_STS_A]);
 
 	/* Check Interrupt */
-	masked_int = int1[REG_INT1] & !int1[REG_INT1_MSK];
+	masked_int = int1[REG_INT1] & ~int1[REG_INT1_MSK];
 	if (masked_int & PCA9468_BIT_V_OK_INT) {
 		/* V_OK interrupt happened */
 		mutex_lock(&pca9468->lock);
