@@ -159,8 +159,17 @@ static int sec_debug_normal_reboot_handler(struct notifier_block *nb,
 	if ((action == SYS_RESTART) &&
 		!strncmp((char *)data, "param", 5)) {
 		ptr1 = strchr((char *)data, '_');
+		if (!ptr1) {
+			pr_info("invalid param format of reboot cmd.\n");
+			return 0;
+		}
 		ptr1 = ptr1 + 1;
 		ptr2 = strchr((char *)ptr1, '_');
+		if (!ptr2 || ptr2 == ptr1 ||
+				(ptr2 - ptr1) >= sizeof(index_char)) {
+			pr_info("invalid param format of reboot cmd.\n");
+			return 0;
+		}
 		memcpy(&index_char, ptr1 , ptr2-ptr1);
 		index_char[ptr2-ptr1] = '\0';
 
@@ -172,8 +181,12 @@ static int sec_debug_normal_reboot_handler(struct notifier_block *nb,
 					sec_set_param(index, &value_number);
 			} else if (*ptr2 == '1') {
 				char value_char[256] = {0,};
+				size_t value_len;
 				ptr2 = ptr2 + 1;
-				memcpy(value_char, ptr2, strlen ((char *)ptr2));
+				value_len = strlen ((char *)ptr2);
+				if (value_len >= sizeof(value_char))
+					value_len = sizeof(value_char) - 1;
+				memcpy(value_char, ptr2, value_len);
 				sec_set_param(index, value_char);
 			} else
 				pr_info("invalid param index of reboot cmd.\n");
