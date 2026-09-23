@@ -10,6 +10,9 @@
 #define KSU_INSTALL_MAGIC1 0xDEADBEEF
 #define KSU_INSTALL_MAGIC2 0xCAFEBABE
 
+/* prctl option used by the susfs userspace ABI, see feature/susfs.c */
+#define KERNEL_SU_OPTION 0xDEADBEEF
+
 struct ksu_become_daemon_cmd {
 	__u8 token[65]; /* Input: daemon token (null-terminated) */
 };

@@ -212,6 +212,27 @@ bool is_init(const struct cred *cred)
 	return is_sid_match(cred, cached_init_sid, INIT_CONTEXT);
 }
 
+#ifdef CONFIG_KSU_SUSFS
+/*
+ * SUSFS wants to know whether the current process runs in one of the domains
+ * it treats specially. The sids are already cached above, so reuse them.
+ */
+bool susfs_is_current_ksu_domain(void)
+{
+	return is_ksu_domain();
+}
+
+bool susfs_is_current_zygote_domain(void)
+{
+	return is_zygote(current_cred());
+}
+
+bool susfs_is_current_init_domain(void)
+{
+	return is_init(current_cred());
+}
+#endif // CONFIG_KSU_SUSFS
+
 void escape_to_root_for_adb_root(void)
 {
 	struct cred *cred = prepare_creds();

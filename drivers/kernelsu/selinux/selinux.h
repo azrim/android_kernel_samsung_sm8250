@@ -29,6 +29,12 @@ bool is_zygote(const struct cred* cred);
 
 bool is_init(const struct cred* cred);
 
+#ifdef CONFIG_KSU_SUSFS
+bool susfs_is_current_ksu_domain(void);
+bool susfs_is_current_zygote_domain(void);
+bool susfs_is_current_init_domain(void);
+#endif
+
 void apply_kernelsu_rules();
 
 int handle_sepolicy(void __user *user_data, u64 data_len);

@@ -46,6 +46,10 @@
 #include "kernel_compat.h"
 #include "include/util.h"
 
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs.h>
+#endif
+
 #include "policy/app_profile.h"
 #include "policy/allowlist.h"
 #include "policy/feature.h"
@@ -62,6 +66,9 @@
 #include "feature/selinux_hide.h"
 #include "feature/sucompat.h"
 #include "feature/sulog.h"
+#ifdef CONFIG_KSU_SUSFS
+#include "feature/susfs.h"
+#endif
 #include "runtime/ksud.h"
 #include "sulog/event.h"
 #include "sulog/fd.h"
@@ -112,6 +119,9 @@
 #include "feature/selinux_hide.c"
 #include "feature/sucompat.c"
 #include "feature/sulog.c"
+#ifdef CONFIG_KSU_SUSFS
+#include "feature/susfs.c"
+#endif
 #include "runtime/ksud.c"
 
 #include "sulog/event.c"
@@ -252,6 +262,10 @@ static int __init kernelsu_init(void)
 
 #ifdef CONFIG_KSU_FEATURE_ADBROOT
 	ksu_adb_root_init(); // so the feature is registered
+#endif
+
+#ifdef CONFIG_KSU_SUSFS
+	susfs_init();
 #endif
 
 	ksu_core_init();

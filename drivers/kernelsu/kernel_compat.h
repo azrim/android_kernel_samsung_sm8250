@@ -127,6 +127,22 @@ static __always_inline long memmove_user(void __user *dst, const void __user *sr
 	return 0;
 }
 
+/**
+ * ksu_access_ok(): version agnostic access_ok()
+ * - up to 5.0: access_ok(type, addr, size)
+ * - 5.0+ : access_ok(addr, size)
+ *
+ * used by the susfs prctl bridge to validate user pointers
+ */
+static __always_inline int ksu_access_ok(const void *addr, unsigned long size)
+{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)
+	return access_ok(VERIFY_READ, addr, size);
+#else
+	return access_ok(addr, size);
+#endif
+}
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
 static inline void ksu_memzero_explicit(void *s, size_t count) { memset_explicit(s, 0, count); }
 #define memzero_explicit ksu_memzero_explicit

@@ -47,6 +47,72 @@ static inline void try_umount(const char *mnt, int flags)
 	ksu_umount_mnt(mnt, &path, flags);
 }
 
+#if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)
+#ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+extern bool susfs_is_log_enabled __read_mostly;
+#endif
+extern bool susfs_is_mnt_devname_ksu(struct path *path);
+
+// susfs only wants to unmount the mounts that KSU itself created
+static bool should_umount(struct path *path)
+{
+	if (!path)
+		return false;
+
+	return susfs_is_mnt_devname_ksu(path);
+}
+
+// called by fs/susfs.c (susfs_try_umount) and susfs_try_umount_all() below
+void ksu_try_umount(const char *mnt, bool check_mnt, int flags, uid_t uid)
+{
+	struct path path;
+	int err = kern_path(mnt, 0, &path);
+	if (err) {
+		return;
+	}
+
+	if (path.dentry != path.mnt->mnt_root) {
+		// it is not root mountpoint, maybe umounted by others already.
+		path_put(&path);
+		return;
+	}
+
+	// we are only interested in some specific mounts
+	if (check_mnt && !should_umount(&path)) {
+		path_put(&path);
+		return;
+	}
+
+#ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+	if (susfs_is_log_enabled) {
+		pr_info("susfs: umounting '%s' for uid: %d\n", mnt, uid);
+	}
+#else
+	(void)uid;
+#endif
+
+	ksu_umount_mnt(mnt, &path, flags);
+}
+#endif // CONFIG_KSU_SUSFS_SUS_MOUNT || CONFIG_KSU_SUSFS_TRY_UMOUNT
+
+#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
+// called from the setuid path below and from fs/namespace.c
+void susfs_try_umount_all(uid_t uid)
+{
+	susfs_try_umount(uid);
+	ksu_try_umount("/system", true, 0, uid);
+	ksu_try_umount("/system_ext", true, 0, uid);
+	ksu_try_umount("/vendor", true, 0, uid);
+	ksu_try_umount("/product", true, 0, uid);
+	ksu_try_umount("/odm", true, 0, uid);
+	// - For '/data/adb/modules' we pass 'false' here because it is a loop device that we can't determine whether
+	//   its dev_name is KSU or not, and it is safe to just umount it if it is really a mountpoint
+	ksu_try_umount("/data/adb/modules", false, MNT_DETACH, uid);
+	/* For both Legacy KSU and Magic Mount KSU */
+	ksu_try_umount("/debug_ramdisk", true, MNT_DETACH, uid);
+}
+#endif // CONFIG_KSU_SUSFS_TRY_UMOUNT
+
 static inline int ksu_handle_umount(struct cred *new, const struct cred *old)
 {
 	uid_t new_uid = ksu_get_uid_t(new->uid);
@@ -89,6 +155,11 @@ static inline int ksu_handle_umount(struct cred *new, const struct cred *old)
 	pr_info("handle umount for uid: %d, pid: %d\n", new_uid, current->pid);
 
 	const struct cred *saved = override_creds(ksu_cred);
+
+#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
+	// susfs comes first, and lastly umount by ksu, make sure umount in reversed order
+	susfs_try_umount_all(new_uid);
+#endif
 
 	struct mount_entry *entry;
 	down_read(&mount_list_lock);
