@@ -303,7 +303,7 @@ static int a96t3x6_i2c_write(struct i2c_client *client, u8 reg, u8 *val)
  * This function was designed to prevent noise issue from ic for specific models.
  * If earjack_noise is true, it handled enable control for it.
  */
-static void a96t3x6_set_enable(struct a96t3x6_data *data, int enable)
+static int a96t3x6_set_enable(struct a96t3x6_data *data, int enable)
 {
 	u8 cmd;
 	u8 reg_value = 0;
@@ -317,7 +317,7 @@ static void a96t3x6_set_enable(struct a96t3x6_data *data, int enable)
 	if((pre_enable == 1 && reg_value == CMD_ON) || (pre_enable == 0 && reg_value == CMD_OFF)) {
 		if (pre_enable == enable) {
 			GRIP_INFO("skip\n", __func__);
-			return;
+			return -1;
 		}
 	}
 
@@ -328,7 +328,7 @@ static void a96t3x6_set_enable(struct a96t3x6_data *data, int enable)
 		if (ret < 0) {
 			GRIP_ERR("failed to enable grip irq\n");
 			atomic_set(&data->enable, 0);
-			return;
+			return -1;
 		}
 
 		a96t3x6_check_first_status(data, enable);
@@ -338,6 +338,7 @@ static void a96t3x6_set_enable(struct a96t3x6_data *data, int enable)
 
 		data->irq_en_cnt++;
 		atomic_set(&data->enable, 1);
+		return 0;
 
 	} else {
 		cmd = CMD_OFF;
@@ -351,6 +352,7 @@ static void a96t3x6_set_enable(struct a96t3x6_data *data, int enable)
 
 		atomic_set(&data->enable, 0);
 	}
+	return 0;
 }
 
 static void a96t3x6_sar_only_mode(struct a96t3x6_data *data, int on)
@@ -496,8 +498,15 @@ static void a96t3x6_reset(struct a96t3x6_data *data)
 	a96t3x6_reset_for_bootmode(data);
 	usleep_range(RESET_DELAY, RESET_DELAY);
 
-	if (enable)
-		a96t3x6_set_enable(data, 1);
+	if (enable) {
+		/*
+		 * set_enable() can skip (ic already in the requested state) or
+		 * fail its i2c write; either way the nosync disable above must
+		 * not leave the grip irq masked permanently.
+		 */
+		if (a96t3x6_set_enable(data, 1))
+			enable_irq(data->irq);
+	}
 
 	GRIP_INFO("done\n");
 }
