@@ -455,6 +455,9 @@ static struct miscdevice mxim_debug_miscdev = {
 
 void mxim_debug_exit(void)
 {
+	/* deregister (and quiesce in-flight writers) before freeing */
+	misc_deregister(&mxim_debug_miscdev);
+
 	if (mxim_pdev) {
 		mutex_destroy(&mxim_pdev->lock);
 		sysfs_remove_group(&mxim_pdev->dev->kobj, &mxim_debug_attr_grp);
@@ -463,8 +466,6 @@ void mxim_debug_exit(void)
 		kfree(mxim_pdev);
 		mxim_pdev = NULL;
 	}
-
-	misc_deregister(&mxim_debug_miscdev);
 }
 EXPORT_SYMBOL_GPL(mxim_debug_exit);
 
