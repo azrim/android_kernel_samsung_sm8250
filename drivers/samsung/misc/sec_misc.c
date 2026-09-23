@@ -161,11 +161,10 @@ static struct msm_power_dou *__msm_power_dou_get_instance(void)
 				memset(&power_dou, 0x0, sizeof(struct msm_power_dou));
 				of_node_put(np);
 				return &power_dou;
-			} else {
-				reg_phys = reg_phys_dt;
-			}
+		} else {
+			reg_phys = reg_phys_dt;
 		}
-		of_node_put(np);
+	}
 	}
 
 	reg_virt = ioremap_nocache((phys_addr_t)reg_phys, SZ_4K);
@@ -230,6 +229,8 @@ static struct msm_power_dou *__msm_power_dou_get_instance(void)
 			}
 		}
 	}
+
+	of_node_put(np);
 
 	return &power_dou;
 }
