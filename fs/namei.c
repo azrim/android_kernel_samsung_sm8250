@@ -1652,8 +1652,26 @@ static struct dentry *__lookup_hash(const struct qstr *name,
 	struct dentry *old;
 	struct inode *dir = base->d_inode;
 
-	if (dentry)
+	if (dentry) {
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+		/*
+		 * The dcache can hold a positive dentry for a SUS_PATH-hidden
+		 * name: root/ksu-domain lookups are not filtered and populate
+		 * it for everyone.  Handing it out here would let a umounted
+		 * non-root caller mutate the real file behind the hidden name
+		 * (unlink/rmdir/rename all come through __lookup_hash), so
+		 * report the path as missing, exactly like the ->lookup() path
+		 * below does.
+		 */
+		if (!IS_ERR(dentry) && dentry->d_inode &&
+		    unlikely(dentry->d_inode->i_state & INODE_STATE_SUS_PATH) &&
+		    likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+			dput(dentry);
+			return ERR_PTR(-ENOENT);
+		}
+#endif
 		return dentry;
+	}
 
 	/* Don't create child dentry for a dead directory. */
 	if (unlikely(IS_DEADDIR(dir)))
