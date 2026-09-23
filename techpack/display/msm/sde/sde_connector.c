@@ -841,12 +841,35 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
                 	        vdd->finger_mask_updated = false;
                         	SDE_ERROR("[FINGER_MASK]updated finger mask mode %d\n", vdd->finger_mask);
 	                }
+			/* P230622-05552 : the mask tx must happen under vrr_lock so it
+			 * serializes against VRR (HS - PHS) switching. The flag was set
+			 * by sde_crtc_fod_atomic_check(); send inline and clear it here
+			 * instead of the unlocked deferred tx in dsi_display_pre_kickoff.
+			 */
+			if (vdd->finger_mask_updated) {
+				mutex_lock(&vdd->vrr.vrr_lock);
+				ss_send_hbm_fingermask_image_tx(vdd, vdd->finger_mask);
+				vdd->finger_mask_updated = false;
+				mutex_unlock(&vdd->vrr.vrr_lock);
+			}
 		} else {
-			vdd->finger_mask_updated = false;
+			/* To prevent race condition between Finger Mask Commit & VRR Commit
+			 * P230622-05552 : Race condition beteen Finger Mask & VRR(HS - PHS Switching)
+			 * Incase of VRR switching, VRR shulod be changed even though finger mask is being changed.
+			 * To protect link between vdd->finger_mask_updated & finger_mask brightness update, vrr_lock should be added.
+			 *
+			 * Simply, please refer below NG/OK cases.
+			 * vdd->finger_mask_updated=true -> vrr brightness_update -> finger_mask brightness_update (NG)
+			 * vdd->finger_mask_updated=true -> finger_mask brightness_update -> vdd->finger_mask_updated=false -> vrr brightness_update (OK)
+			 */
 			if (finger_mask_state != vdd->finger_mask) {
-				SDE_ERROR("[FINGER MASK]updated finger mask mode %d\n", finger_mask_state);
+				mutex_lock(&vdd->vrr.vrr_lock);
+				SDE_INFO("[FINGER_MASK]updated finger mask mode %d\n", finger_mask_state);
 				vdd->finger_mask_updated = true;
 				vdd->finger_mask = finger_mask_state;
+				ss_send_hbm_fingermask_image_tx(vdd, vdd->finger_mask);
+				vdd->finger_mask_updated = false;
+				mutex_unlock(&vdd->vrr.vrr_lock);
 			}
 		}
 	}
