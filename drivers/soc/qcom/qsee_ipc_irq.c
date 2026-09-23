@@ -251,6 +251,7 @@ static int qsee_irq_probe(struct platform_device *pdev)
 	}
 
 	qirq->regmap = syscon_node_to_regmap(syscon);
+	of_node_put(syscon);
 	if (IS_ERR(qirq->regmap))
 		return PTR_ERR(qirq->regmap);
 

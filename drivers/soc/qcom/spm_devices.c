@@ -652,9 +652,12 @@ static int get_cpu_id(struct device_node *node)
 	cpu_node = of_parse_phandle(node, key, 0);
 	if (cpu_node) {
 		for_each_possible_cpu(cpu) {
-			if (of_get_cpu_node(cpu, NULL) == cpu_node)
+			if (of_get_cpu_node(cpu, NULL) == cpu_node) {
+				of_node_put(cpu_node);
 				return cpu;
+			}
 		}
+		of_node_put(cpu_node);
 	} else
 		return num_possible_cpus();
 
@@ -701,6 +704,7 @@ static void get_cpumask(struct device_node *node, struct cpumask *mask)
 			if (of_get_cpu_node(c, NULL) == cpu_node)
 				cpumask_set_cpu(c, mask);
 		}
+		of_node_put(cpu_node);
 		cpu_node = of_parse_phandle(node, key, idx++);
 	};
 }

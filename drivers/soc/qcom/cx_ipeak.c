@@ -93,20 +93,28 @@ struct cx_ipeak_client *cx_ipeak_register(struct device_node *dev_node,
 	if (ret)
 		return ERR_PTR(-EINVAL);
 
-	if (!of_device_is_available(cx_spec.np))
+	if (!of_device_is_available(cx_spec.np)) {
+		of_node_put(cx_spec.np);
 		return NULL;
+	}
 
-	if (device_ipeak.tcsr_vptr == NULL)
+	if (device_ipeak.tcsr_vptr == NULL) {
+		of_node_put(cx_spec.np);
 		return ERR_PTR(-EPROBE_DEFER);
+	}
 
-	if (cx_spec.args[0] > 31)
+	if (cx_spec.args[0] > 31) {
+		of_node_put(cx_spec.np);
 		return ERR_PTR(-EINVAL);
+	}
 
 	if (device_ipeak.core_ops)
 		client =  device_ipeak.core_ops->register_client
 						(cx_spec.args[0]);
 
 	client->client_id = cx_spec.args[0];
+
+	of_node_put(cx_spec.np);
 
 	return client;
 }

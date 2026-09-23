@@ -207,8 +207,10 @@ static void glink_ssr_init_notify(struct glink_ssr *ssr)
 			break;
 
 		nb = kzalloc(sizeof(*nb), GFP_KERNEL);
-		if (!nb)
+		if (!nb) {
+			of_node_put(node);
 			return;
+		}
 
 		ret = of_property_read_string(node, "label", &nb->ssr_label);
 		if (ret < 0)
@@ -219,6 +221,7 @@ static void glink_ssr_init_notify(struct glink_ssr *ssr)
 		if (ret < 0) {
 			GLINK_ERR(dev, "no qcom,glink-label for %s\n",
 				  nb->ssr_label);
+			of_node_put(node);
 			kfree(nb);
 			continue;
 		}
@@ -231,12 +234,14 @@ static void glink_ssr_init_notify(struct glink_ssr *ssr)
 		if (IS_ERR_OR_NULL(handle)) {
 			GLINK_ERR(dev, "register fail for %s SSR notifier\n",
 				  nb->ssr_label);
+			of_node_put(node);
 			kfree(nb);
 			continue;
 		}
 
 		nb->ssr_register_handle = handle;
 		list_add_tail(&nb->list, &ssr->notify_list);
+		of_node_put(node);
 	}
 }
 

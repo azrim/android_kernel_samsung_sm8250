@@ -420,8 +420,10 @@ static int cpuss_dump_probe(struct platform_device *pdev)
 		if (ret) {
 			dev_err(&pdev->dev, "Unable to find size for %s\n",
 					dump_node->name);
+			of_node_put(dump_node);
 			continue;
 		}
+		of_node_put(dump_node);
 
 		ret = of_property_read_u32(child_node, "qcom,dump-id", &id);
 		if (ret) {
