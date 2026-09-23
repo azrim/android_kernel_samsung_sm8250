@@ -152,9 +152,10 @@ check_ptr:
 	return true;
 }
 
-static __always_inline void ksu_sucompat_user_common(const char __user **filename_user, const char *syscall_name)
+static __always_inline int ksu_sucompat_user_common(const char __user **filename_user, const char *syscall_name)
 {
 	uintptr_t buf;
+	int su_session = 0;
 	constexpr char su[16] = SU_PATH;
 
 	// sugar prep
@@ -181,35 +182,35 @@ static __always_inline void ksu_sucompat_user_common(const char __user **filenam
 
 #ifdef CONFIG_64BIT
 	if (get_user(buf, &fn_p[1]))
-		return;
+		return 0;
 
 	if (likely((buf & 0x00FFFFFFFFFFFFFFUL) != (su_p[1] & 0x00FFFFFFFFFFFFFFUL)))
-		return;
+		return 0;
 #else
 	if (get_user(buf, &fn_p[3]))
-		return;
+		return 0;
 
 	if (likely((buf & 0x00FFFFFFUL) != (su_p[3] & 0x00FFFFFFUL)))
-		return;
+		return 0;
 
 	if (unlikely(get_user(buf, &fn_p[2])))
-		return;
+		return 0;
 
 	if (buf != su_p[2])
-		return;
+		return 0;
 
 	if (unlikely(get_user(buf, &fn_p[1])))
-		return;
+		return 0;
 
 	if (unlikely(buf != su_p[1]))
-		return;
+		return 0;
 #endif
 	// last word
 	if (unlikely(get_user(buf, &fn_p[0])))
-		return;
+		return 0;
 
 	if (unlikely(buf != su_p[0]))
-		return;
+		return 0;
 
 	if (!__builtin_strcmp(syscall_name, "sys_faccessat"))
 		write_sulog('a');
@@ -228,9 +229,16 @@ static __always_inline void ksu_sucompat_user_common(const char __user **filenam
 	ksu_sulog_emit(KSU_SULOG_EVENT_SUCOMPAT, NULL, NULL, GFP_KERNEL);
 #endif
 	if (!!escape_with_root_profile())
-		return;
+		return 0;
 
-	ksu_install_su_fd(); // ksu#3679
+	/*
+	 * ksu#3679: ksu_install_su_fd() documents that the descriptor must be
+	 * installed after the exec into ksud succeeded - installing it here
+	 * would hand it to the pre-exec "su" caller instead.  Signal the su
+	 * session to the execve caller and let do_execveat_common() install
+	 * it once bprm_execve() has succeeded.
+	 */
+	su_session = 1;
 
 	// NOTE: we only check file existence, not exec success!
 	struct path kpath;
@@ -240,13 +248,15 @@ static __always_inline void ksu_sucompat_user_common(const char __user **filenam
 	path_put(&kpath);
 	pr_info("su_compat: %s su->ksud!%s\n", syscall_name, (is_compat_task()) ? " [compat]" : "" );
 	*filename_user = ksud_user_path();
-	return;
+	goto out_session;
 
 no_ksud:
 no_escalate:
 	pr_info("su_compat: %s su->sh!%s\n", syscall_name, (is_compat_task()) ? " [compat]" : "" );
 	*filename_user = sh_user_path();
-	return;
+
+out_session:
+	return su_session;
 
 }
 
@@ -279,8 +289,8 @@ SUCOMPAT_HOOK_TYPE ksu_handle_sys_execve(const char __user **filename_user, void
 	if (!is_su_allowed((const void **)filename_user))
 		return 0;
 
-	ksu_sucompat_user_common(filename_user, "sys_execve");
-	return 0;
+	/* session signal consumed by the syscall-table caller (if wired) */
+	return ksu_sucompat_user_common(filename_user, "sys_execve");
 }
 
 // sys_execveat, compat_sys_execveat
@@ -292,23 +302,25 @@ SUCOMPAT_HOOK_TYPE ksu_handle_sys_execveat(int *fd, const char __user **filename
 	if (!is_su_allowed((const void **)filename_user))
 		return 0;
 
-	ksu_sucompat_user_common(filename_user, "sys_execveat");
-	return 0;
+	/* session signal consumed by the syscall-table caller (if wired) */
+	return ksu_sucompat_user_common(filename_user, "sys_execveat");
 }
 
-static __always_inline void ksu_sucompat_kernel_common(int *restrict fd, void **restrict filename_ptr, void *restrict argv, void *restrict envp, int *restrict flags, const char *function_name)
+static __always_inline int ksu_sucompat_kernel_common(int *restrict fd, void **restrict filename_ptr, void *restrict argv, void *restrict envp, int *restrict flags, const char *function_name)
 {
+	int su_session = 0;
+
 #ifdef CONFIG_KSU_FEATURE_ADBROOT
 	ksu_adb_root_execve_kernel((void *)filename_ptr, (void *)envp);
 #endif
 	if (!is_su_allowed((const void **)filename_ptr))
-		return;
+		return 0;
 
 	if (!!fd && fd != (int *)AT_FDCWD && *fd != AT_FDCWD)
-		return;
+		return 0;
 
 	if (!!flags && !!*flags)
-		return;
+		return 0;
 
 	constexpr char su[16] = SU_PATH;
 
@@ -318,17 +330,17 @@ static __always_inline void ksu_sucompat_kernel_common(int *restrict fd, void **
 	uint128_t *fn128 = (uint128_t *)*(char **)filename_ptr;
 	const uint128_t mask = make128const(0x00FFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL);
 	if (likely((*fn128 & mask) != (*su128 & mask)))
-		return;
+		return 0;
 #endif
 	// getname_flags pads this so nothing to worry about, dereference with confidence!
 	uint64_t *su_p = (uint64_t *)su;
 	uint64_t *fn_p = (uint64_t *)*(char **)filename_ptr;
 
 	if (likely((fn_p[1] & 0x00FFFFFFFFFFFFFFULL) != (su_p[1] & 0x00FFFFFFFFFFFFFFULL)))
-		return;
+		return 0;
 
 	if (unlikely(fn_p[0] != su_p[0]))
-		return;
+		return 0;
 
 	// we only handle execve here after removing vfs_statx hook for >= 6.1
 	write_sulog('x');
@@ -337,9 +349,16 @@ static __always_inline void ksu_sucompat_kernel_common(int *restrict fd, void **
 	ksu_sulog_emit(KSU_SULOG_EVENT_SUCOMPAT, NULL, NULL, GFP_KERNEL);
 #endif
 	if (!!escape_with_root_profile())
-		return;
+		return 0;
 
-	ksu_install_su_fd(); // ksu#3679
+	/*
+	 * ksu#3679: ksu_install_su_fd() documents that the descriptor must be
+	 * installed after the exec into ksud succeeded - installing it here
+	 * would hand it to the pre-exec "su" caller instead.  Signal the su
+	 * session to the execve caller and let do_execveat_common() install
+	 * it once exec_binprm() has succeeded.
+	 */
+	su_session = 1;
 
 	// NOTE: we only check file existence, not exec success!
 	struct path kpath;
@@ -350,13 +369,15 @@ static __always_inline void ksu_sucompat_kernel_common(int *restrict fd, void **
 	pr_info("su_compat: %s su->ksud!%s\n", function_name, (is_compat_task()) ? " [compat]" : "");
 	constexpr char ksud[16] = KSUD_PATH;
 	memcpy_inline(*filename_ptr, ksud, sizeof(ksud));
-	return;
+	goto out_session;
 
 no_ksud:
 	pr_info("su_compat: %s su->sh!%s\n", function_name, (is_compat_task()) ? " [compat]" : "" );
 	constexpr char sh[16] = SH_PATH;
 	memcpy_inline(*filename_ptr, sh, sizeof(sh));
-	return;
+
+out_session:
+	return su_session;
 }
 
 struct filename; // take note: struct filename *filename, for do_execveat_common / do_execve_common on >= 3.14
@@ -372,15 +393,13 @@ SUCOMPAT_HOOK_TYPE ksu_handle_execveat(int *fd, struct filename **filename_ptr, 
 
 	// first member of struct filename is char *name.
 	// char *filename = *(char **)struct_filename;
-	ksu_sucompat_kernel_common(fd, (void **)struct_filename, argv, envp, flags, "do_execveat_common");
-	return 0;
+	return ksu_sucompat_kernel_common(fd, (void **)struct_filename, argv, envp, flags, "do_execveat_common");
 }
 
 // take note: char *filename, for do_execve_common on < 3.14
 SUCOMPAT_HOOK_TYPE ksu_legacy_execve_sucompat(const char **filename_ptr, void *argv, void *envp)
 {
-	ksu_sucompat_kernel_common((int *)AT_FDCWD, (void **)filename_ptr, argv, envp, 0, "do_execve_common");
-	return 0;
+	return ksu_sucompat_kernel_common((int *)AT_FDCWD, (void **)filename_ptr, argv, envp, 0, "do_execve_common");
 }
 
 #ifdef CONFIG_KSU_TAMPER_SYSCALL_TABLE

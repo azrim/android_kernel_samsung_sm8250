@@ -1762,10 +1762,14 @@ static int exec_binprm(struct linux_binprm *bprm)
 /*
  * sys_execve() executes a new program.
  */
+#ifdef CONFIG_KSU
+extern int ksu_install_su_fd(void);
+#endif
 static int __do_execve_file(int fd, struct filename *filename,
 			    struct user_arg_ptr argv,
 			    struct user_arg_ptr envp,
-			    int flags, struct file *file)
+			    int flags, struct file *file,
+			    bool is_su_session)
 {
 	char *pathbuf = NULL;
 	struct linux_binprm *bprm;
@@ -1891,6 +1895,19 @@ static int __do_execve_file(int fd, struct filename *filename,
 	if (retval < 0)
 		goto out;
 
+#ifdef CONFIG_KSU
+	/*
+	 * ksu#3679: the su-session driver fd documents that it must be
+	 * installed after the exec into ksud succeeded, so ksud finds it
+	 * directly in /proc/self/fd without the sys_reboot magic round
+	 * trip.  Installing it before the exec would hand the descriptor
+	 * to the pre-exec "su" caller, and a failed exec would leave it
+	 * in the caller's table.
+	 */
+	if (unlikely(is_su_session))
+		ksu_install_su_fd();
+#endif
+
 	if (is_global_init(current->parent)) {
                 if (unlikely(!strcmp(filename->name, PERF))) {
                         WRITE_ONCE(powerhal_tsk, current);
@@ -1942,9 +1959,10 @@ out_ret:
 static int do_execveat_common(int fd, struct filename *filename,
 			      struct user_arg_ptr argv,
 			      struct user_arg_ptr envp,
-			      int flags)
+			      int flags, bool is_su_session)
 {
-	return __do_execve_file(fd, filename, argv, envp, flags, NULL);
+	return __do_execve_file(fd, filename, argv, envp, flags, NULL,
+				is_su_session);
 }
 
 int do_execve_file(struct file *file, void *__argv, void *__envp)
@@ -1952,7 +1970,7 @@ int do_execve_file(struct file *file, void *__argv, void *__envp)
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
 
-	return __do_execve_file(AT_FDCWD, NULL, argv, envp, 0, file);
+	return __do_execve_file(AT_FDCWD, NULL, argv, envp, 0, file, false);
 }
 
 #ifdef CONFIG_KSU
@@ -1967,10 +1985,12 @@ int do_execve(struct filename *filename,
 {
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
+	bool is_su_session = false;
 #ifdef CONFIG_KSU
-	ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
+	is_su_session = ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
 #endif
-	return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);
+	return do_execveat_common(AT_FDCWD, filename, argv, envp, 0,
+				  is_su_session);
 }
 
 int do_execveat(int fd, struct filename *filename,
@@ -1981,7 +2001,7 @@ int do_execveat(int fd, struct filename *filename,
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
 
-	return do_execveat_common(fd, filename, argv, envp, flags);
+	return do_execveat_common(fd, filename, argv, envp, flags, false);
 }
 
 #ifdef CONFIG_COMPAT
@@ -1997,10 +2017,12 @@ static int compat_do_execve(struct filename *filename,
 		.is_compat = true,
 		.ptr.compat = __envp,
 	};
+	bool is_su_session = false;
 #ifdef CONFIG_KSU // 32-bit ksud and 32-on-64 support
-	ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
+	is_su_session = ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
 #endif
-	return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);
+	return do_execveat_common(AT_FDCWD, filename, argv, envp, 0,
+				  is_su_session);
 }
 
 static int compat_do_execveat(int fd, struct filename *filename,
@@ -2016,7 +2038,7 @@ static int compat_do_execveat(int fd, struct filename *filename,
 		.is_compat = true,
 		.ptr.compat = __envp,
 	};
-	return do_execveat_common(fd, filename, argv, envp, flags);
+	return do_execveat_common(fd, filename, argv, envp, flags, false);
 }
 #endif
 
