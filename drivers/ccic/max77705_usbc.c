@@ -3858,10 +3858,12 @@ static int max77705_usbc_probe(struct platform_device *pdev)
 	usbc_data->typec_try_state_change = TRY_ROLE_SWAP_NONE;
 
 	usbc_data->port = typec_register_port(usbc_data->dev, &usbc_data->typec_cap);
-	if (IS_ERR(usbc_data->port))
+	if (IS_ERR(usbc_data->port)) {
 		pr_err("unable to register typec_register_port\n");
-	else
+		return PTR_ERR(usbc_data->port);
+	} else {
 		msg_maxim("success typec_register_port port=%pK", usbc_data->port);
+	}
 	usbc_data->partner = NULL;
 	init_completion(&usbc_data->typec_reverse_completion);
 #endif
