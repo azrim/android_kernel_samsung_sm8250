@@ -527,11 +527,13 @@ static int dbg_partition_make_part_table(void)
 	of_get_property(parent, "part-table", &size);
 	if (!size) {
 		pr_err("part-table node is not in device tree\n");
+		of_node_put(parent);
 		return -ENODEV;
 	}
 
 	if (size != DEBUG_PART_MAX_TABLE * 2 * sizeof(u32)) {
 		pr_err("part-table has wrong size\n");
+		of_node_put(parent);
 		return -EINVAL;
 	}
 
@@ -539,16 +541,19 @@ static int dbg_partition_make_part_table(void)
 		ret = of_property_read_u32_index(parent, "part-table", i * 2, &offset);
 		if (ret) {
 			pr_err("part-table %d offset read error - %d\n", i, ret);
+			of_node_put(parent);
 			return -EINVAL;
 		}
 		ret = of_property_read_u32_index(parent, "part-table", i * 2 + 1, &size);
 		if (ret) {
 			pr_err("part-table %d size read error - %d\n", i, ret);
+			of_node_put(parent);
 			return -EINVAL;
 		}
 
 		if (offset + size > SEC_DEBUG_PARTITION_SIZE) {
 			pr_err("part-table oversize 0x%x\n", offset + size);
+			of_node_put(parent);
 			return -EINVAL;
 		}
 
@@ -558,6 +563,7 @@ static int dbg_partition_make_part_table(void)
 			debug_part_table[i].size = size;
 	}
 
+	of_node_put(parent);
 	return 0;
 }
 

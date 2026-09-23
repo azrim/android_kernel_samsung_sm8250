@@ -682,6 +682,7 @@ static int get_param0(const char *name)
 	}
 
 	ret = of_property_read_u32(np, name, &val);
+	of_node_put(np);
 	if (ret) {
 		pr_err("failed to get %s from node\n", name);
 		return -PARAM0_LESS_THAN_0;

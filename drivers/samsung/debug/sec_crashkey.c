@@ -203,15 +203,18 @@ static void __sec_crashkey_parse_dt_replace_keymap(void)
 
 	node = of_find_node_by_name(parent, "sec_key_crash");
 	if (!node)
-		goto no_dt;
+		goto no_dt_put_parent;
 
 	err = of_property_read_u32(node, "resin-keycode", &resin_keycode);
 	if (err)
-		goto no_dt;
+		goto no_dt_put_node;
 
 	err = of_property_read_u32(node, "pwr-keycode", &pwr_keycode);
 	if (err)
-		goto no_dt;
+		goto no_dt_put_node;
+
+	of_node_put(node);
+	of_node_put(parent);
 
 	for (i = 0; i < key_event_state->nr_pattern; i++) {
 		struct event_pattern *desired_pattern =
@@ -231,6 +234,10 @@ static void __sec_crashkey_parse_dt_replace_keymap(void)
 	pr_info("use dt keymap");
 	return;
 
+no_dt_put_node:
+	of_node_put(node);
+no_dt_put_parent:
+	of_node_put(parent);
 no_dt:
 	pr_info("use default keymap");
 }

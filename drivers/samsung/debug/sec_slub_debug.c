@@ -262,6 +262,7 @@ static int __init __sec_debug_init_of(void)
 		return -ENODEV;
 
 	err = __slub_debug_init_free_trace_config(np);
+	of_node_put(np);
 	if (err)
 		return err;
 

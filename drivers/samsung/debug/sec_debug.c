@@ -780,6 +780,7 @@ static int __init __sec_debug_dt_addr_init(void)
 	}
 
 	qcom_restart_reason = of_iomap(np, 0);
+	of_node_put(np);
 	if (unlikely(!qcom_restart_reason)) {
 		pr_err("unable to map imem restart reason offset\n");
 		return -ENODEV;
@@ -798,6 +799,7 @@ static int __init __sec_debug_dt_addr_init(void)
 	}
 
 	upload_cause = of_iomap(np, 0);
+	of_node_put(np);
 	if (unlikely(!upload_cause)) {
 		pr_err("unable to map imem upload_cause offset\n");
 		return -ENODEV;
@@ -825,6 +827,7 @@ static int __init __sec_debug_dt_addr_init(void)
 		pr_emerg("watchdog_base addr : 0x%p(0x%llx)\n", watchdog_base,
 				(unsigned long long)virt_to_phys(watchdog_base));
 	}
+	of_node_put(np);
 #endif
 
 	return 0;

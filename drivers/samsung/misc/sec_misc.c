@@ -67,6 +67,7 @@ static union qfprom_jtag_reg *__qfprom_jtag_reg_get_instance(void)
 
 		if (!of_property_read_u32(np, "qfprom_jtag,reg", &reg_phys_dt))
 			reg_phys = reg_phys_dt;
+		of_node_put(np);
 	}
 
 	reg_virt = ioremap_nocache((phys_addr_t)reg_phys, SZ_4K);
@@ -158,11 +159,13 @@ static struct msm_power_dou *__msm_power_dou_get_instance(void)
 			if (reg_phys_dt == 0x0) {
 				pr_err("reg_phys for msm_power_dou,reg is %x\n", reg_phys);
 				memset(&power_dou, 0x0, sizeof(struct msm_power_dou));
+				of_node_put(np);
 				return &power_dou;
 			} else {
 				reg_phys = reg_phys_dt;
 			}
 		}
+		of_node_put(np);
 	}
 
 	reg_virt = ioremap_nocache((phys_addr_t)reg_phys, SZ_4K);

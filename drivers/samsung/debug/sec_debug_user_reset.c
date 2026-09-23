@@ -476,6 +476,7 @@ static int sec_debug_get_rdx_bootdev_region(phys_addr_t *paddr, u64 *size)
 	node = of_find_node_by_name(parent, "sec_debug_rdx_bootdev");
 	if (!node) {
 		pr_err("failed to find sec_debug_rdx_bootdev\n");
+		of_node_put(parent);
 		return -EINVAL;
 	}
 
@@ -495,9 +496,14 @@ static int sec_debug_get_rdx_bootdev_region(phys_addr_t *paddr, u64 *size)
 	*size = temp[1];
 #endif
 
+	of_node_put(node);
+	of_node_put(parent);
+
 	return 0;
 
 fail:
+	of_node_put(node);
+	of_node_put(parent);
 	pr_err("failed to get address from node\n");
 	return -1;
 }
