@@ -204,8 +204,11 @@ int sec_bat_parse_dt(struct device *dev,
 			ret = of_property_read_u32(child, "input_current", &input_current);
 			ret = of_property_read_u32(child, "charging_current", &charging_current);
 			p = of_get_property(child, "cable_number", &len);
-			if (!p)
+			if (!p) {
+				of_node_put(child);
+				of_node_put(np);
 				return 1;
+			}
 
 			len = len / sizeof(u32);
 
@@ -224,6 +227,7 @@ int sec_bat_parse_dt(struct device *dev,
 			pdata->charging_current[i].fast_charging_current);
 	}
 
+	of_node_put(np);
 	np = of_find_node_by_name(NULL, "wireless-power-info");
 	if (!np) {
 		pr_err ("%s : np NULL\n", __func__);
@@ -286,6 +290,7 @@ int sec_bat_parse_dt(struct device *dev,
 	pdata->default_charging_current = 1500;
 	pdata->charging_current[SEC_BATTERY_CABLE_TA].fast_charging_current = 1500;
 #endif
+	of_node_put(np);
 	np = of_find_node_by_name(NULL, "battery");
 	if (!np) {
 		pr_info("%s: np NULL\n", __func__);
@@ -401,8 +406,10 @@ int sec_bat_parse_dt(struct device *dev,
 	battery->ta_alert_wa = of_property_read_bool(np, "battery,ta_alert_wa");
 
 	p = of_get_property(np, "battery,polling_time", &len);
-	if (!p)
+	if (!p) {
+		of_node_put(np);
 		return 1;
+	}
 
 	len = len / sizeof(u32);
 	pdata->polling_time = kzalloc(sizeof(*pdata->polling_time) * len, GFP_KERNEL);
@@ -419,8 +426,10 @@ int sec_bat_parse_dt(struct device *dev,
 
 	if (pdata->thermal_source == SEC_BATTERY_THERMAL_SOURCE_ADC) {
 		p = of_get_property(np, "battery,temp_table_adc", &len);
-		if (!p)
+		if (!p) {
+			of_node_put(np);
 			return 1;
+		}
 
 		len = len / sizeof(u32);
 
@@ -482,8 +491,10 @@ int sec_bat_parse_dt(struct device *dev,
 
 	if(pdata->usb_thermal_source == SEC_BATTERY_THERMAL_SOURCE_ADC) {
 		p = of_get_property(np, "battery,usb_temp_table_adc", &len);
-		if (!p)
+		if (!p) {
+			of_node_put(np);
 			return 1;
+		}
 
 		len = len / sizeof(u32);
 
@@ -522,8 +533,10 @@ int sec_bat_parse_dt(struct device *dev,
 
 	if(pdata->chg_thermal_source == SEC_BATTERY_THERMAL_SOURCE_ADC) {
 		p = of_get_property(np, "battery,chg_temp_table_adc", &len);
-		if (!p)
+		if (!p) {
+			of_node_put(np);
 			return 1;
+		}
 
 		len = len / sizeof(u32);
 
@@ -563,8 +576,10 @@ int sec_bat_parse_dt(struct device *dev,
 
 	if(pdata->dchg_thermal_source == SEC_BATTERY_THERMAL_SOURCE_CHG_ADC) {
 		p = of_get_property(np, "battery,dchg_temp_table_adc", &len);
-		if (!p)
+		if (!p) {
+			of_node_put(np);
 			return 1;
+		}
 
 		len = len / sizeof(u32);
 
@@ -685,8 +700,10 @@ int sec_bat_parse_dt(struct device *dev,
 
 	if(pdata->slave_thermal_source == SEC_BATTERY_THERMAL_SOURCE_ADC) {
 		p = of_get_property(np, "battery,slave_chg_temp_table_adc", &len);
-		if (!p)
+		if (!p) {
+			of_node_put(np);
 			return 1;
+		}
 
 		len = len / sizeof(u32);
 
@@ -725,8 +742,10 @@ int sec_bat_parse_dt(struct device *dev,
 
 	if(pdata->blkt_thermal_source == SEC_BATTERY_THERMAL_SOURCE_ADC) {
 		p = of_get_property(np, "battery,blkt_temp_table_adc", &len);
-		if (!p)
+		if (!p) {
+			of_node_put(np);
 			return 1;
+		}
 
 		len = len / sizeof(u32);
 
@@ -943,8 +962,10 @@ int sec_bat_parse_dt(struct device *dev,
 
 	if (pdata->inbat_voltage) {
 		p = of_get_property(np, "battery,inbat_voltage_table_adc", &len);
-		if (!p)
+		if (!p) {
+			of_node_put(np);
 			return 1;
+		}
 
 		len = len / sizeof(u32);
 
@@ -2064,6 +2085,7 @@ int sec_bat_parse_dt(struct device *dev,
 			pr_info("%s: Sub limiter name is Empty\n", __func__);		
 	}
 
+	of_node_put(np);
 	np = of_find_node_by_name(NULL, "sec-dual-battery");
 	if (!np) {
 		pr_info("%s: np NULL\n", __func__);
@@ -2183,6 +2205,7 @@ int sec_bat_parse_dt(struct device *dev,
 #if defined(CONFIG_DIRECT_CHARGING)
 	sec_direct_chg_init(battery, dev);
 #endif
+	of_node_put(np);
 	return 0;
 }
 
@@ -2257,6 +2280,7 @@ void sec_bat_parse_mode_dt(struct sec_battery_info *battery)
 		pdata->store_mode_buckoff = of_property_read_bool(np, "battery,store_mode_buckoff");
 		pr_info("%s : battery,store_mode_buckoff: %d\n", __func__, pdata->store_mode_buckoff);
 	}
+	of_node_put(np);
 }
 
 void sec_bat_parse_mode_dt_work(struct work_struct *work)

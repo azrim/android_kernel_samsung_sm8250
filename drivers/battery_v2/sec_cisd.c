@@ -277,6 +277,7 @@ static void sec_cisd_parse_dt(struct cisd *pcisd)
 			pr_info("%s: set irq_ovp_signal(%d)\n", __func__, pcisd->irq_ovp_signal);
 	} else
 		pr_err("%s: failed to get ovp_signal\n", __func__);
+	of_node_put(np);
 }
 #else
 static void sec_cisd_parse_dt(struct cisd *pcisd)

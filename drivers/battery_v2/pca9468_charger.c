@@ -4796,6 +4796,7 @@ static int pca9468_charger_parse_dt(struct device *dev, struct pca9468_platform_
 		}
 		pr_info("%s: battery,v_float is %d\n", __func__, pdata->v_float);
 	}
+	of_node_put(np);
 #endif
 
 	return 0;

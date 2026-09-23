@@ -2798,6 +2798,7 @@ static int max77705_fuelgauge_parse_dt(struct max77705_fuelgauge_data
 			pr_err("%s there is not cv_data\n", __func__);
 		}
 
+		of_node_put(np);
 		np = of_find_node_by_name(NULL, "battery");
 		ret = of_property_read_u32(np, "battery,thermal_source",
 					   &pdata->thermal_source);
@@ -2806,6 +2807,7 @@ static int max77705_fuelgauge_parse_dt(struct max77705_fuelgauge_data
 			       __func__, ret);
 		}
 
+		of_node_put(np);
 		np = of_find_node_by_name(NULL, "cable-info");
 		ret =
 		    of_property_read_u32(np, "full_check_current_1st",
@@ -2834,6 +2836,8 @@ static int max77705_fuelgauge_parse_dt(struct max77705_fuelgauge_data
 			pdata->capacity_max_margin, pdata->capacity_min,
 			pdata->capacity_calculation_type, pdata->fuel_alert_soc,
 			pdata->repeated_fuelalert);
+
+		of_node_put(np);
 	}
 
 	pr_info("[%s][%d]\n", __func__, fuelgauge->battery_data->Capacity);

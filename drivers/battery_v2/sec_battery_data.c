@@ -254,6 +254,7 @@ static int sec_battery_check_info(struct file *fp,
 		dt_version = 0;
 	}
 
+	of_node_put(np);
 	np = of_find_all_nodes(NULL);
 	ret = of_property_read_u32(np, "model_info-hw_rev", &hw_rev);
 	if (ret) {
@@ -265,6 +266,7 @@ static int sec_battery_check_info(struct file *fp,
 		pr_info("%s: model_info-hw_rev_end is Empty\n", __func__);
 		hw_rev_end = 99;
 	}
+	of_node_put(np);
 
 	ret = (batt_info->version < dt_version) ? -1 :
 		((batt_info->hw_rev > hw_rev_end || batt_info->hw_rev < hw_rev) ? -2 : 0);

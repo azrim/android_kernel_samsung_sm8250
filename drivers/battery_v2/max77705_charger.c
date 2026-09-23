@@ -2789,6 +2789,7 @@ static int max77705_charger_parse_dt(struct max77705_charger_data *charger)
 		pr_info("%s: battery,wc_current_step is %d\n", __func__, pdata->wc_current_step);
 	}
 
+	of_node_put(np);
 	np = of_find_node_by_name(NULL, "max77705-fuelgauge");
 	if (!np) {
 		pr_err("%s: np(max77705-fuelgauge) NULL\n", __func__);
@@ -2803,6 +2804,7 @@ static int max77705_charger_parse_dt(struct max77705_charger_data *charger)
 			charger->jig_gpio = 0;
 		}
 	}
+	of_node_put(np);
 
 	return ret;
 }
