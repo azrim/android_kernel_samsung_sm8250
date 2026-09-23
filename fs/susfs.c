@@ -597,8 +597,8 @@ void susfs_auto_add_try_umount_for_bind_mount(struct path *path) {
 	}
 
 	dpath = d_path(path, pathname, PAGE_SIZE);
-	if (!dpath) {
-		SUSFS_LOGE("dpath is NULL\n");
+	if (IS_ERR_OR_NULL(dpath)) {
+		SUSFS_LOGE("d_path() failed\n");
 		goto out_free_pathname;
 	}
 
