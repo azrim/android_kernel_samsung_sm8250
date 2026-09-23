@@ -292,7 +292,9 @@ void ccic_misc_exit(void)
 	pr_info("%s() called\n", __func__);
 	if (!c_dev)
 		return;
-	kfree(c_dev);
+	/* deregister (and quiesce in-flight ioctl writers) before freeing */
 	misc_deregister(&ccic_misc_device);
+	kfree(c_dev);
+	c_dev = NULL;
 }
 EXPORT_SYMBOL(ccic_misc_exit);
