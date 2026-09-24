@@ -150,8 +150,16 @@ static int devfreq_cooling_set_min_state(struct thermal_cooling_device *cdev,
 	dev_dbg(dev, "Setting cooling min state %lu\n", state);
 
 	ret = partition_enable_opps(dfc, dfc->cooling_state, state);
-	if (ret)
+	if (ret) {
+		/*
+		 * The partition may be half-applied; restore it to the
+		 * recorded state so the OPPs always match
+		 * cooling_state/cooling_min_state (best effort).
+		 */
+		partition_enable_opps(dfc, dfc->cooling_state,
+				      dfc->cooling_min_state);
 		return ret;
+	}
 
 	dfc->cooling_min_state = state;
 
@@ -185,8 +193,16 @@ static int devfreq_cooling_set_cur_state(struct thermal_cooling_device *cdev,
 		return -EINVAL;
 
 	ret = partition_enable_opps(dfc, state, dfc->cooling_min_state);
-	if (ret)
+	if (ret) {
+		/*
+		 * The partition may be half-applied; restore it to the
+		 * recorded state so the OPPs always match
+		 * cooling_state/cooling_min_state (best effort).
+		 */
+		partition_enable_opps(dfc, dfc->cooling_state,
+				      dfc->cooling_min_state);
 		return ret;
+	}
 
 	dfc->cooling_state = state;
 
