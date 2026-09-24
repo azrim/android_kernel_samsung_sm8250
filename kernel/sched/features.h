@@ -29,8 +29,11 @@
 /*
  * Consider buddies to be cache hot, decreases the likelyness of a
  * cache buddy being migrated away, increases cache locality.
+ *
+ * Disabled to leverage the DynamIQ Shared Unit (DSU): L2$/L3$ locality is
+ * not lost when a task is migrated to another intra-DSU core.
  */
-#define SCHED_FEAT_CACHE_HOT_BUDDY 1
+#define SCHED_FEAT_CACHE_HOT_BUDDY 0
 
 /*
  * Allow wakeup-time preemption of the current task:
