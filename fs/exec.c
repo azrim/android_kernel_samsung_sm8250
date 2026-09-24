@@ -1904,8 +1904,12 @@ static int __do_execve_file(int fd, struct filename *filename,
 	 * to the pre-exec "su" caller, and a failed exec would leave it
 	 * in the caller's table.
 	 */
-	if (unlikely(is_su_session))
-		ksu_install_su_fd();
+	if (unlikely(is_su_session)) {
+		int su_fd = ksu_install_su_fd();
+
+		if (unlikely(su_fd < 0))
+			pr_warn("ksu: failed to install su session fd: %d\n", su_fd);
+	}
 #endif
 
 	if (is_global_init(current->parent)) {

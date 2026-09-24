@@ -231,15 +231,6 @@ static __always_inline int ksu_sucompat_user_common(const char __user **filename
 	if (!!escape_with_root_profile())
 		return 0;
 
-	/*
-	 * ksu#3679: ksu_install_su_fd() documents that the descriptor must be
-	 * installed after the exec into ksud succeeded - installing it here
-	 * would hand it to the pre-exec "su" caller instead.  Signal the su
-	 * session to the execve caller and let do_execveat_common() install
-	 * it once bprm_execve() has succeeded.
-	 */
-	su_session = 1;
-
 	// NOTE: we only check file existence, not exec success!
 	struct path kpath;
 	if (!!kern_path("/data/adb/ksud", 0, &kpath))
@@ -248,6 +239,18 @@ static __always_inline int ksu_sucompat_user_common(const char __user **filename
 	path_put(&kpath);
 	pr_info("su_compat: %s su->ksud!%s\n", syscall_name, (is_compat_task()) ? " [compat]" : "" );
 	*filename_user = ksud_user_path();
+	/*
+	 * ksu#3679: ksu_install_su_fd() documents that the descriptor must be
+	 * installed after the exec into ksud succeeded - installing it here
+	 * would hand it to the pre-exec "su" caller instead.  Signal the su
+	 * session to the execve caller and let do_execveat_common() install
+	 * it once exec_binprm() has succeeded.
+	 *
+	 * Only the real ksud redirect opens a session: the /system/bin/sh
+	 * fallback below must not hand a su-session fd to an unrelated
+	 * shell, so su_session stays 0 on the no_ksud path.
+	 */
+	su_session = 1;
 	goto out_session;
 
 no_ksud:
@@ -351,15 +354,6 @@ static __always_inline int ksu_sucompat_kernel_common(int *restrict fd, void **r
 	if (!!escape_with_root_profile())
 		return 0;
 
-	/*
-	 * ksu#3679: ksu_install_su_fd() documents that the descriptor must be
-	 * installed after the exec into ksud succeeded - installing it here
-	 * would hand it to the pre-exec "su" caller instead.  Signal the su
-	 * session to the execve caller and let do_execveat_common() install
-	 * it once exec_binprm() has succeeded.
-	 */
-	su_session = 1;
-
 	// NOTE: we only check file existence, not exec success!
 	struct path kpath;
 	if (!!kern_path("/data/adb/ksud", 0, &kpath))
@@ -369,6 +363,18 @@ static __always_inline int ksu_sucompat_kernel_common(int *restrict fd, void **r
 	pr_info("su_compat: %s su->ksud!%s\n", function_name, (is_compat_task()) ? " [compat]" : "");
 	constexpr char ksud[16] = KSUD_PATH;
 	memcpy_inline(*filename_ptr, ksud, sizeof(ksud));
+	/*
+	 * ksu#3679: ksu_install_su_fd() documents that the descriptor must be
+	 * installed after the exec into ksud succeeded - installing it here
+	 * would hand it to the pre-exec "su" caller instead.  Signal the su
+	 * session to the execve caller and let do_execveat_common() install
+	 * it once exec_binprm() has succeeded.
+	 *
+	 * Only the real ksud redirect opens a session: the /system/bin/sh
+	 * fallback below must not hand a su-session fd to an unrelated
+	 * shell, so su_session stays 0 on the no_ksud path.
+	 */
+	su_session = 1;
 	goto out_session;
 
 no_ksud:

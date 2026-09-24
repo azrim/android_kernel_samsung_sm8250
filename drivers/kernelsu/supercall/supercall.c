@@ -7,6 +7,7 @@ struct ksu_driver_context {
 static int anon_ksu_release(struct inode *inode, struct file *filp)
 {
 	kfree(filp->private_data);
+	filp->private_data = NULL;
 	pr_info("ksu fd released\n");
 	return 0;
 }
@@ -66,8 +67,18 @@ int ksu_install_fd(void)
 
 int ksu_install_su_fd(void)
 {
-	// This descriptor must be installed after the exec into ksud.
-	return ksu_install_fd_with_permissions(0, KSU_DRIVER_PERMISSION_SU_SESSION);
+	/*
+	 * This descriptor must be installed after the exec into ksud, and it
+	 * only authorizes the ioctls ksud performs while starting the su
+	 * session (GET_WRAPPER_FD / DISABLE_ESCAPE_TO_ROOT).
+	 *
+	 * Install it O_CLOEXEC: because the install happens *after*
+	 * exec_binprm() ran, do_close_on_exec() has already passed, so ksud
+	 * itself still receives the fd - but it is closed on ksud's next
+	 * exec, so the su target (dmesg, sh, a log reader, ...) does not
+	 * inherit the capability fd.
+	 */
+	return ksu_install_fd_with_permissions(O_CLOEXEC, KSU_DRIVER_PERMISSION_SU_SESSION);
 }
 
 bool ksu_is_su_session_fd(const struct file *filp)
