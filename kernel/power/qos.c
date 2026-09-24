@@ -920,6 +920,14 @@ static ssize_t pm_qos_power_write(struct file *filp, const char __user *buf,
 	s32 value;
 	struct pm_qos_request *req;
 
+	/*
+	 * Don't let userspace impose restrictions on CPU idle levels.
+	 * Userspace can't even stop itself from being preempted, so it has no
+	 * business dictating CPU latency requirements on the order of
+	 * microseconds, which only hurts power consumption.
+	 */
+	return count;
+
 	if (count == sizeof(s32)) {
 		if (copy_from_user(&value, buf, sizeof(s32)))
 			return -EFAULT;
