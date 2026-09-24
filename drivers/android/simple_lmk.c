@@ -75,6 +75,24 @@ static atomic_t needs_emergency = ATOMIC_INIT(0);
 static atomic_t needs_reap = ATOMIC_INIT(0);
 
 /*
+ * What the last completed scan achieved, published for the OOM notifier.
+ * The notifier must never scan itself -- it runs inside the page allocator
+ * with locks held -- so it enqueues the emergency batch and answers
+ * out_of_memory() from this verdict instead: anything but SLMK_EMPTY claims
+ * that Simple LMK is working or about to work, and SLMK_EMPTY is the signal
+ * to hand control back to the stock OOM killer. Any scan (emergency or
+ * routine) refreshes the verdict, so a system whose PSI path is actively
+ * killing never strands the emergency path on a stale "found nobody".
+ */
+enum slmk_kill_state {
+	SLMK_IDLE,	/* no scan has completed yet */
+	SLMK_RUNNING,	/* a scan is in flight */
+	SLMK_KILLED,	/* last completed scan killed at least one task */
+	SLMK_EMPTY,	/* last completed scan found nobody to kill */
+};
+static atomic_t kill_state = ATOMIC_INIT(SLMK_IDLE);
+
+/*
  * The PSI trigger is recreated whenever its threshold or window changes, so it
  * cannot be the reclaim thread's sleep target: freeing a waitqueue that a
  * thread is still enqueued on is a use-after-free. The thread therefore polls
@@ -613,9 +631,9 @@ static bool scan_and_kill(short adj_floor)
 
 	/*
 	 * Arm the grace period only for a reclaim that killed someone: an
-	 * empty scan freed nothing, so there is nothing to wait for. Both
-	 * callers hold reclaim_lock, so the write is serialized; readers
-	 * pair it with READ_ONCE().
+	 * empty scan freed nothing, so there is nothing to wait for. The
+	 * reclaim thread is the only caller and holds reclaim_lock, so the
+	 * write is serialized; readers pair it with READ_ONCE().
 	 */
 	if (nr_to_kill > 0)
 		WRITE_ONCE(last_reclaim_end, jiffies);
@@ -628,7 +646,7 @@ static bool reclaim_needed(int *adj_floor)
 	struct psi_trigger *t;
 	bool needed;
 
-	/* A reclaim deferred by the OOM notifier while one was running */
+	/* The emergency batch armed by the OOM notifier */
 	if (atomic_cmpxchg(&needs_emergency, 1, 0)) {
 		*adj_floor = ADJ_FLOOR_EMERGENCY;
 		return true;
@@ -692,6 +710,7 @@ static int simple_lmk_reclaim_thread(void *data)
 
 	while (1) {
 		int adj_floor = ADJ_FLOOR_ROUTINE;
+		bool killed;
 		/*
 		 * Clamped: this is user-writable, and a zero timeout would
 		 * turn the wait into a busy loop running at RT priority 98.
@@ -714,10 +733,17 @@ static int simple_lmk_reclaim_thread(void *data)
 		if (!reclaim_needed(&adj_floor))
 			continue;
 		stat_events++;
-		if (mutex_trylock(&reclaim_lock)) {
-			scan_and_kill(adj_floor);
-			mutex_unlock(&reclaim_lock);
-		}
+		/*
+		 * The OOM notifier no longer takes this lock, so this
+		 * thread is reclaim_lock's only holder: a plain lock, not
+		 * a trylock, and kill_state is published around the scan
+		 * for the notifier to read without any lock at all.
+		 */
+		mutex_lock(&reclaim_lock);
+		atomic_set(&kill_state, SLMK_RUNNING);
+		killed = scan_and_kill(adj_floor);
+		atomic_set(&kill_state, killed ? SLMK_KILLED : SLMK_EMPTY);
+		mutex_unlock(&reclaim_lock);
 	}
 
 	return 0;
@@ -886,24 +912,38 @@ static int simple_lmk_oom_cb(struct notifier_block *nb,
 			     unsigned long action, void *data)
 {
 	int *freed = data;
+	int prev;
 
 	/*
-	 * The page allocator is out of memory now, so reclaim synchronously
-	 * instead of waiting for the next poll. This is the only path allowed
-	 * to consider adj 0. If a reclaim is already running, defer it and
-	 * leave *freed alone: out_of_memory() then falls through to the stock
-	 * OOM killer rather than reporting progress that wasn't made.
+	 * The page allocator is out of memory now, but this callback must
+	 * never scan or kill from here: it runs inside the allocator with
+	 * locks held, and the scan path sleeps (set_cpus_allowed_ptr()).
+	 * The old code did exactly that whenever reclaim_lock was free.
+	 * Instead, arm the emergency batch, wake the reclaim thread, and
+	 * return immediately -- "join in flight" if a scan is already
+	 * running, since it will pick the emergency floor up on its next
+	 * loop iteration once needs_emergency is set.
+	 *
+	 * *freed reports the last completed scan's verdict: any state
+	 * other than SLMK_EMPTY means Simple LMK is working or about to
+	 * work, so out_of_memory() returns true and lets the wakeup land.
+	 * SLMK_EMPTY means the last scan found nobody killable; only then
+	 * do we report failure, so out_of_memory() hands control back to
+	 * the stock OOM killer as the genuine last resort. A stale EMPTY
+	 * is self-correcting: the flag armed here still sends the reclaim
+	 * thread through a fresh emergency scan on its next wakeup, which
+	 * refreshes the verdict before the following OOM invocation.
 	 */
-	if (mutex_trylock(&reclaim_lock)) {
-		if (scan_and_kill(ADJ_FLOOR_EMERGENCY) && freed)
-			*freed = 1;
-		mutex_unlock(&reclaim_lock);
-	} else {
-		atomic_set(&needs_emergency, 1);
-		smp_mb__after_atomic();
-		if (waitqueue_active(&reclaim_waitq))
-			wake_up(&reclaim_waitq);
-	}
+	prev = atomic_read(&kill_state);
+	atomic_set(&needs_emergency, 1);
+	/* Order the arming store before the wake and the verdict read */
+	smp_mb__after_atomic();
+	/* Lockless check: a race here only costs a spurious wakeup */
+	if (waitqueue_active(&reclaim_waitq))
+		wake_up(&reclaim_waitq);
+
+	if (freed)
+		*freed = (prev != SLMK_EMPTY);
 
 	return NOTIFY_OK;
 }

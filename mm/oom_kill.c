@@ -1356,8 +1356,14 @@ bool out_of_memory(struct oom_control *oc)
 
 	/*
 	 * Give low memory killers the first chance to reclaim. Simple LMK
-	 * kills asynchronously off PSI stalls and registers here as its
-	 * synchronous emergency path.
+	 * kills asynchronously off PSI stalls; the notifier arms an
+	 * emergency batch for its reclaim thread and answers from the last
+	 * completed scan's verdict without ever scanning here -- the
+	 * callback runs inside the page allocator with locks held, and
+	 * signalling victims sleeps. "Freed" therefore means Simple LMK is
+	 * working or about to work, not that pages are already back; if
+	 * its last scan found nobody, it reports failure and this falls
+	 * through to the OOM killer as the genuine last resort.
 	 *
 	 * This used to be preceded by an unconditional "return true" when
 	 * CONFIG_ANDROID_SIMPLE_LMK was set, which made the notifier below
