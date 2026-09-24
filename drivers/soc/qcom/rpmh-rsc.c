@@ -72,6 +72,16 @@
 #define ACCL_TYPE(addr)			((addr >> 16) & 0xF)
 #define NR_ACCL_TYPES			3
 
+/*
+ * Bounds for the register write-back and TCS-busy poll loops. All of them
+ * run in atomic context (under drv->lock or with IRQs disabled), so they
+ * can only use udelay() backoff, never sleep. Without a bound a wedged
+ * RSC would spin forever with IRQs off.
+ */
+#define TCS_REG_TIMEOUT_US		1000
+#define TCS_BUSY_TIMEOUT_US		10000
+#define TCS_POLL_MAX_DELAY_US		100U
+
 static const char * const accl_str[] = {
 	"", "", "", "CLK", "VREG", "BUS",
 };
@@ -101,12 +111,21 @@ static void write_tcs_reg(struct rsc_drv *drv, int reg, int tcs_id, u32 data)
 static void write_tcs_reg_sync(struct rsc_drv *drv, int reg, int tcs_id,
 			       u32 data)
 {
-	writel(data, drv->tcs_base + reg + RSC_DRV_TCS_OFFSET * tcs_id);
-	for (;;) {
-		if (data == readl(drv->tcs_base + reg +
-				  RSC_DRV_TCS_OFFSET * tcs_id))
+	unsigned int delay = 1;
+	unsigned int waited = 0;
+	void __iomem *addr = drv->tcs_base + reg +
+			     RSC_DRV_TCS_OFFSET * tcs_id;
+
+	writel(data, addr);
+	while (data != readl(addr)) {
+		if (waited >= TCS_REG_TIMEOUT_US) {
+			pr_err_ratelimited("Timed out writing %#x to %s TCS%d reg %#x\n",
+					   data, drv->name, tcs_id, reg);
 			break;
-		udelay(1);
+		}
+		udelay(delay);
+		waited += delay;
+		delay = min(delay << 1, TCS_POLL_MAX_DELAY_US);
 	}
 }
 
@@ -443,11 +462,14 @@ done_write:
  * @drv: the controller
  * @msg: the data to be sent
  *
- * Return: 0 on success, -EINVAL on error.
+ * Return: 0 on success, -EINVAL on error, -EBUSY if no TCS became
+ * available within the busy timeout.
  * Note: This call blocks until a valid data is written to the TCS.
  */
 int rpmh_rsc_send_data(struct rsc_drv *drv, const struct tcs_request *msg)
 {
+	unsigned int delay = 10;
+	unsigned int waited = 0;
 	int ret;
 
 	if (!msg || !msg->cmds || !msg->num_cmds ||
@@ -458,14 +480,21 @@ int rpmh_rsc_send_data(struct rsc_drv *drv, const struct tcs_request *msg)
 
 	do {
 		ret = tcs_write(drv, msg);
-		if (ret == -EBUSY) {
+		if (ret != -EBUSY)
+			break;
 #ifdef QCOM_RPMH_DEBUG
-			pr_info_ratelimited("DRV:%s TCS Busy, retrying RPMH message send: addr=%#x\n",
-					    drv->name, msg->cmds[0].addr);
+		pr_info_ratelimited("DRV:%s TCS Busy, retrying RPMH message send: addr=%#x\n",
+				    drv->name, msg->cmds[0].addr);
 #endif /* QCOM_RPMH_DEBUG */
-			udelay(10);
+		if (waited >= TCS_BUSY_TIMEOUT_US) {
+			pr_err_ratelimited("DRV:%s TCS busy, giving up on RPMH message: addr=%#x\n",
+					   drv->name, msg->cmds[0].addr);
+			break;
 		}
-	} while (ret == -EBUSY);
+		udelay(delay);
+		waited += delay;
+		delay = min(delay << 1, TCS_POLL_MAX_DELAY_US);
+	} while (1);
 
 	return ret;
 }
@@ -558,6 +587,8 @@ static int tcs_ctrl_write(struct rsc_drv *drv, const struct tcs_request *msg)
 void rpmh_rsc_mode_solver_set(struct rsc_drv *drv, bool enable)
 {
 	int m;
+	unsigned int delay = 1;
+	unsigned int waited = 0;
 	struct tcs_group *tcs = get_tcs_of_type(drv, ACTIVE_TCS);
 
 	/*
@@ -573,6 +604,14 @@ again:
 	for (m = tcs->offset; m < tcs->offset + tcs->num_tcs; m++) {
 		if (!tcs_is_free(drv, m)) {
 			spin_unlock(&drv->lock);
+			if (waited >= TCS_BUSY_TIMEOUT_US) {
+				pr_err_ratelimited("Timed out waiting for %s TCS%d to go idle\n",
+						   drv->name, m);
+				return;
+			}
+			udelay(delay);
+			waited += delay;
+			delay = min(delay << 1, TCS_POLL_MAX_DELAY_US);
 			goto again;
 		}
 	}
