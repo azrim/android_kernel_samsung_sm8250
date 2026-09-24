@@ -1898,7 +1898,7 @@ static int writeback_pte_range(pmd_t *pmd, unsigned long addr,
 		unsigned long end, struct mm_walk *walk)
 {
 	struct mm_struct *mm = walk->mm;
-	struct zwbs **zwbs = walk->private;
+	struct zwbs_walk *wb = walk->private;
 	pte_t *pte, ptent;
 	spinlock_t *ptl;
 	LIST_HEAD(swp_entry_list);
@@ -1925,7 +1925,7 @@ static int writeback_pte_range(pmd_t *pmd, unsigned long addr,
 		}
 	}
 	pte_unmap_unlock(pte - 1, ptl);
-	swap_writeback_list(zwbs, &swp_entry_list);
+	swap_writeback_list(wb->zwbs, &wb->idx, &swp_entry_list);
 
 	cond_resched();
 	return 0;
@@ -2025,6 +2025,7 @@ static ssize_t reclaim_write(struct file *file, const char __user *buf,
 	struct reclaim_param rp;
 #ifdef CONFIG_ZRAM_LRU_WRITEBACK
 	struct zwbs *zwbs[NR_ZWBS];
+	struct zwbs_walk wb_walk;
 	int err = 0;
 #endif
 
@@ -2095,6 +2096,8 @@ static ssize_t reclaim_write(struct file *file, const char __user *buf,
 			pr_info("%s alloc_zwbs failed", __func__);
 			return -ENOMEM;
 		}
+		wb_walk.zwbs = zwbs;
+		wb_walk.idx = 0;
 	}
 #endif
 
@@ -2111,7 +2114,7 @@ static ssize_t reclaim_write(struct file *file, const char __user *buf,
 #ifdef CONFIG_ZRAM_LRU_WRITEBACK
 	if (type == RECLAIM_WRITEBACK) {
 		reclaim_walk.pmd_entry = writeback_pte_range;
-		reclaim_walk.private = (void *)zwbs;
+		reclaim_walk.private = (void *)&wb_walk;
 	}
 #endif
 
@@ -2168,7 +2171,7 @@ out:
 	put_task_struct(task);
 #ifdef CONFIG_ZRAM_LRU_WRITEBACK
 	if (type == RECLAIM_WRITEBACK) {
-		swap_writeback_list(zwbs, NULL);
+		swap_writeback_list(wb_walk.zwbs, &wb_walk.idx, NULL);
 		free_zwbs(zwbs);
 	}
 #endif

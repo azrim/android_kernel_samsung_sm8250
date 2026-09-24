@@ -1606,23 +1606,23 @@ void swap_add_to_list(struct list_head *list, swp_entry_t entry)
 	zram_slot_unlock(zram, index);
 }
 
-void swap_writeback_list(struct zwbs **zwbs, struct list_head *list)
+void swap_writeback_list(struct zwbs **zwbs, int *idx,
+			struct list_head *list)
 {
 	struct zram *zram = g_zram;
 	struct zram_table_entry *zram_entry;
 	u32 index;
-	static int idx = 0;
 	unsigned long flags;
 	bool skip = false;
 
 	if (list == NULL) {
-		if (idx > 0 || zwbs[idx]->cnt > 0) {
-			mark_end_of_page(zwbs[idx]);
-			if (zwbs[idx]->cnt > 0)
-				idx++;
-			zram_writeback_page(zram, zwbs, idx, true, true);
+		if (*idx > 0 || zwbs[*idx]->cnt > 0) {
+			mark_end_of_page(zwbs[*idx]);
+			if (zwbs[*idx]->cnt > 0)
+				(*idx)++;
+			zram_writeback_page(zram, zwbs, *idx, true, true);
 		}
-		idx = 0;
+		*idx = 0;
 		return;
 	}
 
@@ -1638,7 +1638,7 @@ void swap_writeback_list(struct zwbs **zwbs, struct list_head *list)
 			if (!is_bdev_avail(zram) || !zram_wb_available(zram))
 				skip = true;
 			else if (zram_comp_writeback_index(zram, index,
-					zwbs, &idx, true, true))
+					zwbs, idx, true, true))
 				skip = true;
 		}
 		zram_slot_lock(zram, index);

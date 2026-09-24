@@ -162,12 +162,23 @@ struct zwbs {
 	u32 off;
 };
 
+/*
+ * Per-walk writeback batch state.  The batch index must be private to
+ * each /proc/<pid>/reclaim "writeback" invocation: every invocation has
+ * its own zwbs buffers, so sharing the index between concurrent walks
+ * corrupts the batch being assembled.
+ */
+struct zwbs_walk {
+	struct zwbs **zwbs;
+	int idx;
+};
+
 void free_zwbs(struct zwbs **);
 int alloc_zwbs(struct zwbs **);
 bool zram_is_app_launch(void);
 int is_writeback_entry(swp_entry_t);
 void swap_add_to_list(struct list_head *, swp_entry_t);
-void swap_writeback_list(struct zwbs **, struct list_head *);
+void swap_writeback_list(struct zwbs **, int *, struct list_head *);
 #endif
 
 struct zram_hash {
