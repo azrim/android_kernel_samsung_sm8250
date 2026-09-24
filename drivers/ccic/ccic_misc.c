@@ -78,8 +78,9 @@ static int ccic_misc_open(struct inode *inode, struct file *file)
 	}
 
 	/* check if there is some connection */
-	if (!c_dev->uvdm_ready()) {
-		_unlock(&c_dev->open_excl);
+	if (!c_dev || !c_dev->uvdm_ready()) {
+		if (c_dev)
+			_unlock(&c_dev->open_excl);
 		pr_err("%s - error : uvdm is not ready\n", __func__);
 		ret = -EBUSY;
 		goto err;
@@ -94,9 +95,12 @@ err:
 
 static int ccic_misc_close(struct inode *inode, struct file *file)
 {
-	if (c_dev)
-		_unlock(&c_dev->open_excl);
-	c_dev->uvdm_close();
+	if (!c_dev)
+		return -ENODEV;
+
+	_unlock(&c_dev->open_excl);
+	if (c_dev->uvdm_close)
+		c_dev->uvdm_close();
 	if (c_dev->pps_control)
 		c_dev->pps_control(1); /* start direct charging(pps) */
 
@@ -131,6 +135,11 @@ ccic_misc_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	uint8_t *p_buf;
 	int i;
 #endif
+
+	if (!c_dev) {
+		pr_err("%s - error : c_dev is NULL\n", __func__);
+		return -ENODEV;
+	}
 
 	if (_lock(&c_dev->ioctl_excl)) {
 		pr_err("%s - error : ioctl busy - cmd : %d\n", __func__, cmd);

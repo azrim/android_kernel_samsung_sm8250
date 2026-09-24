@@ -70,6 +70,11 @@ static ssize_t set_flush(struct device *dev, struct device_attribute *attr,
 
 	sensor_type = (u8)dTemp;
 
+	if (!meta_input_dev) {
+		pr_err("[SENSOR CORE] meta_input_dev is NULL\n");
+		return -ENODEV;
+	}
+
 	input_report_rel(meta_input_dev, REL_DIAL,
 		1);	/*META_DATA_FLUSH_COMPLETE*/
 	input_report_rel(meta_input_dev, REL_HWHEEL, sensor_type + 1);
@@ -159,6 +164,7 @@ int sensors_input_init(void)
 	if (ret < 0) {
 		pr_err("[SENSOR CORE] failed register meta dev\n");
 		input_free_device(meta_input_dev);
+		meta_input_dev = NULL;
 		return ret;
 	}
 
@@ -167,7 +173,7 @@ int sensors_input_init(void)
 	if (ret < 0) {
 		pr_err("[SENSOR CORE] failed create meta symlink\n");
 		input_unregister_device(meta_input_dev);
-		input_free_device(meta_input_dev);
+		meta_input_dev = NULL;
 		return ret;
 	}
 

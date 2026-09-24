@@ -68,12 +68,14 @@ void enable_dp_switch_regulator(int mode)
 	} else {
 		if (of_property_read_string(np, "hs-regulator", (char const **)&ss_vdd) < 0) {
 			pr_err("%s - get ss_vdd error\n", __func__);
+			of_node_put(np);
 			return;
 		}
 
 		vdd085_usb = regulator_get(NULL, ss_vdd);
 		if (IS_ERR(vdd085_usb) || vdd085_usb == NULL) {
 			pr_err("%s - vdd085_usb regulator_get fail\n", __func__);
+			of_node_put(np);
 			return;
 		}
 	}
@@ -106,6 +108,7 @@ void enable_dp_switch_regulator(int mode)
 	default:
 		break;
 	}
+	of_node_put(np);
 }
 EXPORT_SYMBOL(enable_dp_switch_regulator);
 

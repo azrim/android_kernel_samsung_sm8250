@@ -564,7 +564,7 @@ static int msm_vidc_load_regulator_table(
 		/* make sure prop isn't being misused */
 		regulator_node = of_parse_phandle(domains_parent_node,
 				domains_property->name, 0);
-		if (IS_ERR(regulator_node)) {
+		if (!regulator_node) {
 			d_vpr_e("%s is not a phandle\n",
 				domains_property->name);
 			continue;
@@ -578,6 +578,7 @@ static int msm_vidc_load_regulator_table(
 		if (!rinfo->name) {
 			rc = -ENOMEM;
 			d_vpr_e("Failed to alloc memory for regulator name\n");
+			of_node_put(regulator_node);
 			goto err_reg_name_alloc;
 		}
 		strlcpy(rinfo->name, domains_property->name,
@@ -585,6 +586,8 @@ static int msm_vidc_load_regulator_table(
 
 		rinfo->has_hw_power_collapse = of_property_read_bool(
 			regulator_node, "qcom,support-hw-trigger");
+		of_node_put(regulator_node);
+		regulator_node = NULL;
 
 		d_vpr_h("Found regulator %s: h/w collapse = %s\n",
 				rinfo->name,
@@ -1179,6 +1182,8 @@ static int msm_vidc_populate_legacy_context_bank(
 		cb = devm_kzalloc(&pdev->dev, sizeof(*cb), GFP_KERNEL);
 		if (!cb) {
 			d_vpr_e("%s: Failed to allocate cb\n", __func__);
+			of_node_put(domains_child_node);
+			of_node_put(domains_parent_node);
 			return -ENOMEM;
 		}
 		INIT_LIST_HEAD(&cb->list);
@@ -1211,6 +1216,8 @@ static int msm_vidc_populate_legacy_context_bank(
 
 		cb->is_secure =
 			of_property_read_bool(ctx_node, "qcom,secure-domain");
+		of_node_put(ctx_node);
+		ctx_node = NULL;
 
 		rc = of_property_read_u32(domains_child_node,
 				"qcom,vidc-buffer-types", &cb->buffer_type);
@@ -1238,9 +1245,16 @@ static int msm_vidc_populate_legacy_context_bank(
 			cb->name, cb->is_secure, cb->addr_range.start,
 			cb->addr_range.size, cb->buffer_type);
 	}
+	of_node_put(domains_parent_node);
 	return rc;
 
 err_setup_cb:
+	if (ctx_node) {
+		of_node_put(ctx_node);
+		ctx_node = NULL;
+	}
+	of_node_put(domains_child_node);
+	of_node_put(domains_parent_node);
 	list_del(&cb->list);
 	return rc;
 }

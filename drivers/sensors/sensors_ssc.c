@@ -92,6 +92,11 @@ static bool slpi_need_update_spu(void)
 	int i = 0, ret = 0, vc_idx = 0;
 	char *read_buf = kzalloc(FILE_LEN * sizeof(char), GFP_KERNEL);
 
+	if (!read_buf) {
+		pr_err("%s - failed to alloc read_buf\n", __func__);
+		return false;
+	}
+
 	for (vc_idx = 0; vc_idx < SSC_CNT_MAX; vc_idx++) {
 		old_fs = get_fs();
 		set_fs(KERNEL_DS);

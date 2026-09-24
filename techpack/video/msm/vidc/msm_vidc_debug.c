@@ -164,6 +164,7 @@ static ssize_t debug_level_write(struct file *filp, const char __user *buf,
 	if (*ppos != 0 || count >= sizeof(kbuf) || count == 0) {
 		d_vpr_e("returning error - pos %d, count %d\n", *ppos, count);
 		rc = -EINVAL;
+		goto exit;
 	}
 
 	rc = simple_write_to_buffer(kbuf, sizeof(kbuf) - 1, ppos, buf, count);
