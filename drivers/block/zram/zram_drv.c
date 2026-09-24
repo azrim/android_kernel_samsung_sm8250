@@ -1992,6 +1992,18 @@ static void zram_handle_comp_page(struct work_struct *work)
 	handle = zhdr->index;
 	BUG_ON(zhdr->size != size);
 
+	/* Corrupted backing device: never index the slot table with it. */
+	if (handle >= (zram->disksize >> PAGE_SHIFT)) {
+		pr_err_ratelimited("%s: invalid index %lu in backing device\n",
+				   __func__, handle);
+		kunmap_atomic(src);
+		page_endio(dst_page, op_is_write(bio_op(bio)), -EIO);
+		bio_put(bio);
+		kfree(zw);
+		__free_page(src_page);
+		return;
+	}
+
 	dst = kmap_atomic(dst_page);
 	zstrm = zcomp_stream_get(zram->comp);
 	ret = zcomp_decompress(zstrm,
