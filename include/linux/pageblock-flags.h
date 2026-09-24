@@ -55,8 +55,16 @@ extern unsigned int pageblock_order;
 
 #else /* CONFIG_HUGETLB_PAGE */
 
-/* If huge pages are not used, group by MAX_ORDER_NR_PAGES */
-#define pageblock_order		(MAX_ORDER-1)
+/*
+ * Huge pages are not used, so the pageblock only exists to track the buddy
+ * allocator's migratetype grouping and to bound compaction/CMA/isolation
+ * work. Defaulting to MAX_ORDER_NR_PAGES makes a pageblock huge, which means
+ * a single compaction, isolation, or migration pass can scan and copy a very
+ * large range of pages. That shows up as long, jittery scheduling delays in
+ * the middle of an allocation. Grouping by PAGE_ALLOC_COSTLY_ORDER instead
+ * keeps every pageblock a small, bounded unit so these operations stay short.
+ */
+#define pageblock_order		PAGE_ALLOC_COSTLY_ORDER
 
 #endif /* CONFIG_HUGETLB_PAGE */
 
