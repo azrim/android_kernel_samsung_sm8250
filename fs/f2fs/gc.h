@@ -13,7 +13,15 @@
 #define DEF_GC_THREAD_URGENT_SLEEP_TIME	500	/* 500 ms */
 #define DEF_GC_THREAD_MIN_SLEEP_TIME	30000	/* milliseconds */
 #define DEF_GC_THREAD_MAX_SLEEP_TIME	60000
-#define DEF_GC_THREAD_NOGC_SLEEP_TIME	300000	/* wait 5 min */
+/*
+ * When the background GC thread cannot find a victim it parks for this long.
+ * Nothing else in the kernel wakes it on space pressure (only the sysfs
+ * gc_urgent path does), so a 5 minute park lets fragmentation build up until
+ * free space falls to the critical threshold and reclaim is forced onto the
+ * foreground (greedy) GC path in an interactive task's context. Re-check more
+ * often so reclaim happens on the idle background path instead.
+ */
+#define DEF_GC_THREAD_NOGC_SLEEP_TIME	60000	/* wait 1 min */
 
 /* choose candidates from sections which has age of more than 7 days */
 #define DEF_GC_THREAD_AGE_THRESHOLD		(60 * 60 * 24 * 7)
