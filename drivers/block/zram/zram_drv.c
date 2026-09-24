@@ -1543,9 +1543,12 @@ void swap_add_to_list(struct list_head *list, swp_entry_t entry)
 	if (zram != g_zram)
 		return;
 
-	if (!is_bdev_avail(zram))
-		return;
-
+	/*
+	 * Called from writeback_pte_range() with the PTE spinlock held.
+	 * is_bdev_avail() -> statfs() can sleep, so the backing device
+	 * free-space check is deferred to swap_writeback_list(), which
+	 * runs in process context after pte_unmap_unlock().
+	 */
 	if (!zram_wb_available(zram))
 		return;
 
@@ -1598,7 +1601,11 @@ void swap_writeback_list(struct zwbs **zwbs, struct list_head *list)
 				typeof(struct zram_table_entry), lru_list);
 		index = entry_to_index(zram, zram_entry);
 		if (!skip) {
-			if (!zram_wb_available(zram))
+			/*
+			 * Sleepable backing-device check deferred from
+			 * swap_add_to_list() (PTE spinlock context).
+			 */
+			if (!is_bdev_avail(zram) || !zram_wb_available(zram))
 				skip = true;
 			else if (zram_comp_writeback_index(zram, index,
 					zwbs, &idx, true, true))
