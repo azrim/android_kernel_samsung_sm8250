@@ -637,8 +637,18 @@ enum {
 
 #define DEFAULT_RETRY_IO_COUNT	8	/* maximum retry read IO or flush count */
 
-/* congestion wait timeout value, default: 20ms */
-#define	DEFAULT_IO_TIMEOUT	(msecs_to_jiffies(20))
+/*
+ * congestion/retry wait timeout value.
+ *
+ * This is the poll granularity used by f2fs_wait_on_all_pages() while draining
+ * dirty meta/data during checkpoint, by the -ENOMEM block allocation retry
+ * loops and by congestion_wait() in the allocation/GC paths. A 20ms tick adds
+ * up to 20ms of dead time per poll even when the underlying I/O completes
+ * sooner, and the effect compounds under heavy synchronous I/O. The waits are
+ * still event driven (woken on completion), so shortening the fallback tick
+ * only tightens the tail latency of these paths.
+ */
+#define	DEFAULT_IO_TIMEOUT	(msecs_to_jiffies(5))
 
 /* maximum retry quota flush count */
 #define DEFAULT_RETRY_QUOTA_FLUSH_COUNT		8
