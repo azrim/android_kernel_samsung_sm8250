@@ -265,6 +265,7 @@ static int poll_adreno_gmu_reg(struct adreno_device *adreno_dev,
 	unsigned int mask, unsigned int timeout_ms)
 {
 	unsigned int val;
+	unsigned int delay = 10;
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 	struct gmu_device *gmu = KGSL_GMU_DEVICE(device);
 	unsigned long timeout = jiffies + msecs_to_jiffies(timeout_ms);
@@ -273,7 +274,9 @@ static int poll_adreno_gmu_reg(struct adreno_device *adreno_dev,
 		adreno_read_gmureg(adreno_dev, offset_name, &val);
 		if ((val & mask) == expected_val)
 			return 0;
-		usleep_range(10, 100);
+		/* Exponential backoff: acks are usually fast, don't hammer */
+		usleep_range(delay, delay + 10);
+		delay = min(delay << 1, 500U);
 	}
 
 	/* Check one last time */
