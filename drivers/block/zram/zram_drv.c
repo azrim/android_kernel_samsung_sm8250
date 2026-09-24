@@ -1659,7 +1659,7 @@ static ssize_t writeback_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t len)
 {
 	struct zram *zram = dev_to_zram(dev);
-	unsigned long nr_pages = zram->disksize >> PAGE_SHIFT;
+	unsigned long nr_pages;
 	unsigned long index;
 	struct bio bio;
 	struct bio_vec bio_vec;
@@ -1680,6 +1680,13 @@ static ssize_t writeback_store(struct device *dev,
 		ret = -EINVAL;
 		goto release_init_lock;
 	}
+
+	/*
+	 * Read disksize under init_lock: a reset + reinit with a smaller
+	 * disksize between declaration time and lock acquisition would
+	 * otherwise make this scan run past the end of the new table.
+	 */
+	nr_pages = zram->disksize >> PAGE_SHIFT;
 
 	if (!zram->backing_dev) {
 		ret = -ENODEV;
@@ -2120,7 +2127,7 @@ static ssize_t read_block_state(struct file *file, char __user *buf,
 	char *kbuf;
 	ssize_t index, written = 0;
 	struct zram *zram = file->private_data;
-	unsigned long nr_pages = zram->disksize >> PAGE_SHIFT;
+	unsigned long nr_pages;
 	struct timespec64 ts;
 
 	kbuf = kvmalloc(count, GFP_KERNEL);
@@ -2133,6 +2140,9 @@ static ssize_t read_block_state(struct file *file, char __user *buf,
 		kvfree(kbuf);
 		return -EINVAL;
 	}
+
+	/* Bound the table scan with the disksize protected by init_lock. */
+	nr_pages = zram->disksize >> PAGE_SHIFT;
 
 	for (index = *ppos; index < nr_pages; index++) {
 		int copied;
