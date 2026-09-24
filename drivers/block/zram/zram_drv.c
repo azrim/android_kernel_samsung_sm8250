@@ -1345,9 +1345,18 @@ static void zram_writeback_done(struct zram *zram,
 
 static void zram_writeback_end_io(struct bio *bio)
 {
-	if (g_zram && !g_zram->io_complete) {
-		g_zram->io_complete = true;
-		wake_up(&g_zram->wbd_wait);
+	/*
+	 * Identify the waiter from the bio itself, not the g_zram global:
+	 * stop_lru_writeback() clears g_zram before kthread_stop(), so a
+	 * bio still in flight at that point would otherwise never wake
+	 * the waiter in zram_writeback_page() and the stop/reset path
+	 * would hang forever in wait_event().
+	 */
+	struct zram *zram = bio->bi_private;
+
+	if (zram && !zram->io_complete) {
+		zram->io_complete = true;
+		wake_up(&zram->wbd_wait);
 	}
 }
 
@@ -1387,6 +1396,7 @@ retry:
 		ret = submit_bio_wait(&bio);
 	} else {
 		bio.bi_end_io = zram_writeback_end_io;
+		bio.bi_private = zram;
 		zram->io_complete = false;
 		submit_bio(&bio);
 		wait_event(zram->wbd_wait, zram->io_complete);
