@@ -261,9 +261,11 @@ static inline void prefetchw(const void *ptr)
 #define ARCH_HAS_SPINLOCK_PREFETCH
 static inline void spin_lock_prefetch(const void *ptr)
 {
-	asm volatile(ARM64_LSE_ATOMIC_INSN(
-		     "prfm pstl1strm, %a0",
-		     "nop") : : "p" (ptr));
+	/*
+	 * With LSE atomics a contended lock is not a load-linked/store-
+	 * conditional retry loop, so preloading the lock into L1 provides no
+	 * benefit and only wastes a bus cycle. Emit nothing.
+	 */
 }
 
 #define HAVE_ARCH_PICK_MMAP_LAYOUT

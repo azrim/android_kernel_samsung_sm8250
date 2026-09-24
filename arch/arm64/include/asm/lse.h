@@ -19,11 +19,13 @@
 extern struct static_key_false cpu_hwcap_keys[ARM64_NCAPS];
 extern struct static_key_false arm64_const_caps_ready;
 
-static inline bool system_uses_lse_atomics(void)
-{
-	return (static_branch_likely(&arm64_const_caps_ready)) &&
-		static_branch_likely(&cpu_hwcap_keys[ARM64_HAS_LSE_ATOMICS]);
-}
+/*
+ * This kernel only runs on SM8250 (Kryo 585), which implements the ARMv8.2
+ * LSE atomics. Selecting them at compile time lets the compiler drop the
+ * runtime capability check and emit a single LSE instruction for every
+ * atomic, instead of a checked branch around an LL/SC retry loop.
+ */
+#define system_uses_lse_atomics()	true
 
 #define __lse_ll_sc_body(op, ...)					\
 ({									\
@@ -32,9 +34,12 @@ static inline bool system_uses_lse_atomics(void)
 		__ll_sc_##op(__VA_ARGS__);				\
 })
 
-/* In-line patching at runtime */
-#define ARM64_LSE_ATOMIC_INSN(llsc, lse)				\
-	ALTERNATIVE(llsc, __LSE_PREAMBLE lse, ARM64_HAS_LSE_ATOMICS)
+/*
+ * The LSE variant is chosen at compile time, so there is nothing to patch in
+ * at runtime. The LL/SC string is still accepted (and discarded here) so that
+ * the call sites remain valid if CONFIG_ARM64_LSE_ATOMICS is ever turned off.
+ */
+#define ARM64_LSE_ATOMIC_INSN(llsc, lse)	__LSE_PREAMBLE lse
 
 #else	/* CONFIG_ARM64_LSE_ATOMICS */
 
