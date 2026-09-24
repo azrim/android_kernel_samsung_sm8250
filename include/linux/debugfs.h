@@ -175,7 +175,7 @@ ssize_t debugfs_write_file_bool(struct file *file, const char __user *user_buf,
 static inline struct dentry *debugfs_lookup(const char *name,
 					    struct dentry *parent)
 {
-	return ERR_PTR(-ENODEV);
+	return NULL;
 }
 
 static inline struct dentry *debugfs_create_file(const char *name, umode_t mode,
