@@ -2021,8 +2021,11 @@ static void qcom_glink_set_affinity(struct qcom_glink *glink, u32 *arr,
 		if (arr[i] < num_possible_cpus())
 			cpumask_set_cpu(arr[i], &cpumask);
 	}
+#ifndef CONFIG_IRQ_SBALANCE
+	/* Let SBalance manage IRQ affinity when it is enabled */
 	if (irq_set_affinity(glink->irq, &cpumask))
 		dev_err(glink->dev, "failed to set irq affinity\n");
+#endif
 	if (sched_setaffinity(glink->task->pid, &cpumask))
 		dev_err(glink->dev, "failed to set task affinity\n");
 }
