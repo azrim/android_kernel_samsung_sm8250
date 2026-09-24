@@ -31,14 +31,15 @@ struct qoslat_data {
 #define QOS_LEVEL_ON	2
 
 #define MAX_MSG_LEN	96
-static int update_qos_level(struct device *dev, struct qoslat_data *d)
+static int update_qos_level(struct device *dev, struct qoslat_data *d,
+			    unsigned long freq)
 {
 	struct qmp_pkt pkt;
 	char mbox_msg[MAX_MSG_LEN + 1] = {0};
 	char *qos_msg = "off";
 	int ret;
 
-	if (d->qos_level == QOS_LEVEL_ON)
+	if (freq == QOS_LEVEL_ON)
 		qos_msg = "on";
 
 	snprintf(mbox_msg, MAX_MSG_LEN, "{class: ddr, perfmode: %s}", qos_msg);
@@ -58,6 +59,7 @@ static int dev_target(struct device *dev, unsigned long *freq, u32 flags)
 {
 	struct qoslat_data *d = dev_get_drvdata(dev);
 	struct dev_pm_opp *opp;
+	int ret;
 
 	opp = devfreq_recommended_opp(dev, freq, flags);
 	if (!IS_ERR(opp))
@@ -68,9 +70,17 @@ static int dev_target(struct device *dev, unsigned long *freq, u32 flags)
 	if (*freq == d->qos_level)
 		return 0;
 
-	d->qos_level = *freq;
+	ret = update_qos_level(dev, d, *freq);
+	if (ret)
+		/*
+		 * Keep the old qos_level so the failed send is retried on
+		 * the next evaluation instead of being deduped away as a
+		 * stale vote.
+		 */
+		return ret;
 
-	return update_qos_level(dev, d);
+	d->qos_level = *freq;
+	return 0;
 }
 
 static int dev_get_cur_freq(struct device *dev, unsigned long *freq)
@@ -101,7 +111,13 @@ static int devfreq_qcom_qoslat_probe(struct platform_device *pdev)
 	}
 	d->mbox_cl.dev = dev;
 	d->mbox_cl.tx_block = true;
-	d->mbox_cl.tx_tout = 1000;
+	/*
+	 * dev_target() runs under devfreq->lock, which the OPP notifier
+	 * also takes synchronously on frequency-scale evaluation paths
+	 * (including on waking cores). Bound how long a wedged AOP
+	 * mailbox can stall them.
+	 */
+	d->mbox_cl.tx_tout = 100;
 	d->mbox_cl.knows_txdone = false;
 	d->mbox = mbox_request_channel(&d->mbox_cl, 0);
 	if (IS_ERR(d->mbox)) {
