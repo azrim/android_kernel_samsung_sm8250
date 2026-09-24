@@ -152,6 +152,7 @@ dtbo.img
 
 # local
 AGENTS.md
+CODEBUDDY.md
 *.env
 AnyKernel3/dtb
 AnyKernel3/Image
