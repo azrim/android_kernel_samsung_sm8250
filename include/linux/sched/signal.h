@@ -229,6 +229,10 @@ struct signal_struct {
 	short oom_score_adj;		/* OOM kill score adjustment */
 	short oom_score_adj_min;	/* OOM kill score adjustment min value.
 					 * Only settable by CAP_SYS_RESOURCE. */
+	unsigned long oom_adj_change;	/* jiffies of the last oom_score_adj
+					 * change; Simple LMK's background
+					 * grace period reads this
+					 */
 	struct mm_struct *oom_mm;	/* recorded mm when the thread group got
 					 * killed by the oom killer */
 

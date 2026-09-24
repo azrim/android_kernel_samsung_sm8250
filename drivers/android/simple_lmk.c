@@ -127,6 +127,26 @@ static unsigned int reserve_mib = 1024;
 static unsigned int grace_msec = 2000;
 #define GRACE_MSEC_MAX 30000
 
+/*
+ * Grace period protecting tasks that just changed state, in ms. On the
+ * routine path a candidate is skipped when its oom_score_adj was last
+ * rewritten -- an app ActivityManager just backgrounded, or one freshly
+ * promoted -- or when the task itself launched, within this window.
+ * Those are exactly the tasks the user is about to reopen, and killing
+ * one buys nothing but a reload stall; they get their fair turn first
+ * while older background tasks drain. The timestamp comes from
+ * __set_oom_adj() (stamped only when the adj really moves, so a busy
+ * service rewriting the same value is not protected forever) and the
+ * launch time from task start, both in absolute clocks so suspend does
+ * not eat the grace. 0 disables it. The OOM emergency path never
+ * consults it: when the allocator is out of memory, waiting is a
+ * luxury. Deliberately a module parameter like poll_msec and
+ * reserve_mib -- a tunable, not a policy switch, so no Kconfig symbol
+ * churns out/.config for it.
+ */
+static unsigned int bg_grace_msec = 5000;
+#define BG_GRACE_MSEC_MAX 60000
+
 /* jiffies at which the last reclaim that killed victims finished */
 static unsigned long last_reclaim_end;
 
@@ -216,7 +236,21 @@ static unsigned long find_victims(int *vindex, unsigned long target,
 {
 	short i, min_adj = SHRT_MAX, max_adj = 0;
 	unsigned long pages_found = 0;
+	unsigned long bg_grace = 0;
+	u64 grace_ns = 0, boot_now = 0;
 	struct task_struct *tsk;
+
+	/*
+	 * Resolve the background grace window once: the per-task checks
+	 * run under rcu_read_lock() and must not call the timekeeper more
+	 * than necessary. bg_grace == 0 for an emergency scan, which
+	 * never skips.
+	 */
+	if (adj_floor == ADJ_FLOOR_ROUTINE && bg_grace_msec) {
+		bg_grace = msecs_to_jiffies(bg_grace_msec);
+		grace_ns = (u64)bg_grace_msec * NSEC_PER_MSEC;
+		boot_now = ktime_get_boottime_ns();
+	}
 
 	rcu_read_lock();
 	for_each_process(tsk) {
@@ -249,6 +283,21 @@ static unsigned long find_victims(int *vindex, unsigned long target,
 		    is_global_init(tsk) || (tsk->flags & PF_KTHREAD) ||
 		    sig->flags & (SIGNAL_GROUP_EXIT | SIGNAL_GROUP_COREDUMP) ||
 		    (thread_group_empty(tsk) && tsk->flags & PF_EXITING))
+			continue;
+
+		/*
+		 * Skip candidates inside the background grace window: the
+		 * adj change timestamp (state change, e.g. just moved to
+		 * background) or the task's launch time is too recent.
+		 * READ_ONCE pairs with the plain store in __set_oom_adj();
+		 * a stale reading can only extend or miss the grace by one
+		 * store, never fault, and sig itself is pinned by the RCU
+		 * read-side section around this loop.
+		 */
+		if (bg_grace &&
+		    (time_before(jiffies, READ_ONCE(sig->oom_adj_change) +
+				 bg_grace) ||
+		     boot_now - tsk->real_start_time < grace_ns))
 			continue;
 
 		/* Store the task in a linked-list bucket based on its adj */
@@ -1049,6 +1098,20 @@ static int set_grace_msec(const char *val, const struct kernel_param *kp)
 	return 0;
 }
 
+static int set_bg_grace_msec(const char *val, const struct kernel_param *kp)
+{
+	unsigned int v = bg_grace_msec;
+	int ret = kstrtouint(val, 0, &v);
+
+	if (ret)
+		return ret;
+	/* 0 disables the grace; beyond 60s freshly backgrounded apps never die */
+	if (v > BG_GRACE_MSEC_MAX)
+		return -EINVAL;
+	bg_grace_msec = v;
+	return 0;
+}
+
 static const struct kernel_param_ops poll_msec_ops = {
 	.set = set_poll_msec,
 	.get = param_get_uint,
@@ -1071,6 +1134,11 @@ static const struct kernel_param_ops reserve_mib_ops = {
 
 static const struct kernel_param_ops grace_msec_ops = {
 	.set = set_grace_msec,
+	.get = param_get_uint,
+};
+
+static const struct kernel_param_ops bg_grace_msec_ops = {
+	.set = set_bg_grace_msec,
 	.get = param_get_uint,
 };
 
@@ -1129,9 +1197,9 @@ static int simple_lmk_init_set(const char *val, const struct kernel_param *kp)
 		goto unclaim;
 	}
 
-	pr_info("Initialized: target=%lu MiB threshold=%u us window=%u us cap=%u grace=%u ms\n",
+	pr_info("Initialized: target=%lu MiB threshold=%u us window=%u us cap=%u grace=%u ms bg_grace=%u ms\n",
 		reclaim_target_pages() * PAGE_SIZE / SZ_1M, psi_threshold_us,
-		psi_window_us, max_kills, grace_msec);
+		psi_window_us, max_kills, grace_msec, bg_grace_msec);
 
 	/* Always succeed: a failure here would make lmkd think LMK is absent */
 	return 0;
@@ -1165,6 +1233,9 @@ MODULE_PARM_DESC(reserve_mib,
 module_param_cb(grace_msec, &grace_msec_ops, &grace_msec, 0644);
 MODULE_PARM_DESC(grace_msec,
 		"Minimum settle time after a killing reclaim, ms; 0 disables");
+module_param_cb(bg_grace_msec, &bg_grace_msec_ops, &bg_grace_msec, 0644);
+MODULE_PARM_DESC(bg_grace_msec,
+		"Routine-path grace for freshly launched/backgrounded tasks, ms; 0 disables");
 module_param_cb(max_kills, &max_kills_ops, &max_kills, 0644);
 MODULE_PARM_DESC(max_kills, "Maximum processes killed by a single reclaim");
 module_param_cb(poll_msec, &poll_msec_ops, &poll_msec, 0644);

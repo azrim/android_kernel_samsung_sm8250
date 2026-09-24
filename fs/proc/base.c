@@ -1143,6 +1143,14 @@ static int __set_oom_adj(struct file *file, int oom_adj, bool legacy)
 		}
 	}
 
+	/*
+	 * Record the state change Simple LMK's background grace period
+	 * keys on, but only when the value really moves: ActivityManager
+	 * may rewrite the same adj on every update, and re-stamping that
+	 * would keep a busy background task protected forever.
+	 */
+	if (task->signal->oom_score_adj != oom_adj)
+		task->signal->oom_adj_change = jiffies;
 	task->signal->oom_score_adj = oom_adj;
 	if (!legacy && has_capability_noaudit(current, CAP_SYS_RESOURCE))
 		task->signal->oom_score_adj_min = (short)oom_adj;
@@ -1162,6 +1170,8 @@ static int __set_oom_adj(struct file *file, int oom_adj, bool legacy)
 
 			task_lock(p);
 			if (!p->vfork_done && process_shares_mm(p, mm)) {
+				if (p->signal->oom_score_adj != oom_adj)
+					p->signal->oom_adj_change = jiffies;
 				p->signal->oom_score_adj = oom_adj;
 				if (!legacy && has_capability_noaudit(current, CAP_SYS_RESOURCE))
 					p->signal->oom_score_adj_min = (short)oom_adj;
