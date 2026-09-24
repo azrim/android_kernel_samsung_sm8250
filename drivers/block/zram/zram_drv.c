@@ -346,6 +346,8 @@ static ssize_t idle_store(struct device *dev,
 static int zram_wbd(void *);
 static struct zram *g_zram;
 static bool is_app_launch;
+static void zram_app_launch_work_fn(struct work_struct *work);
+static DECLARE_WORK(zram_app_launch_work, zram_app_launch_work_fn);
 
 #define F2FS_IOCTL_MAGIC	0xf5
 #define F2FS_IOC_SET_PIN_FILE	_IOW(F2FS_IOCTL_MAGIC, 13, __u32)
@@ -460,6 +462,11 @@ static void stop_lru_writeback(struct zram *zram)
 {
 	if (!IS_ERR_OR_NULL(zram->wbd)) {
 		g_zram = NULL;
+		/*
+		 * The app-launch work item dereferences g_zram; wait for
+		 * any running instance before tearing the device down.
+		 */
+		cancel_work_sync(&zram_app_launch_work);
 		kthread_stop(zram->wbd);
 		zram->wbd = NULL;
 	}
@@ -1124,13 +1131,26 @@ static void try_wakeup_zram_wbd(struct zram *zram)
 	}
 }
 
+/*
+ * Registered on ATOMIC_NOTIFIER_HEAD(am_app_launch_notifier): the callback
+ * runs in atomic context, so the writeback wakeup (which calls
+ * is_bdev_avail() -> statfs()) must be deferred to process context.
+ */
+static void zram_app_launch_work_fn(struct work_struct *work)
+{
+	struct zram *zram = g_zram;
+
+	if (zram)
+		try_wakeup_zram_wbd(zram);
+}
+
 static int zram_app_launch_notifier(struct notifier_block *nb,
 				unsigned long action, void *data)
 {
 	is_app_launch = action ? true : false;
 
 	if (!is_app_launch && g_zram)
-		try_wakeup_zram_wbd(g_zram);
+		schedule_work(&zram_app_launch_work);
 
 	return 0;
 }
