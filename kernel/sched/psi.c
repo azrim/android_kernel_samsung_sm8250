@@ -1123,6 +1123,34 @@ static int psi_cpu_open(struct inode *inode, struct file *file)
 	return single_open(file, psi_cpu_show, NULL);
 }
 
+/**
+ * psi_mem_stall_avg10 - system-wide "some" memory stall, averaged over 10s
+ *
+ * Returns the same quantity /proc/pressure/memory reports as avg10 for the
+ * "some" memory state, in hundredths of a percent (10000 == 100%).  The
+ * per-cpu buckets are sampled and the averages folded first, exactly as
+ * psi_show() does, so the caller measures the stall happening now rather
+ * than one up to psi_period stale.
+ */
+unsigned int psi_mem_stall_avg10(void)
+{
+	unsigned long avg;
+	u64 now;
+
+	if (static_branch_likely(&psi_disabled))
+		return 0;
+
+	mutex_lock(&psi_system.avgs_lock);
+	now = sched_clock();
+	collect_percpu_times(&psi_system, PSI_AVGS, NULL);
+	if (now >= psi_system.avg_next_update)
+		psi_system.avg_next_update = update_averages(&psi_system, now);
+	avg = psi_system.avg[PSI_MEM_SOME][0];
+	mutex_unlock(&psi_system.avgs_lock);
+
+	return (unsigned int)div_u64((u64)avg * 100, FIXED_1);
+}
+
 struct psi_trigger *psi_trigger_create(struct psi_group *group,
 			char *buf, size_t nbytes, enum psi_res res)
 {

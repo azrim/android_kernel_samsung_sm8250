@@ -25,6 +25,13 @@ void psi_memstall_leave(unsigned long *flags);
 
 int psi_show(struct seq_file *s, struct psi_group *group, enum psi_res res);
 
+/*
+ * Fresh avg10 of the system-wide "some" memory stall, in hundredths of a
+ * percent (10000 == 100%). Used to estimate memory deficits; 0 if PSI is
+ * disabled.
+ */
+unsigned int psi_mem_stall_avg10(void);
+
 void psi_emergency_trigger(void);
 bool psi_is_trigger_active(void);
 
@@ -49,6 +56,10 @@ static inline void psi_memstall_enter(unsigned long *flags) {}
 static inline void psi_memstall_leave(unsigned long *flags) {}
 
 static inline void psi_emergency_trigger(void){}
+static inline unsigned int psi_mem_stall_avg10(void)
+{
+	return 0;
+}
 static inline bool psi_is_trigger_active(void)
 {
 	return false;

@@ -7,6 +7,7 @@
 
 #include <linux/freezer.h>
 #include <linux/kthread.h>
+#include <linux/math64.h>
 #include <linux/mm.h>
 #include <linux/sort.h>
 #include <linux/moduleparam.h>
@@ -25,14 +26,15 @@
 #define RECLAIM_EXPIRES msecs_to_jiffies(CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC)
 
 /*
- * Reclaim target, in MiB: 1/64th of installed RAM, clamped to the configured
- * bounds. This yields 96 MiB on the 6 GiB S20FE and 128 MiB on the 8 GiB one,
- * so a single image reclaims proportionally on both. An under-sized target is
- * itself an over-kill mechanism: each event frees less than the deficit, so
- * pressure survives and the next PSI window fires again -- death by a
- * thousand cuts, which reads to the user exactly like over-killing.
+ * Reclaim target bounds, in MiB. The target itself is a real deficit
+ * estimate: the fraction of the last 10s that tasks spent stalled on
+ * memory (PSI avg10), applied to installed RAM -- mild pressure at
+ * avg10 ~1% frees about 1% of RAM, a stall storm saturates the upper
+ * bound. The floor is what keeps a system whose trigger fires but whose
+ * average is still low from death by a thousand cuts: each event must
+ * free enough that the next window can observe real relief, or PSI
+ * re-fires forever and reads to the user exactly like over-killing.
  */
-#define TARGET_RAM_DIVISOR 64
 #define TARGET_MIN_MIB 64
 #define TARGET_MAX_MIB 256
 
@@ -390,20 +392,33 @@ static void set_task_rt_prio(struct task_struct *tsk, int priority)
 static unsigned long reclaim_target_pages(void)
 {
 	unsigned int mib = target_mib;
+	unsigned long pages;
 
 	/*
-	 * Clamp only the value derived from RAM. A value written to
+	 * Clamp only the value derived from PSI. A value written to
 	 * target_mib is already range-checked by set_target_mib(), and
 	 * silently shrinking it to TARGET_MAX_MIB would make the parameter
 	 * a lie for anything above 256.
 	 */
-	if (!mib)
-		mib = clamp_t(unsigned long,
-			      (totalram_pages >> (20 - PAGE_SHIFT)) /
-			      TARGET_RAM_DIVISOR,
-			      TARGET_MIN_MIB, TARGET_MAX_MIB);
+	if (mib)
+		return (unsigned long)mib * SZ_1M / PAGE_SIZE;
 
-	return (unsigned long)mib * SZ_1M / PAGE_SIZE;
+	/*
+	 * Estimate the deficit from stall metrics instead of a fixed
+	 * fraction of RAM: the PSI avg10 of "some" memory stall is the
+	 * fraction of the last 10 seconds during which at least one task
+	 * was stalled on memory, and a system that spent that fraction of
+	 * its time stalling was missing roughly that fraction of RAM.
+	 * Scale installed RAM by it and clamp to the configured bounds;
+	 * the floor also guarantees a non-zero target when PSI is disabled
+	 * and the helper answers 0.
+	 */
+	pages = (unsigned long)div_u64((u64)totalram_pages *
+				       psi_mem_stall_avg10(), 10000);
+
+	return clamp_t(unsigned long, pages,
+		       (TARGET_MIN_MIB << 20) / PAGE_SIZE,
+		       (TARGET_MAX_MIB << 20) / PAGE_SIZE);
 }
 
 /* Returns whether any victim was killed */
@@ -991,13 +1006,14 @@ static int set_target_mib(const char *val, const struct kernel_param *kp)
 	if (ret)
 		return ret;
 	/*
-	 * 0 means auto (totalram/64 clamped to [64,256] MiB). An explicit
-	 * value is bounded by TARGET_MAX_MIB: the victim array holds only
+	 * 0 means auto (deficit derived from the PSI stall average,
+	 * clamped to [64,256] MiB). An explicit value is bounded by
+	 * TARGET_MAX_MIB: the victim array holds only
 	 * MAX_VICTIMS entries, so a larger target cannot be reached in one
 	 * reclaim. It would never satisfy pages_found >= target, and every
 	 * subsequent PSI window would scan and kill again -- the repeated
-	 * under-sized-reclaim pattern that the auto-derived target exists
-	 * to avoid.
+	 * under-sized-reclaim pattern that the stall-derived target's
+	 * floor exists to avoid.
 	 */
 	if (v != 0 && (v < TARGET_MIN_MIB || v > TARGET_MAX_MIB))
 		return -EINVAL;
@@ -1141,7 +1157,8 @@ MODULE_PARM_DESC(psi_threshold_us,
 module_param_cb(psi_window_us, &psi_window_ops, &psi_window_us, 0644);
 MODULE_PARM_DESC(psi_window_us, "PSI stall window in microseconds");
 module_param_cb(target_mib, &target_mib_ops, &target_mib, 0644);
-MODULE_PARM_DESC(target_mib, "MiB to free per reclaim; 0 derives it from RAM");
+MODULE_PARM_DESC(target_mib,
+		 "MiB to free per reclaim; 0 derives it from the PSI stall average");
 module_param_cb(reserve_mib, &reserve_mib_ops, &reserve_mib, 0644);
 MODULE_PARM_DESC(reserve_mib,
 		"MiB of free memory below which routine reclaim may run; 0 disables");
