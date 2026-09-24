@@ -2729,6 +2729,15 @@ static int __zram_bvec_read(struct zram *zram, struct page *page, u32 index,
 	zram_slot_lock(zram, index);
 	if (zram_test_flag(zram, index, ZRAM_WB)) {
 		struct bio_vec bvec;
+		unsigned long element;
+
+		/*
+		 * Fetch the backing-device element while the slot lock is
+		 * still held; a concurrent discard/free can clear the slot
+		 * right after zram_slot_unlock() and would otherwise make
+		 * us read from a stale or zeroed location.
+		 */
+		element = zram_get_element(zram, index);
 
 		bvec.bv_page = page;
 		bvec.bv_len = PAGE_SIZE;
@@ -2741,16 +2750,16 @@ static int __zram_bvec_read(struct zram *zram, struct page *page, u32 index,
 			zram_set_flag(zram, index, ZRAM_EXPIRE);
 			atomic64_inc(&zram->stats.bd_expire);
 		}
-		if ((zram_get_element(zram, index) & (PAGE_SIZE - 1)) != 0) {
+		if ((element & (PAGE_SIZE - 1)) != 0) {
 			zram_set_flag(zram, index, ZRAM_READ_BDEV);
 			zram_slot_unlock(zram, index);
 			return read_comp_from_bdev(zram, &bvec,
-					zram_get_element(zram, index), bio);
+					element, bio);
 		}
 #endif
 		zram_slot_unlock(zram, index);
 		return read_from_bdev(zram, &bvec,
-				zram_get_element(zram, index) >> (PAGE_SHIFT * 2),
+				element >> (PAGE_SHIFT * 2),
 				bio, partial_io);
 	}
 
