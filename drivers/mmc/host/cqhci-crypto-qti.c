@@ -118,8 +118,10 @@ static int cqhci_crypto_qti_keyslot_program(struct keyslot_manager *ksm,
 		if (err)
 			return err;
 		err = clk_prepare_enable(msm_host->ice_clk);
-		if (err)
+		if (err) {
+			clk_disable_unprepare(msm_host->pclk);
 			return err;
+		}
 	} else {
 		pr_err("%s: Invalid clock value\n", __func__);
 		return -EINVAL;
@@ -130,6 +132,8 @@ static int cqhci_crypto_qti_keyslot_program(struct keyslot_manager *ksm,
 	if (!cqhci_is_crypto_enabled(host) ||
 	    !cqhci_keyslot_valid(host, slot) ||
 	    !ice_cap_idx_valid(host, crypto_alg_id)) {
+		clk_disable_unprepare(msm_host->pclk);
+		clk_disable_unprepare(msm_host->ice_clk);
 		pm_runtime_put_sync(&host->mmc->card->dev);
 		return -EINVAL;
 	}
@@ -138,6 +142,8 @@ static int cqhci_crypto_qti_keyslot_program(struct keyslot_manager *ksm,
 
 	if (!(data_unit_mask &
 	      host->crypto_cap_array[crypto_alg_id].sdus_mask)) {
+		clk_disable_unprepare(msm_host->pclk);
+		clk_disable_unprepare(msm_host->ice_clk);
 		pm_runtime_put_sync(&host->mmc->card->dev);
 		return -EINVAL;
 	}
@@ -169,8 +175,10 @@ static int cqhci_crypto_qti_keyslot_evict(struct keyslot_manager *ksm,
 		if (err)
 			return err;
 		err = clk_prepare_enable(msm_host->ice_clk);
-		if (err)
+		if (err) {
+			clk_disable_unprepare(msm_host->pclk);
 			return err;
+		}
 	} else {
 		pr_err("%s: Invalid clock value\n", __func__);
 		return -EINVAL;
@@ -179,6 +187,8 @@ static int cqhci_crypto_qti_keyslot_evict(struct keyslot_manager *ksm,
 
 	if (!cqhci_is_crypto_enabled(host) ||
 	    !cqhci_keyslot_valid(host, slot)) {
+		clk_disable_unprepare(msm_host->pclk);
+		clk_disable_unprepare(msm_host->ice_clk);
 		pm_runtime_put_sync(&host->mmc->card->dev);
 		return -EINVAL;
 	}
