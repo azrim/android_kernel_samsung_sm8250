@@ -442,25 +442,47 @@ int susfs_update_sus_kstat(struct st_susfs_sus_kstat* __user user_info) {
 	struct hlist_node *tmp_node;
 	int bkt;
 	int err = 0;
+	bool found = false;
 
 	if (copy_from_user(&info, user_info, sizeof(info))) {
 		SUSFS_LOGE("failed copying from userspace\n");
 		return 1;
 	}
+	info.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
 
+	// First pass: is there already an entry for this pathname?  Only the hash
+	// list is touched here, so it is safe to do it under the spinlock.
+	spin_lock(&susfs_spin_lock);
+	hash_for_each(SUS_KSTAT_HLIST, bkt, tmp_entry, node) {
+		if (!strcmp(tmp_entry->info.target_pathname, info.target_pathname)) {
+			found = true;
+			break;
+		}
+	}
+	spin_unlock(&susfs_spin_lock);
+
+	if (!found)
+		return err;
+
+	// susfs_update_sus_kstat_inode() calls kern_path() and the kmalloc below
+	// may both sleep, so neither may run with the spinlock held.
+	if (susfs_update_sus_kstat_inode(info.target_pathname)) {
+		SUSFS_LOGE("failed updating inode state for '%s'\n", info.target_pathname);
+		return 1;
+	}
+
+	new_entry = kmalloc(sizeof(struct st_susfs_sus_kstat_hlist), GFP_KERNEL);
+	if (!new_entry) {
+		SUSFS_LOGE("no enough memory\n");
+		return 1;
+	}
+
+	// Second pass: replace the old entry with the updated one.  The entry may
+	// have been removed by a concurrent update, so re-check before swapping.
+	found = false;
 	spin_lock(&susfs_spin_lock);
 	hash_for_each_safe(SUS_KSTAT_HLIST, bkt, tmp_node, tmp_entry, node) {
 		if (!strcmp(tmp_entry->info.target_pathname, info.target_pathname)) {
-			if (susfs_update_sus_kstat_inode(tmp_entry->info.target_pathname)) {
-				err = 1;
-				goto out_spin_unlock;
-			}
-			new_entry = kmalloc(sizeof(struct st_susfs_sus_kstat_hlist), GFP_KERNEL);
-			if (!new_entry) {
-				SUSFS_LOGE("no enough memory\n");
-				err = 1;
-				goto out_spin_unlock;
-			}
 			memcpy(&new_entry->info, &tmp_entry->info, sizeof(tmp_entry->info));
 			SUSFS_LOGI("updating target_ino from '%lu' to '%lu' for pathname: '%s' in SUS_KSTAT_HLIST\n",
 							new_entry->info.target_ino, info.target_ino, info.target_pathname);
@@ -479,11 +501,15 @@ int susfs_update_sus_kstat(struct st_susfs_sus_kstat* __user user_info) {
 			hash_del(&tmp_entry->node);
 			kfree(tmp_entry);
 			hash_add(SUS_KSTAT_HLIST, &new_entry->node, info.target_ino);
-			goto out_spin_unlock;
+			found = true;
+			break;
 		}
 	}
-out_spin_unlock:
 	spin_unlock(&susfs_spin_lock);
+
+	if (!found)
+		kfree(new_entry);
+
 	return err;
 }
 
