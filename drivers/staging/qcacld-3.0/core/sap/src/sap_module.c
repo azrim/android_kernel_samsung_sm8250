@@ -2594,6 +2594,12 @@ static int wlansap_validate_owe_ie(const uint8_t *ie, uint32_t remaining_ie_len)
 		ie_len += 2;
 		break;
 	case DOT11F_EID_DH_PARAMETER_ELEMENT:
+		/* need room for the 2-byte IE header + the ext id byte */
+		if (remaining_ie_len < 3) {
+			QDF_TRACE_ERROR(QDF_MODULE_ID_SAP,
+					"DH IE too short");
+			return -EINVAL;
+		}
 		ie_ext_id = ie[2];
 		if (ie_ext_id != DH_OUI_TYPE) {
 			QDF_TRACE_ERROR(QDF_MODULE_ID_SAP,
