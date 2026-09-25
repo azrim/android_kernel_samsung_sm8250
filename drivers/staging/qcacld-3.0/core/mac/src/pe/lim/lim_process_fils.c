@@ -877,6 +877,17 @@ static QDF_STATUS lim_process_auth_wrapped_data(struct pe_session *pe_session,
 	new_len = lim_process_fils_eap_tlv(pe_session,
 				wrapped_data, remaining_len);
 
+	/*
+	 * The TLV parse must leave room for at least the cryptosuite byte that
+	 * is read below.  new_len is derived from attacker-controlled frame
+	 * contents and can be 0, which would otherwise make the read below
+	 * access one byte past the wrapped-data element.
+	 */
+	if (new_len < 1) {
+		pe_err("wrapped data too short after TLV parse: %u", new_len);
+		return QDF_STATUS_E_FAILURE;
+	}
+
 	wrapped_data += remaining_len - new_len;
 	remaining_len = new_len;
 	/* Remove cryptosuite */
@@ -896,6 +907,11 @@ static QDF_STATUS lim_process_auth_wrapped_data(struct pe_session *pe_session,
 	} else {
 		pe_err("invalid remaining len %d",
 			remaining_len);
+		/*
+		 * Without exactly the authentication tag left, the comparison
+		 * below would read past the wrapped-data element.
+		 */
+		return QDF_STATUS_E_FAILURE;
 	}
 	if (qdf_mem_cmp(wrapped_data, hash, auth_tag_len)) {
 		pe_err("integratity check failed for auth, crypto %d",
