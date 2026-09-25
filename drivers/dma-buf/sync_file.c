@@ -360,9 +360,15 @@ static int sync_fill_fence_info(struct dma_fence *fence,
 				 struct sync_fence_info *info)
 {
 	info->status = dma_fence_get_status(fence);
-	while (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags) &&
-	       !test_bit(DMA_FENCE_FLAG_TIMESTAMP_BIT, &fence->flags))
-		cpu_relax();
+	/*
+	 * dma_fence_signal_locked() sets the SIGNALED and TIMESTAMP flags in
+	 * that order under fence->lock.  A reader may therefore briefly observe
+	 * SIGNALED without TIMESTAMP.  Do not spin waiting for the timestamp to
+	 * catch up: if the signaler is preempted between the two set_bit()
+	 * calls this loop would spin unbounded.  Reading the guarded timestamp
+	 * directly matches upstream; in the rare race window the timestamp is
+	 * simply reported as 0.
+	 */
 	info->timestamp_ns =
 		test_bit(DMA_FENCE_FLAG_TIMESTAMP_BIT, &fence->flags) ?
 		ktime_to_ns(fence->timestamp) :
