@@ -73,6 +73,8 @@ struct cnss_driver_event {
 #ifdef CONFIG_SEC_CNSS2
 char ver_info[512] = {0,};
 char softap_info[512] = {0,};
+/* Serializes ver_info/softap_info copies against the sysfs readers. */
+static DEFINE_SPINLOCK(cnss_sysfs_lock);
 #endif
 
 static void cnss_set_plat_priv(struct platform_device *plat_dev,
@@ -2522,10 +2524,15 @@ enum driver_modules_status current_driver_status = DRIVER_MODULES_UNINITIALIZED;
 void cnss_sysfs_update_driver_status(int32_t new_status, void *version, void *softap)
 {
 	if (new_status == DRIVER_MODULES_ENABLED) {
-		memcpy(ver_info, version, 512);
-		memcpy(softap_info, softap, 512);
+		unsigned long flags;
+
+		spin_lock_irqsave(&cnss_sysfs_lock, flags);
+		memcpy(ver_info, version, sizeof(ver_info));
+		memcpy(softap_info, softap, sizeof(softap_info));
+		spin_unlock_irqrestore(&cnss_sysfs_lock, flags);
 	}
-	current_driver_status = new_status;
+
+	WRITE_ONCE(current_driver_status, new_status);
 }
 EXPORT_SYMBOL(cnss_sysfs_update_driver_status);
 
@@ -2571,38 +2578,52 @@ static ssize_t show_verinfo(struct kobject *kobj,
 				 struct kobj_attribute *attr,
 				 char *buf)
 {
-	return scnprintf(buf, 512, "%s", ver_info);
+	unsigned long flags;
+	ssize_t ret;
+
+	spin_lock_irqsave(&cnss_sysfs_lock, flags);
+	ret = scnprintf(buf, 512, "%s", ver_info);
+	spin_unlock_irqrestore(&cnss_sysfs_lock, flags);
+
+	return ret;
 }
 static ssize_t show_softapinfo(struct kobject *kobj,
 				 struct kobj_attribute *attr,
 				 char *buf)
 {
-	return scnprintf(buf, 512, "%s", softap_info);
+	unsigned long flags;
+	ssize_t ret;
+
+	spin_lock_irqsave(&cnss_sysfs_lock, flags);
+	ret = scnprintf(buf, 512, "%s", softap_info);
+	spin_unlock_irqrestore(&cnss_sysfs_lock, flags);
+
+	return ret;
 }
 
 static ssize_t show_qcwlanstate(struct kobject *kobj,
-                                struct kobj_attribute *attr,
-                                char *buf)
+				struct kobj_attribute *attr,
+				char *buf)
 {
-       char status[20];
-       static const char wlan_off_str[] = "OFF";
-       static const char wlan_on_str[] = "ON";
+	char status[20] = "OFF";
+	static const char wlan_off_str[] = "OFF";
+	static const char wlan_on_str[] = "ON";
 
-       switch (current_driver_status) {
-               case DRIVER_MODULES_UNINITIALIZED:
-               case DRIVER_MODULES_CLOSED:
-                       cnss_pr_info("Modules not initialized just return");
-                       memset(status, '\0', sizeof("OFF"));
-                       memcpy(status, wlan_off_str, sizeof("OFF"));
-                       break;
-               case DRIVER_MODULES_ENABLED:
-                       cnss_pr_info("Modules enabled");
-                       memset(status, '\0', sizeof("ON"));
-                       memcpy(status, wlan_on_str, sizeof("ON"));
-                       break;
-       }
+	switch (READ_ONCE(current_driver_status)) {
+	case DRIVER_MODULES_UNINITIALIZED:
+	case DRIVER_MODULES_CLOSED:
+		cnss_pr_info("Modules not initialized just return");
+		memset(status, '\0', sizeof("OFF"));
+		memcpy(status, wlan_off_str, sizeof("OFF"));
+		break;
+	case DRIVER_MODULES_ENABLED:
+		cnss_pr_info("Modules enabled");
+		memset(status, '\0', sizeof("ON"));
+		memcpy(status, wlan_on_str, sizeof("ON"));
+		break;
+	}
 
-       return scnprintf(buf, PAGE_SIZE, "%s", status);
+	return scnprintf(buf, PAGE_SIZE, "%s", status);
 }
 
 static ssize_t store_pm_info(struct kobject *kobj,
@@ -2610,17 +2631,20 @@ static ssize_t store_pm_info(struct kobject *kobj,
 			    const char *buf,
 			    size_t count)
 {
+	int val = 0;
+
 	cnss_pr_info("%s enter\n", __func__);
-	sscanf(buf, "%d", &pm_from_macloader);
-	pm_from_macloader = !pm_from_macloader;
-	cnss_pr_info("pm_from_macloader %d\n", pm_from_macloader);
+	if (kstrtoint(buf, 10, &val))
+		return -EINVAL;
+	WRITE_ONCE(pm_from_macloader, !val);
+	cnss_pr_info("pm_from_macloader %d\n", READ_ONCE(pm_from_macloader));
 
 	return count;
 }
 
 int cnss_sysfs_get_pm_info(void)
 {
-	return pm_from_macloader;
+	return READ_ONCE(pm_from_macloader);
 }
 EXPORT_SYMBOL(cnss_sysfs_get_pm_info);
 
