@@ -351,6 +351,11 @@ static ssize_t cnss_reg_read_debug_write(struct file *fp,
 		return -EINVAL;
 	}
 
+	if (data_len > QMI_WLFW_MAX_ATHDIAG_DATA_SIZE_V01) {
+		cnss_pr_err("Invalid data length 0x%x\n", data_len);
+		return -EINVAL;
+	}
+
 	mutex_lock(&plat_priv->dev_lock);
 	kfree(plat_priv->diag_reg_read_buf);
 	plat_priv->diag_reg_read_buf = NULL;
