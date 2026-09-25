@@ -399,7 +399,8 @@ static struct binder_buffer *binder_alloc_new_buf_locked(
 				size_t offsets_size,
 				size_t extra_buffers_size,
 				int is_async,
-				int pid)
+				int pid,
+				bool *report_free_buffer_full)
 {
 	struct rb_node *n = alloc->free_buffers.rb_node;
 	struct binder_buffer *buffer;
@@ -409,6 +410,8 @@ static struct binder_buffer *binder_alloc_new_buf_locked(
 	void __user *end_page_addr;
 	size_t size, data_offsets_size;
 	int ret;
+
+	*report_free_buffer_full = false;
 
 	if (!binder_alloc_get_vma(alloc)) {
 		binder_alloc_debug(BINDER_DEBUG_USER_ERROR,
@@ -438,16 +441,14 @@ static struct binder_buffer *binder_alloc_new_buf_locked(
 	size = max(size, sizeof(void *));
 
 #ifdef CONFIG_SAMSUNG_FREECESS
+	/*
+	 * Only decide here; the caller reports after dropping alloc->mutex so
+	 * that the pid lookup and binder_report() stay out of the allocator
+	 * critical section.
+	 */
 	if (is_async && (alloc->free_async_space < 3 * size
-		|| alloc->free_async_space < alloc->buffer_size/4)) {
-		struct task_struct *p;
-
-		rcu_read_lock();
-		p = find_task_by_vpid(alloc->pid);
-		rcu_read_unlock();
-		if (p && (thread_group_is_frozen(p) || p->jobctl & JOBCTL_TRAP_FREEZE))
-			binder_report(p, -1, "free_buffer_full", is_async);
-	}
+		|| alloc->free_async_space < alloc->buffer_size / 4))
+		*report_free_buffer_full = true;
 #endif
 
 	if (is_async && alloc->free_async_space < size) {
@@ -606,11 +607,47 @@ struct binder_buffer *binder_alloc_new_buf(struct binder_alloc *alloc,
 					   int pid)
 {
 	struct binder_buffer *buffer;
+	bool report_free_buffer_full;
 
+	/*
+	 * alloc->mutex is the allocator's only lock. It is a mutex rather than
+	 * a spinlock because the reservation below can sleep:
+	 * binder_update_page_range() takes mmap_write_lock() and faults in
+	 * pages, and the split path does a GFP_KERNEL kzalloc(). alloc->vma is
+	 * the one lockless seam, published with smp_wmb() and read with
+	 * smp_rmb() in binder_alloc_set_vma()/binder_alloc_get_vma().
+	 */
 	mutex_lock(&alloc->mutex);
 	buffer = binder_alloc_new_buf_locked(alloc, data_size, offsets_size,
-					     extra_buffers_size, is_async, pid);
+					     extra_buffers_size, is_async, pid,
+					     &report_free_buffer_full);
 	mutex_unlock(&alloc->mutex);
+
+#ifdef CONFIG_SAMSUNG_FREECESS
+	/*
+	 * find_task_by_vpid() returns a raw RCU pointer with no reference, so
+	 * pin the task before using it outside the RCU read-side section. Do it
+	 * here, after alloc->mutex is dropped, to keep the report off the
+	 * allocator critical section.
+	 */
+	if (report_free_buffer_full) {
+		struct task_struct *p;
+
+		rcu_read_lock();
+		p = find_task_by_vpid(alloc->pid);
+		if (p)
+			get_task_struct(p);
+		rcu_read_unlock();
+		if (p) {
+			if (thread_group_is_frozen(p) ||
+			    p->jobctl & JOBCTL_TRAP_FREEZE)
+				binder_report(p, -1, "free_buffer_full",
+					      is_async);
+			put_task_struct(p);
+		}
+	}
+#endif
+
 	return buffer;
 }
 
