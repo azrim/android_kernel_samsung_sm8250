@@ -3403,7 +3403,7 @@ static void clear_report_data(struct zt_ts_info *info)
 			if (!m_ts_debug_mode && TSP_NORMAL_EVENT_MSG) {
 				location_detect(info, location, info->cur_coord[i].x, info->cur_coord[i].y);
 #if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
-				input_info(true, &client->dev, "[RA] tID:%d loc:%s dd:%d,%d mc:%d tc:%d lx:%d ly:%d p:%d\n",
+				input_dbg(true, &client->dev, "[RA] tID:%d loc:%s dd:%d,%d mc:%d tc:%d lx:%d ly:%d p:%d\n",
 						i, location,
 						info->cur_coord[i].x - info->pressed_x[i],
 						info->cur_coord[i].y - info->pressed_y[i],
@@ -3412,7 +3412,7 @@ static void clear_report_data(struct zt_ts_info *info)
 						info->cur_coord[i].y,
 						info->cur_coord[i].palm_count);
 #else
-				input_info(true, &client->dev, "[RA] tID:%02d loc:%s dd:%d,%d mc:%d tc:%d p:%d\n",
+				input_dbg(true, &client->dev, "[RA] tID:%02d loc:%s dd:%d,%d mc:%d tc:%d p:%d\n",
 						i, location,
 						info->cur_coord[i].x - info->pressed_x[i],
 						info->cur_coord[i].y - info->pressed_y[i],
@@ -3619,7 +3619,7 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 
 		if ((info->noise_flag == -1) && (info->old_coord[i].noise != info->cur_coord[i].noise)) {
 			info->noise_flag = info->cur_coord[i].noise;
-			input_info(true, &client->dev, "NOISE MODE %s [%d]\n", info->noise_flag > 0 ? "ON":"OFF", info->noise_flag);
+			input_dbg(true, &client->dev, "NOISE MODE %s [%d]\n", info->noise_flag > 0 ? "ON":"OFF", info->noise_flag);
 		}
 
 		if (info->flip_cover_flag == 0) {
@@ -3657,7 +3657,7 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 				old = 'N';
 
 			if (cur != old)
-				input_info(true, &client->dev, "tID:%d ttype(%c->%c) : %s\n", i, old, cur, pos);
+				input_dbg(true, &client->dev, "tID:%d ttype(%c->%c) : %s\n", i, old, cur, pos);
 		}
 
 		if ((info->cur_coord[i].touch_status == FINGER_PRESS || info->cur_coord[i].touch_status == FINGER_MOVE)) {
@@ -3708,16 +3708,16 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 				if ((info->finger_cnt1 > 4) && (info->check_multi == 0)) {
 					info->check_multi = 1;
 					info->multi_count++;
-					input_info(true, &client->dev,"data : pn=%d mc=%d \n", info->finger_cnt1, info->multi_count);
+					input_dbg(true, &client->dev,"data : pn=%d mc=%d \n", info->finger_cnt1, info->multi_count);
 				}
 
 				location_detect(info, location, x, y);
 #if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
-				input_info(true, &client->dev, "[P] tID:%d,%d x:%d y:%d z:%d(st:%d) max:%d major:%d minor:%d loc:%s tc:%d touch_type:%x noise:%x\n",
+				input_dbg(true, &client->dev, "[P] tID:%d,%d x:%d y:%d z:%d(st:%d) max:%d major:%d minor:%d loc:%s tc:%d touch_type:%x noise:%x\n",
 						i, (info->input_dev->mt->trkid - 1) & TRKID_MAX, x, y, z, st, sen_max, info_major_w,
 						info_minor_w, location, info->finger_cnt1, info->cur_coord[i].ttype, info->cur_coord[i].noise);
 #else
-				input_info(true, &client->dev, "[P] tID:%d,%d z:%d(st:%d) max:%d major:%d minor:%d loc:%s tc:%d touch_type:%x noise:%x\n",
+				input_dbg(true, &client->dev, "[P] tID:%d,%d z:%d(st:%d) max:%d major:%d minor:%d loc:%s tc:%d touch_type:%x noise:%x\n",
 						i, (info->input_dev->mt->trkid - 1) & TRKID_MAX, z, st, sen_max, info_major_w,
 						info_minor_w, location, info->finger_cnt1, info->cur_coord[i].ttype, info->cur_coord[i].noise);
 #endif
@@ -3740,7 +3740,7 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 			}
 
 #if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
-			input_info(true, &client->dev,
+			input_dbg(true, &client->dev,
 					"[R] tID:%d loc:%s dd:%d,%d mc:%d tc:%d lx:%d ly:%d p:%d\n",
 					i, location,
 					info->cur_coord[i].x - info->pressed_x[i],
@@ -3750,7 +3750,7 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 					info->cur_coord[i].y,
 					info->cur_coord[i].palm_count);
 #else
-			input_info(true, &client->dev,
+			input_dbg(true, &client->dev,
 					"[R] tID:%02d loc:%s dd:%d,%d mc:%d tc:%d p:%d\n",
 					i, location,
 					info->cur_coord[i].x - info->pressed_x[i],
