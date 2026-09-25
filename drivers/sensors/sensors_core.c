@@ -184,8 +184,8 @@ void sensors_input_clean(void)
 {
 	sensors_remove_symlink(&meta_input_dev->dev.kobj,
 		meta_input_dev->name);
+	/* input_unregister_device() already frees the device */
 	input_unregister_device(meta_input_dev);
-	input_free_device(meta_input_dev);
 }
 
 static int __init sensors_class_init(void)

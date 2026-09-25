@@ -3865,14 +3865,16 @@ static int a96t3x6_remove(struct i2c_client *client)
 				&a96t3x6_attribute_group);
 	sensors_remove_symlink(&data->noti_input_dev->dev.kobj,
 				data->noti_input_dev->name);
+	/*
+	 * input_unregister_device() drops the device's last reference and
+	 * frees it; a following input_free_device() would be a double put.
+	 */
 	input_unregister_device(data->noti_input_dev);
-	input_free_device(data->input_dev);
 	sysfs_remove_group(&data->input_dev->dev.kobj,
 				&a96t3x6_attribute_group);
 	sensors_remove_symlink(&data->input_dev->dev.kobj,
 				data->input_dev->name);
 	input_unregister_device(data->input_dev);
-	input_free_device(data->input_dev);
 	kfree(data);
 
 	return 0;
