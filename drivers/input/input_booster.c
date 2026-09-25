@@ -483,6 +483,16 @@ void remove_ib_instance(struct t_ib_info *target_ib)
 	struct t_ib_info *ib = NULL;
 	int ib_exist = 0;
 
+	/*
+	 * Serialize with the trigger path.  find_release_ib() returns an
+	 * RCU-protected pointer after rcu_read_unlock(), and
+	 * trigger_input_booster() dereferences it while holding
+	 * trigger_ib_lock; taking the same lock here guarantees the ib cannot
+	 * be freed until that use is complete (synchronize_rcu() alone only
+	 * waits for readers still inside the read-side section).
+	 */
+	mutex_lock(&trigger_ib_lock);
+
 	//Check if target instance exists in the list or not.
 	spin_lock(&write_ib_lock);
 	list_for_each_entry_rcu(ib, &ib_list[target_ib->ib_dt->type], list) {
@@ -502,6 +512,8 @@ void remove_ib_instance(struct t_ib_info *target_ib)
 		pr_booster(ITAG" Del Ib Instance's Id : %d", target_ib->uniq_id);
 		kfree(target_ib);
 	}
+
+	mutex_unlock(&trigger_ib_lock);
 }
 
 unsigned int create_uniq_id(int type, int code, int slot)
