@@ -761,7 +761,7 @@ static ssize_t store_quest_end(struct device *dev,
 	QUEST_SYSFS_ENTER();
 
 	// print result
-	sscanf(buf, "%s", result);
+	sscanf(buf, "%19s", result);
 	failed = strcmp(result, "quest_pass")?1:0;
 
 	// process end
@@ -1772,7 +1772,7 @@ static ssize_t store_quest_logs(struct device *dev,
 	QUEST_PRINT("%s : file = %s\n", __func__, buf);
 
 	set_fs(KERNEL_DS);
-	sscanf(buf, "%s", path);
+	sscanf(buf, "%99s", path);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,17,0)
 	fd = sys_open(path, O_RDONLY, 0);
 #else
@@ -1784,6 +1784,11 @@ static ssize_t store_quest_logs(struct device *dev,
 #else
 		while (ksys_read(fd, temp, 1) == 1) {
 #endif
+			if (idx >= BUFF_SZ - 1) {
+				tempbuf[idx] = '\0';
+				QUEST_PRINT("%s", tempbuf);
+				idx = 0;
+			}
 			tempbuf[idx++] = temp[0];
 			if( temp[0]=='\n' ) {
 				tempbuf[idx] = '\0';
