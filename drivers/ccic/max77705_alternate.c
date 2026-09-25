@@ -1972,6 +1972,15 @@ int max77705_sec_uvdm_in_request_message(void *data)
 		usbpd_data->uvdm_error = 0;
 		max77705_send_vdm_write_message(SendMSG);
 	} while (cur_uvdmset_num < total_uvdmset_num);
+
+	/*
+	 * set_endian() swaps in SAMSUNGUVDM_ALIGN-byte groups, so it touches up
+	 * to (size rounded up to alignment) - 1 bytes of both buffers, which are
+	 * sized for MAX_INPUT_DATA. Clamp the partner-supplied total size to the
+	 * largest aligned value that fits.
+	 */
+	size = min_t(int, size,
+		     MAX_INPUT_DATA - (MAX_INPUT_DATA % SAMSUNGUVDM_ALIGN));
 	set_endian(IN_DATA, data, size);
 
 	reinit_completion(&usbpd_data->uvdm_longpacket_in_wait);
