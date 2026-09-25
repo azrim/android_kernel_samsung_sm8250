@@ -152,6 +152,7 @@ struct qmp_mbox {
 	u32 mcore_mbox_offset;
 	u32 mcore_mbox_size;
 	struct qmp_pkt rx_pkt;
+	u32 rx_pkt_size;
 
 	struct qmp_core_version version;
 	enum qmp_local_state local_state;
@@ -480,7 +481,7 @@ static void qmp_recv_data(struct qmp_mbox *mbox, u32 mbox_of)
 	pkt = &mbox->rx_pkt;
 	pkt->size = ioread32(addr);
 
-	if (pkt->size > mbox->mcore_mbox_size)
+	if (pkt->size > mbox->rx_pkt_size)
 		QMP_ERR(mbox->mdev->ilc, "Invalid mailbox packet\n");
 	else {
 		memcpy32_fromio(pkt->data, addr + sizeof(pkt->size), pkt->size);
@@ -562,6 +563,10 @@ static void __qmp_rx_worker(struct qmp_mbox *mbox)
 			QMP_ERR(mdev->ilc, "Failed to allocate rx pkt\n");
 			break;
 		}
+		/* Remember the real allocation size; the RX path must never
+		 * copy more than this, regardless of what the remote advertises.
+		 */
+		mbox->rx_pkt_size = desc.ucore.mailbox_size;
 		QMP_INFO(mdev->ilc, "Set to link negotiation\n");
 		send_irq(mdev);
 		break;
@@ -741,10 +746,13 @@ static u32 get_mbox_num_chans(struct device_node *node)
 		for (j = 0; j < i; j++) {
 			ret = of_parse_phandle_with_args(np, "mboxes",
 							"#mbox-cells", j, &p);
-			if (!ret && p.np == node) {
+			if (ret)
+				continue;
+			if (p.np == node)
 				num_chans++;
+			of_node_put(p.np);
+			if (num_chans)
 				break;
-			}
 		}
 	}
 	if (num_chans)
