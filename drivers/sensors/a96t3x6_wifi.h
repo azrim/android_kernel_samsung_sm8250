@@ -133,6 +133,9 @@
 #endif
 #define CRC_FAIL		0
 #define CRC_PASS		1
+#ifdef CONFIG_SENSORS_FW_VENDOR
+#define INIT_DELAY		50000
+#endif
 
 #define FLASH_DELAY		1400000
 #define FLASH_MODE		0x18
