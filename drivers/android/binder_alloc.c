@@ -19,6 +19,7 @@
 
 #include <linux/list.h>
 #include <linux/sched/mm.h>
+#include <linux/sched/signal.h>
 #include <linux/module.h>
 #include <linux/rtmutex.h>
 #include <linux/rbtree.h>
@@ -639,8 +640,23 @@ struct binder_buffer *binder_alloc_new_buf(struct binder_alloc *alloc,
 			get_task_struct(p);
 		rcu_read_unlock();
 		if (p) {
-			if (thread_group_is_frozen(p) ||
-			    p->jobctl & JOBCTL_TRAP_FREEZE)
+			bool frozen = thread_group_is_frozen(p);
+
+			/*
+			 * jobctl is protected by sighand->siglock, so read the
+			 * TRAP_FREEZE bit under it to avoid racing the freezer
+			 * (KCSAN).
+			 */
+			if (!frozen) {
+				unsigned long flags;
+
+				if (lock_task_sighand(p, &flags)) {
+					frozen = p->jobctl & JOBCTL_TRAP_FREEZE;
+					unlock_task_sighand(p, &flags);
+				}
+			}
+
+			if (frozen)
 				binder_report(p, -1, "free_buffer_full",
 					      is_async);
 			put_task_struct(p);
