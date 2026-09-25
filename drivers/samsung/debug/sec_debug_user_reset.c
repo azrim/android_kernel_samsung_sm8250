@@ -1184,7 +1184,8 @@ static int sec_reset_history_init(void)
 	for (i = 0; i < copy_cnt; i++) {
 		idx = (reset_history_info->reset_history_cnt - 1 - i) % SEC_DEBUG_RESET_HISTORY_MAX_CNT;
 		offset += scnprintf((char*)(reset_history_buf + offset), SEC_DEBUG_AUTO_COMMENT_SIZE,
-				"%s\n\n\n", &reset_history_read_buf[idx * SEC_DEBUG_AUTO_COMMENT_SIZE]);
+				"%.*s\n\n\n", SEC_DEBUG_AUTO_COMMENT_SIZE,
+				&reset_history_read_buf[idx * SEC_DEBUG_AUTO_COMMENT_SIZE]);
 	}
 	reset_history_size = (offset > SEC_DEBUG_RESET_HISTORY_SIZE) ? SEC_DEBUG_RESET_HISTORY_SIZE : offset;
 

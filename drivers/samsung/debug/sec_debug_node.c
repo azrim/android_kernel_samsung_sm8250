@@ -41,6 +41,12 @@ static int sec_alloc_virtual_mem(const char *val, const struct kernel_param *kp)
 	char *str = (char *) val;
 	size_t size = (size_t)memparse(str, &str);
 
+	/* Room is required for the 'next' pointer stored below. */
+	if (size < sizeof(long)) {
+		pr_err("size too small: %s\n", val);
+		return -EINVAL;
+	}
+
 	if (size) {
 		mem = vmalloc(size);
 		if (mem) {
@@ -186,6 +192,10 @@ static int dbg_set_cpu_affinity(const char *val, const struct kernel_param *kp)
 	}
 
 	cpu = (int)memparse(++endptr, &endptr);
+	if (cpu < 0 || cpu >= nr_cpu_ids) {
+		pr_info("invalid cpu %d (nr_cpu_ids %u)\n", cpu, nr_cpu_ids);
+		return -EINVAL;
+	}
 	cpumask_clear(&mask);
 	cpumask_set_cpu(cpu, &mask);
 	pr_info("Setting %d cpu affinity to cpu%d\n", pid, cpu);
