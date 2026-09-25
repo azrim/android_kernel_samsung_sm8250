@@ -415,9 +415,40 @@ done:
 }
 
 /*
+ * Drop victims with nothing left to reclaim, releasing the task lock taken in
+ * find_victims(), and compact the survivors to the front of the array.
+ *
+ * A zero-size victim is never killed, but leaving it in place would break
+ * process_victims()'s invariant that the victims it selects occupy
+ * victims[0..nr_to_kill-1]: the two selection passes would each unlock it
+ * while a still-locked victim past the selected prefix would never be
+ * released.
+ */
+static int compact_victims(int vlen)
+{
+	int i, n = 0;
+
+	for (i = 0; i < vlen; i++) {
+		if (!victims[i].size) {
+			task_unlock(victims[i].tsk);
+			continue;
+		}
+		if (n != i)
+			victims[n] = victims[i];
+		n++;
+	}
+
+	return n;
+}
+
+/*
  * Decide which of the first @vlen victims to kill, releasing the task lock on
  * every victim spared. Stops at whichever comes first: enough pages to satisfy
  * the target, or the per-reclaim kill cap.
+ *
+ * The victims selected here always occupy victims[0..N-1]: both conditions are
+ * monotonic, and victims with nothing to reclaim have been compacted out by
+ * compact_victims() beforehand.
  */
 static int process_victims(int vlen, unsigned long target, int kill_cap)
 {
@@ -427,15 +458,7 @@ static int process_victims(int vlen, unsigned long target, int kill_cap)
 	for (i = 0; i < vlen; i++) {
 		struct victim_info *victim = &victims[i];
 
-		/*
-		 * Spare a victim with nothing left to reclaim: an mm that has
-		 * mapped but not faulted, or that just swapped everything out,
-		 * has size == 0. Killing it frees no memory but would consume
-		 * a slot from the kill cap, leaving the target unmet and
-		 * provoking another sweep in the next PSI window.
-		 */
-		if (nr_to_kill >= kill_cap || pages_found >= target ||
-		    !victim->size) {
+		if (nr_to_kill >= kill_cap || pages_found >= target) {
 			/* The victim's mm lock is taken in find_victims */
 			task_unlock(victim->tsk);
 		} else {
@@ -507,6 +530,7 @@ static bool scan_and_kill(short adj_floor)
 
 	/* Populate the victims array with tasks sorted by adj and then score */
 	pages_found = find_victims(&nr_found, target, adj_floor);
+	nr_found = compact_victims(nr_found);
 	if (unlikely(!nr_found)) {
 		stat_no_victims++;
 		pr_err_ratelimited("No processes available to kill!\n");
