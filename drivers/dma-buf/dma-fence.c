@@ -660,3 +660,39 @@ dma_fence_init(struct dma_fence *fence, const struct dma_fence_ops *ops,
 	trace_dma_fence_init(fence);
 }
 EXPORT_SYMBOL(dma_fence_init);
+
+/**
+ * DOC: deadline hints
+ *
+ * Many dma-fence producers (GPUs, display controllers) participate in
+ * periodic workloads that must complete before a vblank, otherwise the
+ * frame is dropped and the producer is idled for a whole period - the
+ * opposite of what its devfreq governor should do.  A deadline hint lets
+ * the waiter tell the signaler when it would like the fence to be
+ * signaled by, so the signaler can react (e.g. by boosting GPU
+ * frequency) instead of waiting for the next polling window.
+ *
+ * A deadline is given in absolute ktime (CLOCK_MONOTONIC for userspace
+ * facing APIs).  It is only a hint: the signaler may raise frequency,
+ * change scheduling choices, or ignore it entirely.
+ */
+
+/**
+ * dma_fence_set_deadline - set desired fence-wait deadline hint
+ * @fence:    the fence that is to be waited on
+ * @deadline: the time by which the waiter hopes for the fence to be
+ *            signaled
+ *
+ * Give the fence signaler a hint about an upcoming deadline, such as
+ * vblank, by which point the waiter would prefer the fence to be
+ * signaled by.  This is intended to give feedback to the fence signaler
+ * to aid in power management decisions, such as boosting GPU frequency
+ * if a periodic vblank deadline is approaching but the fence is not yet
+ * signaled.
+ */
+void dma_fence_set_deadline(struct dma_fence *fence, ktime_t deadline)
+{
+	if (fence->ops->set_deadline && !dma_fence_is_signaled(fence))
+		fence->ops->set_deadline(fence, deadline);
+}
+EXPORT_SYMBOL(dma_fence_set_deadline);
