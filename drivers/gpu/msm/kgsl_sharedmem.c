@@ -1716,7 +1716,13 @@ void kgsl_zero_page(struct page *p, unsigned int order)
 		void *addr = kmap_atomic(page);
 
 		memset(addr, 0, PAGE_SIZE);
-		dmac_flush_range(addr, addr + PAGE_SIZE);
+		/*
+		 * The whole page was just overwritten, so there is no stale
+		 * cache line to invalidate - a clean (writeback) is enough to
+		 * make the zeros visible to the non-coherent GPU.  Avoid the
+		 * redundant invalidate of dmac_flush_range().
+		 */
+		dmac_clean_range(addr, addr + PAGE_SIZE);
 		kunmap_atomic(addr);
 	}
 }
