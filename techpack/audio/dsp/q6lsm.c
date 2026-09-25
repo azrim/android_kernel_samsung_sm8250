@@ -648,8 +648,15 @@ static int q6lsm_set_params_v3(struct lsm_client *client,
 			       uint8_t *param_data, uint32_t param_size)
 {
 	struct lsm_session_cmd_set_params_v3 *lsm_set_param = NULL;
-	uint16_t pkt_size = 0;
+	uint32_t pkt_size = 0;
 	int ret = 0;
+
+	/* param_size is a u32 supplied by userspace. Keep pkt_size 32-bit and
+	 * reject values that would wrap the packet length; the previous u16
+	 * truncation under-allocated the buffer and overflowed on memcpy().
+	 */
+	if (param_size > UINT_MAX - sizeof(struct lsm_session_cmd_set_params_v3))
+		return -EINVAL;
 
 	pkt_size = sizeof(struct lsm_session_cmd_set_params_v3);
 	/* Only include param size in packet size when inband */
