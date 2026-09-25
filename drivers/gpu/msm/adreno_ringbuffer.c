@@ -835,23 +835,22 @@ static void adreno_ringbuffer_set_constraint(struct kgsl_device *device,
 						context->id);
 
 	/*
-	 * Frame-latency heuristic.  Raise the GPU to its highest allowed
-	 * level on every command submission instead of waiting for the
-	 * devfreq governor's next polling window, so the frame's work is more
-	 * likely to finish before the next vblank.  The userspace
-	 * KGSL_DRAWOBJ_END_OF_FRAME flag is only set on some frames, so
-	 * keying off it alone leaves most frames unboosted.  The vote
-	 * self-expires after pwrctrl.interval_timeout (so an idle GPU is not
-	 * pinned) and is still bounded by the thermal/user pwrlevel limits.
+	 * Frame-deadline heuristic.  The userspace driver marks the last
+	 * command batch of a frame with KGSL_DRAWOBJ_END_OF_FRAME.  When that
+	 * batch is submitted, raise the GPU to its highest allowed level
+	 * right away instead of waiting for the devfreq governor's next
+	 * polling window, so the frame's work is more likely to finish before
+	 * the next vblank.  The vote self-expires after
+	 * pwrctrl.interval_timeout, so an idle GPU is not pinned.
 	 */
-	if (device->frame_boost) {
-		struct kgsl_pwr_constraint boost = {
+	if ((drawobj->flags & KGSL_DRAWOBJ_END_OF_FRAME) && device->eof_boost) {
+		struct kgsl_pwr_constraint eof = {
 			.type = KGSL_CONSTRAINT_PWRLEVEL,
 			.sub_type = KGSL_CONSTRAINT_PWR_MAX,
 		};
 
-		kgsl_pwrctrl_set_constraint(device, &boost, context->id);
-		atomic_inc(&device->frame_boost_count);
+		kgsl_pwrctrl_set_constraint(device, &eof, context->id);
+		atomic_inc(&device->eof_boost_count);
 	}
 
 	if (context->l3_pwr_constraint.type &&

@@ -1164,15 +1164,15 @@ static ssize_t reset_count_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%d\n", device->reset_counter);
 }
 
-static ssize_t frame_boost_show(struct device *dev,
+static ssize_t eof_boost_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
 	struct kgsl_device *device = dev_get_drvdata(dev);
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n", device->frame_boost ? 1 : 0);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", device->eof_boost ? 1 : 0);
 }
 
-static ssize_t frame_boost_store(struct device *dev,
+static ssize_t eof_boost_store(struct device *dev,
 				struct device_attribute *attr,
 				const char *buf, size_t count)
 {
@@ -1182,17 +1182,17 @@ static ssize_t frame_boost_store(struct device *dev,
 	if (kstrtouint(buf, 0, &val))
 		return -EINVAL;
 
-	device->frame_boost = (val != 0);
+	device->eof_boost = (val != 0);
 	return count;
 }
 
-static ssize_t frame_boost_count_show(struct device *dev,
+static ssize_t eof_boost_count_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
 	struct kgsl_device *device = dev_get_drvdata(dev);
 
 	return scnprintf(buf, PAGE_SIZE, "%d\n",
-			atomic_read(&device->frame_boost_count));
+			atomic_read(&device->eof_boost_count));
 }
 
 static void __force_on(struct kgsl_device *device, int flag, int on)
@@ -1529,8 +1529,8 @@ static DEVICE_ATTR_RW(thermal_pwrlevel);
 static DEVICE_ATTR_RO(num_pwrlevels);
 static DEVICE_ATTR_RW(pmqos_active_latency);
 static DEVICE_ATTR_RO(reset_count);
-static DEVICE_ATTR_RW(frame_boost);
-static DEVICE_ATTR_RO(frame_boost_count);
+static DEVICE_ATTR_RW(eof_boost);
+static DEVICE_ATTR_RO(eof_boost_count);
 static DEVICE_ATTR_RW(force_clk_on);
 static DEVICE_ATTR_RW(force_bus_on);
 static DEVICE_ATTR_RW(force_rail_on);
@@ -1557,8 +1557,8 @@ static const struct attribute *pwrctrl_attr_list[] = {
 	&dev_attr_num_pwrlevels.attr,
 	&dev_attr_pmqos_active_latency.attr,
 	&dev_attr_reset_count.attr,
-	&dev_attr_frame_boost.attr,
-	&dev_attr_frame_boost_count.attr,
+	&dev_attr_eof_boost.attr,
+	&dev_attr_eof_boost_count.attr,
 	&dev_attr_force_clk_on.attr,
 	&dev_attr_force_bus_on.attr,
 	&dev_attr_force_rail_on.attr,
@@ -2199,8 +2199,8 @@ int kgsl_pwrctrl_init(struct kgsl_device *device)
 	if (bus_scale_table == NULL)
 		return -EINVAL;
 
-	/* Frame-latency heuristic is on by default; see frame_boost sysfs */
-	device->frame_boost = true;
+	/* Frame-deadline heuristic is on by default; see eof_boost sysfs */
+	device->eof_boost = true;
 
 	result = _get_clocks(device);
 	if (result)
