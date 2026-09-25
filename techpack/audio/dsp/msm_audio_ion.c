@@ -569,13 +569,13 @@ int msm_audio_ion_mmap(struct audio_buffer *abuff,
 			break;
 		}
 	}
-	mutex_unlock(&(msm_audio_ion_data.list_mutex));
 
 	if (!found) {
 		dev_err(cb_dev,
 			"%s: cannot find allocation, dma_buf %pK",
 			__func__, abuff->dma_buf);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto unlock;
 	}
 	/* uncached */
 	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
@@ -612,13 +612,18 @@ int msm_audio_ion_mmap(struct audio_buffer *abuff,
 					vma->vm_page_prot);
 			addr += len;
 			if (addr >= vma->vm_end)
-				return 0;
+				break;
 		}
 	} else {
 		pr_debug("%s: page is NULL\n", __func__);
 		ret = -EINVAL;
 	}
 
+unlock:
+	/* Keep the list lock across the sg walk: alloc_data/table can be freed
+	 * concurrently by msm_audio_ion_free().
+	 */
+	mutex_unlock(&(msm_audio_ion_data.list_mutex));
 	return ret;
 }
 EXPORT_SYMBOL(msm_audio_ion_mmap);
