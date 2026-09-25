@@ -367,12 +367,17 @@ static ssize_t cnss_utils_mac_write(struct file *fp,
 		return -EINVAL;
 	}
 
-	while (len--) {
+	/* Each iteration consumes two hex characters and stores one byte;
+	 * decrement len by two so we never write past the destination
+	 * mac_addr[MAX_NO_OF_MAC_ADDR][ETH_ALEN].
+	 */
+	while (len) {
 		temp[0] = *mac_address++;
 		temp[1] = *mac_address++;
 		if (kstrtou8(temp, 16, &val))
 			return -EINVAL;
 		*dest_mac++ = val;
+		len -= 2;
 	}
 	return count;
 }
