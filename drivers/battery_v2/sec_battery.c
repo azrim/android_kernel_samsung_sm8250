@@ -1962,7 +1962,7 @@ int sec_bat_set_charging_current(struct sec_battery_info *battery)
 	}
 
 #if defined(CONFIG_DIRECT_CHARGING)
-	if (battery->dc_float_voltage_set) {
+	if (battery->dc_float_voltage_set && battery->step_charging_status >= 0) {
 		pr_info("%s : step float voltage = %d \n", __func__,
 			battery->pdata->dc_step_chg_val_vfloat[battery->pdata->age_step][battery->step_charging_status]);
 		value.intval = battery->pdata->dc_step_chg_val_vfloat[battery->pdata->age_step][battery->step_charging_status];

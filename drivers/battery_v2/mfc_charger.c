@@ -1303,7 +1303,7 @@ static int mfc_auth_adt_write(struct mfc_charger_data *charger, u8 *srcData, int
 	u8 wdata = 0;
 	u8 sBuf[144] = {0,};
 	int ret;
-	u8 i;
+	int i;
 
 	pr_info("%s %s : start to write ADT\n", WC_AUTH_MSG, __func__);
 

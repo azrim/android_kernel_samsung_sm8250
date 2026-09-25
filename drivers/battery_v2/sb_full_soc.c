@@ -340,7 +340,7 @@ static ssize_t sb_full_soc_store_attrs(struct device *dev,
 		if (n > 0) {
 			char cap_event[MAX_CAP_EVENT_STR] = { 0, };
 
-			if (sscanf(buf + n, "%s\n", cap_event) > 0)
+			if (sscanf(buf + n, "%15s", cap_event) > 0)
 				full_cap_event = conv_full_cap_event_value(cap_event);
 		}
 

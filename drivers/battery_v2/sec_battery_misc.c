@@ -144,8 +144,10 @@ sec_bat_misc_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			goto err;
 		}
 		buf = kzalloc(MAX_BUF, GFP_KERNEL);
-		if (!buf)
-			return -EINVAL;
+		if (!buf) {
+			ret = -ENOMEM;
+			goto err;
+		}
 		if (c_dev->u_data.size > MAX_BUF) {
 			ret = -ENOMEM;
 			pr_err("%s %s - user data size is %d error\n", WC_AUTH_MSG, __func__, c_dev->u_data.size);
