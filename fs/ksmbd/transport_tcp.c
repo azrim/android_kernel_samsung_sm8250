@@ -248,7 +248,7 @@ static int ksmbd_tcp_new_connection(struct socket *client_sk)
 	return rc;
 
 out_error:
-	free_transport(t);
+	ksmbd_tcp_disconnect(KSMBD_TRANS(t));
 	return rc;
 }
 

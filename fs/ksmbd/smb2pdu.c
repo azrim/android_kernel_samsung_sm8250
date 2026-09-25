@@ -68,10 +68,15 @@ const char *get_extract(const char *name)
  */
 const char *get_last_three_chars(const char *name)
 {
-	int len = strlen(name);
+	int len;
+
+	if (!name)
+		return "";
+
+	len = strlen(name);
 
 	if (len <= 3)
-		return &name[len];
+		return name;
 
 	return &name[len-3];
 }
