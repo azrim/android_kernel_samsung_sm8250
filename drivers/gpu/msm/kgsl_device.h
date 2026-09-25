@@ -289,13 +289,13 @@ struct kgsl_device {
 	int reset_counter; /* Track how many GPU core resets have occurred */
 
 	/*
-	 * Frame-deadline heuristic: boost the GPU to its highest allowed
-	 * level on an end-of-frame submission so the frame does not wait for
-	 * the devfreq governor to ramp up.  eof_boost_count counts the
+	 * Frame-latency heuristic: boost the GPU to its highest allowed
+	 * level on every command submission so a frame does not wait for the
+	 * devfreq governor to ramp up.  frame_boost_count counts the
 	 * submissions the heuristic acted on (for observability).
 	 */
-	bool eof_boost;
-	atomic_t eof_boost_count;
+	bool frame_boost;
+	atomic_t frame_boost_count;
 
 	struct kthread_worker *events_worker;
 
