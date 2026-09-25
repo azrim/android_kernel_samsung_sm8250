@@ -137,7 +137,7 @@ static int spi_configure_type(irq_hw_number_t hwirq, unsigned int type)
 	unsigned int val;
 	unsigned long flags;
 
-	if (pin * 4 > pdc_cfg_size)
+	if (pin * 4 >= pdc_cfg_size)
 		return -EFAULT;
 
 	raw_spin_lock_irqsave(&pdc_lock, flags);
