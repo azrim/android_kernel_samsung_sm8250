@@ -66,7 +66,7 @@ void trigger_input_booster(struct work_struct* work)
 	if (p_IbTrigger->event_type == BOOSTER_ON) {
 
 		if (find_release_ib(p_IbTrigger->dev_type, p_IbTrigger->key_id) != NULL) {
-			pr_err(ITAG" IB Trigger :: ib already exist. Key(%d)", p_IbTrigger->key_id);
+			pr_booster(ITAG" IB Trigger :: ib already exist. Key(%d)", p_IbTrigger->key_id);
 			mutex_unlock(&trigger_ib_lock);
 			return;
 		}
@@ -499,7 +499,7 @@ void remove_ib_instance(struct t_ib_info *target_ib)
 		list_del_rcu(&(target_ib->list));
 		spin_unlock(&write_ib_lock);
 		synchronize_rcu();
-		pr_info(ITAG" Del Ib Instance's Id : %d", target_ib->uniq_id);
+		pr_booster(ITAG" Del Ib Instance's Id : %d", target_ib->uniq_id);
 		kfree(target_ib);
 	}
 }
