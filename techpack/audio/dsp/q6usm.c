@@ -26,11 +26,12 @@
 /* Standard timeout in the asynchronous ops */
 #define Q6USM_TIMEOUT_JIFFIES	(1*HZ) /* 1 sec */
 
-static DEFINE_MUTEX(session_lock);
+static DEFINE_SPINLOCK(session_lock);
 
 static struct us_client *session[USM_SESSION_MAX];
 static int32_t q6usm_mmapcallback(struct apr_client_data *data, void *priv);
 static int32_t q6usm_callback(struct apr_client_data *data, void *priv);
+static int32_t q6usm_callback_inner(struct apr_client_data *data, void *priv);
 static void q6usm_add_hdr(struct us_client *usc, struct apr_hdr *hdr,
 			  uint32_t pkt_size, bool cmd_flg);
 
@@ -145,19 +146,20 @@ fail_cmd:
 static int q6usm_session_alloc(struct us_client *usc)
 {
 	int ind = 0;
+	unsigned long flags;
 
-	mutex_lock(&session_lock);
+	spin_lock_irqsave(&session_lock, flags);
 	for (ind = 0; ind < USM_SESSION_MAX; ++ind) {
 		if (!session[ind]) {
 			session[ind] = usc;
-			mutex_unlock(&session_lock);
+			spin_unlock_irqrestore(&session_lock, flags);
 			++ind; /* session id: 0 reserved */
 			pr_debug("%s: session[%d] was allocated\n",
 				  __func__, ind);
 			return ind;
 		}
 	}
-	mutex_unlock(&session_lock);
+	spin_unlock_irqrestore(&session_lock, flags);
 	return -ENOMEM;
 }
 
@@ -165,12 +167,13 @@ static void q6usm_session_free(struct us_client *usc)
 {
 	/* Session index was incremented during allocation */
 	uint16_t ind = (uint16_t)usc->session - 1;
+	unsigned long flags;
 
 	pr_debug("%s: to free session[%d]\n", __func__, ind);
 	if (ind < USM_SESSION_MAX) {
-		mutex_lock(&session_lock);
+		spin_lock_irqsave(&session_lock, flags);
 		session[ind] = NULL;
-		mutex_unlock(&session_lock);
+		spin_unlock_irqrestore(&session_lock, flags);
 	}
 }
 
@@ -542,7 +545,7 @@ static int32_t q6usm_mmapcallback(struct apr_client_data *data, void *priv)
 }
 
 
-static int32_t q6usm_callback(struct apr_client_data *data, void *priv)
+static int32_t q6usm_callback_inner(struct apr_client_data *data, void *priv)
 {
 	struct us_client *usc = (struct us_client *)priv;
 	unsigned long dsp_flags;
@@ -719,6 +722,47 @@ static int32_t q6usm_callback(struct apr_client_data *data, void *priv)
 			data->payload, usc->priv);
 
 	return 0;
+}
+
+static bool q6usm_is_valid_us_client(struct us_client *usc)
+{
+	int n;
+
+	for (n = 0; n < USM_SESSION_MAX; n++) {
+		if (session[n] == usc)
+			return true;
+	}
+	return false;
+}
+
+/*
+ * APR keeps the (callback, priv) pair for a service port until the whole
+ * service is deregistered, so a straggling DSP response can still be
+ * delivered to a us_client that q6usm_us_client_free() has already freed.
+ * Validate the client against session[] under session_lock (which the free
+ * path also takes) and keep the lock held while the client is used, so the
+ * callback can never touch freed memory.
+ */
+static int32_t q6usm_callback(struct apr_client_data *data, void *priv)
+{
+	struct us_client *usc = (struct us_client *)priv;
+	unsigned long flags;
+	int32_t rc;
+
+	if (!usc || !data)
+		return -EINVAL;
+
+	spin_lock_irqsave(&session_lock, flags);
+	if (!q6usm_is_valid_us_client(usc)) {
+		spin_unlock_irqrestore(&session_lock, flags);
+		pr_err_ratelimited("%s: client already freed/invalid\n",
+				   __func__);
+		return -EINVAL;
+	}
+	rc = q6usm_callback_inner(data, usc);
+	spin_unlock_irqrestore(&session_lock, flags);
+
+	return rc;
 }
 
 uint32_t q6usm_get_virtual_address(int dir,
