@@ -253,6 +253,13 @@ static void qcom_smp2p_notify_in(struct qcom_smp2p *smp2p)
 	u32 val;
 	int i;
 
+	/* Reject a remote that advertises more entries than the array holds. */
+	if (in->valid_entries > SMP2P_MAX_ENTRY) {
+		dev_err(smp2p->dev, "invalid valid_entries %u\n",
+			in->valid_entries);
+		return;
+	}
+
 	/* Match newly created entries */
 	for (i = smp2p->valid_entries; i < in->valid_entries; i++) {
 		list_for_each_entry(entry, &smp2p->inbound, node) {

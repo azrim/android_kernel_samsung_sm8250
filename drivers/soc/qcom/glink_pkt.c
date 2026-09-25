@@ -667,7 +667,7 @@ static void glink_pkt_release_device(struct device *dev)
 
 	ida_simple_remove(&glink_pkt_minor_ida, MINOR(gpdev->dev.devt));
 	cdev_del(&gpdev->cdev);
-	kfree(gpdev);
+	/* gpdev is devm-allocated; devres frees it at parent teardown. */
 }
 
 static int glink_pkt_init_rpmsg(struct glink_pkt_device *gpdev)
@@ -779,12 +779,18 @@ static int glink_pkt_create_device(struct device *parent,
 	return 0;
 
 free_minor_ida:
-	ida_simple_remove(&glink_pkt_minor_ida, MINOR(dev->devt));
+	if (!dev->release)
+		ida_simple_remove(&glink_pkt_minor_ida, MINOR(dev->devt));
 free_dev:
-	put_device(dev);
+	/*
+	 * Once dev->release is set, put_device() runs glink_pkt_release_device()
+	 * which does the ida/cdev cleanup. gpdev itself is devm-managed, so it
+	 * must never be kfree()'d here (that double-freed against devres).
+	 */
+	if (dev->release)
+		put_device(dev);
+	return ret;
 free_gpdev:
-	kfree(gpdev);
-
 	return ret;
 }
 

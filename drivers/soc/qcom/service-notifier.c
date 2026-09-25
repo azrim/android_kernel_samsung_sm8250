@@ -641,6 +641,7 @@ int service_notif_pd_restart(const char *service_path, int instance_id)
 	struct qmi_client_info *tmp;
 	int rc = 0;
 
+	mutex_lock(&qmi_list_lock);
 	list_for_each_entry(tmp, &qmi_client_list, list) {
 		if (tmp->instance_id == instance_id && !strcmp
 				(tmp->service_path, service_path)) {
@@ -653,6 +654,7 @@ int service_notif_pd_restart(const char *service_path, int instance_id)
 							service_path);
 		}
 	}
+	mutex_unlock(&qmi_list_lock);
 	return rc;
 }
 EXPORT_SYMBOL(service_notif_pd_restart);
