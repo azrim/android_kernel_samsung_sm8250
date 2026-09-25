@@ -2540,13 +2540,23 @@ static ssize_t store_mac_addr(struct kobject *kobj,
 			    const char *buf,
 			    size_t count)
 {
-	sscanf(buf, "%02X:%02X:%02X:%02X:%02X:%02X",
-		(const u8*)&mac_from_macloader[0],
-		(const u8*)&mac_from_macloader[1],
-		(const u8*)&mac_from_macloader[2],
-		(const u8*)&mac_from_macloader[3],
-		(const u8*)&mac_from_macloader[4],
-		(const u8*)&mac_from_macloader[5]);
+	unsigned int mac[MAC_ADDR_SIZE];
+	int i;
+
+	/* Each %X conversion stores an unsigned int, so parsing straight into
+	 * the byte-wide mac_from_macloader[] slots made every conversion write
+	 * four bytes into a one-byte array entry, clobbering the adjacent
+	 * pm/ant globals. Parse into u32 temporaries and narrow to bytes.
+	 */
+	if (sscanf(buf, "%02X:%02X:%02X:%02X:%02X:%02X",
+		   &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) !=
+	    MAC_ADDR_SIZE) {
+		cnss_pr_err("Invalid MAC address format\n");
+		return -EINVAL;
+	}
+
+	for (i = 0; i < MAC_ADDR_SIZE; i++)
+		mac_from_macloader[i] = mac[i] & 0xFF;
 
 	cnss_pr_info("Assigning MAC from Macloader %02x:%02x:%02x:%02x:%02x:%02x\n",
 		mac_from_macloader[0], mac_from_macloader[1],mac_from_macloader[2],
