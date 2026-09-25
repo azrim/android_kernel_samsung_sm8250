@@ -3055,8 +3055,8 @@ static void cnss_pci_pm_runtime_get_record(struct cnss_pci_data *pci_priv,
 
 	atomic_inc(&pci_priv->pm_stats.runtime_get);
 	atomic_inc(&pci_priv->pm_stats.runtime_get_id[id]);
-	pci_priv->pm_stats.runtime_get_timestamp_id[id] =
-		cnss_get_host_timestamp(pci_priv->plat_priv);
+	WRITE_ONCE(pci_priv->pm_stats.runtime_get_timestamp_id[id],
+		   cnss_get_host_timestamp(pci_priv->plat_priv));
 }
 
 static void cnss_pci_pm_runtime_put_record(struct cnss_pci_data *pci_priv,
@@ -3067,8 +3067,8 @@ static void cnss_pci_pm_runtime_put_record(struct cnss_pci_data *pci_priv,
 
 	atomic_inc(&pci_priv->pm_stats.runtime_put);
 	atomic_inc(&pci_priv->pm_stats.runtime_put_id[id]);
-	pci_priv->pm_stats.runtime_put_timestamp_id[id] =
-		cnss_get_host_timestamp(pci_priv->plat_priv);
+	WRITE_ONCE(pci_priv->pm_stats.runtime_put_timestamp_id[id],
+		   cnss_get_host_timestamp(pci_priv->plat_priv));
 }
 
 void cnss_pci_pm_runtime_show_usage_count(struct cnss_pci_data *pci_priv)

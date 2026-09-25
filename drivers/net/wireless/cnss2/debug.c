@@ -587,9 +587,9 @@ static int cnss_runtime_pm_debug_show(struct seq_file *s, void *data)
 		seq_printf(s, "%-10d",
 			   atomic_read(&pci_priv->pm_stats.runtime_put_id[i]));
 		seq_printf(s, "%-15llu",
-			   pci_priv->pm_stats.runtime_get_timestamp_id[i]);
+			   READ_ONCE(pci_priv->pm_stats.runtime_get_timestamp_id[i]));
 		seq_printf(s, "%-15llu\n",
-			   pci_priv->pm_stats.runtime_put_timestamp_id[i]);
+			   READ_ONCE(pci_priv->pm_stats.runtime_put_timestamp_id[i]));
 	}
 
 	return 0;
