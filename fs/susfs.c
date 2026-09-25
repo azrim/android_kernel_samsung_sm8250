@@ -90,6 +90,7 @@ int susfs_add_sus_path(struct st_susfs_sus_path* __user user_info) {
 		SUSFS_LOGE("failed copying from userspace\n");
 		return 1;
 	}
+	info.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
 
 	spin_lock(&susfs_spin_lock);
 	hash_for_each_safe(SUS_PATH_HLIST, bkt, tmp_node, tmp_entry, node) {
@@ -110,6 +111,7 @@ int susfs_add_sus_path(struct st_susfs_sus_path* __user user_info) {
 
 	new_entry->target_ino = info.target_ino;
 	strncpy(new_entry->target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME-1);
+	new_entry->target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
 	if (susfs_update_sus_path_inode(new_entry->target_pathname)) {
 		kfree(new_entry);
 		return 1;
@@ -195,6 +197,7 @@ int susfs_add_sus_mount(struct st_susfs_sus_mount* __user user_info) {
 		SUSFS_LOGE("failed copying from userspace\n");
 		return 1;
 	}
+	info.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
 
 #if defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64)
 #ifdef CONFIG_MIPS
@@ -358,6 +361,7 @@ int susfs_add_sus_kstat(struct st_susfs_sus_kstat* __user user_info) {
 		SUSFS_LOGE("failed copying from userspace\n");
 		return 1;
 	}
+	info.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
 
 	if (strlen(info.target_pathname) == 0) {
 		SUSFS_LOGE("target_pathname is an empty string\n");
@@ -570,6 +574,7 @@ int susfs_add_try_umount(struct st_susfs_try_umount* __user user_info) {
 		SUSFS_LOGE("failed copying from userspace\n");
 		return 1;
 	}
+	info.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
 
 	list_for_each_entry_safe(cursor, temp, &LH_TRY_UMOUNT_PATH, list) {
 		if (unlikely(!strcmp(info.target_pathname, cursor->info.target_pathname))) {
@@ -666,10 +671,12 @@ void susfs_auto_add_try_umount_for_bind_mount(struct path *path) {
 #ifdef CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT
 	if (is_magic_mount_path) {
 		strncpy(new_list->info.target_pathname, dpath + strlen(MAGIC_MOUNT_WORKDIR), SUSFS_MAX_LEN_PATHNAME-1);
+		new_list->info.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
 		goto out_add_to_list;
 	}
 #endif
 	strncpy(new_list->info.target_pathname, dpath, SUSFS_MAX_LEN_PATHNAME-1);
+	new_list->info.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
 
 #ifdef CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT
 out_add_to_list:
@@ -704,6 +711,8 @@ int susfs_set_uname(struct st_susfs_uname* __user user_info) {
 		SUSFS_LOGE("failed copying from userspace.\n");
 		return 1;
 	}
+	info.release[__NEW_UTS_LEN] = '\0';
+	info.version[__NEW_UTS_LEN] = '\0';
 
 	spin_lock(&susfs_uname_spin_lock);
 	if (!strcmp(info.release, "default")) {
@@ -827,6 +836,8 @@ int susfs_add_open_redirect(struct st_susfs_open_redirect* __user user_info) {
 		SUSFS_LOGE("failed copying from userspace\n");
 		return 1;
 	}
+	info.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
+	info.redirected_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
 
 	spin_lock(&susfs_spin_lock);
 	hash_for_each_safe(OPEN_REDIRECT_HLIST, bkt, tmp_node, tmp_entry, node) {
@@ -847,7 +858,9 @@ int susfs_add_open_redirect(struct st_susfs_open_redirect* __user user_info) {
 
 	new_entry->target_ino = info.target_ino;
 	strncpy(new_entry->target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME-1);
+	new_entry->target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
 	strncpy(new_entry->redirected_pathname, info.redirected_pathname, SUSFS_MAX_LEN_PATHNAME-1);
+	new_entry->redirected_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
 	if (susfs_update_open_redirect_inode(new_entry)) {
 		SUSFS_LOGE("failed adding path '%s' to OPEN_REDIRECT_HLIST\n", new_entry->target_pathname);
 		kfree(new_entry);
