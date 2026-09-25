@@ -695,9 +695,19 @@ static int msm_lsm_reg_model(struct snd_pcm_substream *substream,
 	int rc = 0;
 	struct lsm_sound_model *sm = NULL;
 	size_t offset = sizeof(union param_hdrs);
+	size_t alloc_len = p_info->param_size;
 
-	rc = q6lsm_snd_model_buf_alloc(prtd->lsm_client,
-				       p_info->param_size, p_info);
+	/*
+	 * q6lsm_snd_model_buf_alloc() only reserves room for the set_param
+	 * header when param_id != 0, but this path always packs a header via
+	 * q6lsm_sm_set_param_data(). Account for the header explicitly so the
+	 * ION buffer can never be under-allocated (param_id may legitimately
+	 * be 0, which previously led to an out-of-bounds write below).
+	 */
+	if (p_info->param_id == 0)
+		alloc_len += sizeof(union param_hdrs);
+
+	rc = q6lsm_snd_model_buf_alloc(prtd->lsm_client, alloc_len, p_info);
 	if (rc) {
 		dev_err(rtd->dev,
 			"%s: snd_model buf alloc failed, size = %d\n",
