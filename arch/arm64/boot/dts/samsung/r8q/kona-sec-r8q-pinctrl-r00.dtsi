@@ -15,9 +15,6 @@
 #include "../drivers/kona-sec-r8q-camera-sensor-pinctrl-r00.dtsi"
 
 &tlmm {
-	pinctrl-names = "default";
-	pinctrl-0 = <&storage_cd>;
-
 	cnss_pins {
         	qca6390_wlan_en_active: qca6390_wlan_en_active {
                 	mux {
