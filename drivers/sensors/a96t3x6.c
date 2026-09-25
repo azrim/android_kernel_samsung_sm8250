@@ -2264,6 +2264,11 @@ static int a96t3x6_load_fw_kernel(struct a96t3x6_data *data)
 		return ret;
 	}
 	data->firm_size = data->firm_data_bin->size;
+	/* The header bytes read below (data[1],[5],[8],[9]) require >= 10 bytes. */
+	if (data->firm_size < 10) {
+		GRIP_ERR("firmware too small: %ld\n", data->firm_size);
+		return -EINVAL;
+	}
 	data->fw_ver_bin = data->firm_data_bin->data[5];
 	data->md_ver_bin = data->firm_data_bin->data[1];
 	GRIP_INFO("fw = 0x%x, md = 0x%x\n", data->fw_ver_bin, data->md_ver_bin);
@@ -2309,6 +2314,12 @@ static int a96t3x6_load_fw(struct a96t3x6_data *data, u8 cmd)
 			(char __user *)data->firm_data_ums, fsize, &fp->f_pos);
 		if (nread != fsize) {
 			GRIP_ERR("fail to vfs_read file\n");
+			ret = -EINVAL;
+			goto fail_sdcard_size;
+		}
+		/* Need at least the header bytes (firm_data_ums[8],[9]). */
+		if (fsize < 10) {
+			GRIP_ERR("sdcard firmware too small: %ld\n", fsize);
 			ret = -EINVAL;
 			goto fail_sdcard_size;
 		}
@@ -3867,7 +3878,7 @@ static int a96t3x6_remove(struct i2c_client *client)
 	sensors_remove_symlink(&data->noti_input_dev->dev.kobj,
 				data->noti_input_dev->name);
 	input_unregister_device(data->noti_input_dev);
-	input_free_device(data->input_dev);
+	input_free_device(data->noti_input_dev);
 	sysfs_remove_group(&data->input_dev->dev.kobj,
 				&a96t3x6_attribute_group);
 	sensors_remove_symlink(&data->input_dev->dev.kobj,
