@@ -358,7 +358,7 @@ static int a96t3x6_set_enable(struct a96t3x6_data *data, int enable)
 static void a96t3x6_sar_only_mode(struct a96t3x6_data *data, int on)
 {
 #ifdef CONFIG_SENSORS_A96T3X6_BLOCK_SAR_ONLY
-	GRIP_INFO("No action with sar only mode");
+	pr_debug("No action with sar only mode\n");
 #else
 	int ret;
 	u8 cmd;
@@ -1090,7 +1090,7 @@ static void a96t3x6_debug_work_func(struct work_struct *work)
 static void a96t3x6_set_debug_work(struct a96t3x6_data *data, u8 enable,
 	unsigned int time_ms)
 {
-	GRIP_INFO("enable = %d\n", enable);
+	pr_debug("enable = %d\n", enable);
 	
 	if (enable == 1) {
 		data->debug_count = 0;
@@ -3897,7 +3897,7 @@ static int a96t3x6_suspend(struct device *dev)
 	struct a96t3x6_data *data = dev_get_drvdata(dev);
 
 	data->resume_called = false;
-	GRIP_INFO("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 	a96t3x6_sar_only_mode(data, 1);
 	a96t3x6_set_debug_work(data, 0, 1000);
 
@@ -3908,7 +3908,7 @@ static int a96t3x6_resume(struct device *dev)
 {
 	struct a96t3x6_data *data = dev_get_drvdata(dev);
 
-	GRIP_INFO("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 	data->resume_called = true;
 	a96t3x6_set_debug_work(data, 1, 0);
 
