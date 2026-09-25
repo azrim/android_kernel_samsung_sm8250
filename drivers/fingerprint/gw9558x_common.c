@@ -338,7 +338,7 @@ static void gw9558_work_func_debug(struct work_struct *work)
 	if (gf_dev->reset_gpio)
 		rst_value = gpio_get_value(gf_dev->reset_gpio);
 
-	pr_info("ldo: %d, sleep: %d, tz: %d type: %s\n",
+	pr_debug("ldo: %d, sleep: %d, tz: %d type: %s\n",
 		gf_dev->ldo_onoff, rst_value, gf_dev->tz_mode,
 		gf_dev->sensortype > 0 ? gf_dev->chipid : sensor_status[gf_dev->sensortype + 2]);
 }
@@ -903,7 +903,7 @@ static int gw9558_pm_suspend(struct device *dev)
 {
 	struct gf_device *gf_dev = dev_get_drvdata(dev);
 
-	pr_info("Entry\n");
+	pr_debug("Entry\n");
 	disable_fp_debug_timer(gf_dev->logger);
 	return 0;
 }
@@ -912,7 +912,7 @@ static int gw9558_pm_resume(struct device *dev)
 {
 	struct gf_device *gf_dev = dev_get_drvdata(dev);
 
-	pr_info("Entry\n");
+	pr_debug("Entry\n");
 	enable_fp_debug_timer(gf_dev->logger);
 	return 0;
 }
