@@ -27,6 +27,7 @@
 
 struct cass_cpu_cand {
 	int cpu;
+	unsigned int nr_running;
 	unsigned int exit_lat;
 	unsigned long cap;
 	unsigned long cap_max;
@@ -136,6 +137,18 @@ bool cass_cpu_better(const struct cass_cpu_cand *a,
 		goto done;
 
 	/*
+	 * Prefer the CPU with the shorter runqueue. Utilization alone is a
+	 * poor proxy for wakeup latency: a CPU can sit at low utilization
+	 * while carrying a deep queue of short tasks (common on the little
+	 * cluster during UI-heavy workloads), so a wakeup placed there waits
+	 * behind that backlog for many milliseconds. Comparing runqueue depth
+	 * keeps latency-sensitive wakeups off such CPUs while the capacity
+	 * and utilization criteria below still handle the general case.
+	 */
+	if (cass_cmp(b->nr_running, a->nr_running))
+		goto done;
+
+	/*
 	 * Prefer the CPU with lower original capacity when both are lightly
 	 * loaded: smaller CPUs are more energy-efficient, and keeping light
 	 * work off big/prime saves power.
@@ -237,6 +250,14 @@ static int cass_best_cpu(struct task_struct *p, int prev_cpu, bool sync, bool rt
 		 */
 		curr->cap_max = curr->cap_orig - thermal_load_avg(rq);
 		curr->cap_max = max(curr->cap_max, 1UL);
+
+		/*
+		 * Snapshot the runqueue depth. This is read racily like the
+		 * utilization below: it only steers a heuristic comparison, and
+		 * a stale value just yields a marginally different but still
+		 * valid placement.
+		 */
+		curr->nr_running = READ_ONCE(rq->nr_running);
 
 		/* Prefer the CPU that more closely meets the uclamp minimum */
 		if (curr->cap_max < uc_min && curr->cap_max < best->cap_max)
