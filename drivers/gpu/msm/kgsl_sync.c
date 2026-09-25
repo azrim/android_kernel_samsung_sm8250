@@ -83,6 +83,47 @@ bool kgsl_enable_signaling(struct dma_fence *fence)
 	return !kgsl_sync_fence_has_signaled(fence);
 }
 
+/*
+ * Deadline hint support.  Userspace (SurfaceFlinger) can attach a frame
+ * deadline to a KGSL output fence with SYNC_IOC_SET_DEADLINE.  When a
+ * deadline is set on a fence that has not signaled yet, immediately raise
+ * the GPU frequency vote to the maximum rather than waiting for the next
+ * devfreq polling window.  The vote self-expires after
+ * pwrctrl.interval_timeout (see kgsl_pwrctrl_set_constraint()).
+ *
+ * dma_fence_ops.set_deadline may in principle be called from any context,
+ * but in this tree the only caller is the SYNC_IOC_SET_DEADLINE ioctl
+ * (process context), so taking the sleepable device mutex here is safe.
+ */
+static void kgsl_sync_fence_set_deadline(struct dma_fence *fence,
+		ktime_t deadline)
+{
+	struct kgsl_sync_fence *kfence = (struct kgsl_sync_fence *)fence;
+	struct kgsl_sync_timeline *ktimeline = kfence->parent;
+	struct kgsl_pwr_constraint pwrc = {
+		.type = KGSL_CONSTRAINT_PWRLEVEL,
+		.sub_type = KGSL_CONSTRAINT_PWR_MAX,
+	};
+	struct kgsl_device *device;
+
+	/* KTIME_MAX means "no deadline" - nothing to boost for */
+	if (deadline == KTIME_MAX)
+		return;
+
+	if (!kref_get_unless_zero(&ktimeline->kref))
+		return;
+
+	device = ktimeline->device;
+	if (device) {
+		mutex_lock(&device->mutex);
+		kgsl_pwrctrl_set_constraint(device, &pwrc,
+						kfence->context_id);
+		mutex_unlock(&device->mutex);
+	}
+
+	kgsl_sync_timeline_put(ktimeline);
+}
+
 struct kgsl_sync_fence_event_priv {
 	struct kgsl_context *context;
 	unsigned int timestamp;
@@ -407,6 +448,7 @@ static const struct dma_fence_ops kgsl_sync_fence_ops = {
 
 	.fence_value_str = kgsl_sync_fence_value_str,
 	.timeline_value_str = kgsl_sync_timeline_value_str,
+	.set_deadline = kgsl_sync_fence_set_deadline,
 };
 
 static void kgsl_sync_fence_callback(struct dma_fence *fence,
