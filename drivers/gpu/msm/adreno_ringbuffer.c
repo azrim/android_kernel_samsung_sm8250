@@ -834,6 +834,25 @@ static void adreno_ringbuffer_set_constraint(struct kgsl_device *device,
 		kgsl_pwrctrl_set_constraint(device, &context->pwr_constraint,
 						context->id);
 
+	/*
+	 * Frame-deadline heuristic.  The userspace driver marks the last
+	 * command batch of a frame with KGSL_DRAWOBJ_END_OF_FRAME.  When that
+	 * batch is submitted, raise the GPU to its highest allowed level
+	 * right away instead of waiting for the devfreq governor's next
+	 * polling window, so the frame's work is more likely to finish before
+	 * the next vblank.  The vote self-expires after
+	 * pwrctrl.interval_timeout, so an idle GPU is not pinned.
+	 */
+	if ((drawobj->flags & KGSL_DRAWOBJ_END_OF_FRAME) && device->eof_boost) {
+		struct kgsl_pwr_constraint eof = {
+			.type = KGSL_CONSTRAINT_PWRLEVEL,
+			.sub_type = KGSL_CONSTRAINT_PWR_MAX,
+		};
+
+		kgsl_pwrctrl_set_constraint(device, &eof, context->id);
+		atomic_inc(&device->eof_boost_count);
+	}
+
 	if (context->l3_pwr_constraint.type &&
 		((context->flags & KGSL_CONTEXT_PWR_CONSTRAINT) ||
 			(flags & KGSL_CONTEXT_PWR_CONSTRAINT))) {

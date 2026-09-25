@@ -287,6 +287,16 @@ struct kgsl_device {
 	struct kgsl_pwrscale pwrscale;
 
 	int reset_counter; /* Track how many GPU core resets have occurred */
+
+	/*
+	 * Frame-deadline heuristic: boost the GPU to its highest allowed
+	 * level on an end-of-frame submission so the frame does not wait for
+	 * the devfreq governor to ramp up.  eof_boost_count counts the
+	 * submissions the heuristic acted on (for observability).
+	 */
+	bool eof_boost;
+	atomic_t eof_boost_count;
+
 	struct kthread_worker *events_worker;
 
 	struct device *busmondev; /* pseudo dev for GPU BW voting governor */
