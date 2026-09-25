@@ -1913,6 +1913,18 @@ int max77705_sec_uvdm_in_request_message(void *data)
 				total_uvdmset_num =
 					SEC_RES_HEADER->BITS.total_number_of_uvdm_set;
 
+				/* The set count and per-set order are supplied by the
+				 * attached USB-C partner. Bound them so the staging
+				 * buffer (IN_DATA) can never be overrun.
+				 */
+				if (total_uvdmset_num >
+				    (MAX_INPUT_DATA - SAMSUNGUVDM_MAXDATA_FIRST_UVDMSET) /
+				    SAMSUNGUVDM_MAXDATA_NORMAL_UVDMSET) {
+					msg_maxim("UVDM IN: invalid set count %d",
+						  total_uvdmset_num);
+					return -EINVAL;
+				}
+
 				usbpd_data->is_in_first_sec_uvdm_req = false;
 				/* 2. copy data to buffer */
 				for (i = 0; i < SAMSUNGUVDM_MAXDATA_FIRST_UVDMSET; i++)
@@ -1929,6 +1941,11 @@ int max77705_sec_uvdm_in_request_message(void *data)
 			cur_uvdmset_data = SEC_UVDM_TX_HEADER->BITS.data_size_of_current_set;
 			cur_uvdmset_num = SEC_UVDM_TX_HEADER->BITS.order_of_current_uvdm_set;
 			/* 2. copy data to buffer */
+			if (received_data_size + SAMSUNGUVDM_MAXDATA_NORMAL_UVDMSET >
+			    MAX_INPUT_DATA) {
+				msg_maxim("UVDM IN: staging buffer overflow, abort");
+				return -EOVERFLOW;
+			}
 			for (i = 0 ; i < SAMSUNGUVDM_MAXDATA_NORMAL_UVDMSET ; i++)
 				IN_DATA[received_data_size++] = ReadMSG[10 + i];
 			total_received_data_size += cur_uvdmset_data;
