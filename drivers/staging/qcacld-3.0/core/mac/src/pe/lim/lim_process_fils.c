@@ -825,6 +825,18 @@ static QDF_STATUS lim_process_auth_wrapped_data(struct pe_session *pe_session,
 	if (!fils_info)
 		return QDF_STATUS_E_FAILURE;
 
+	/*
+	 * The wrapped data element must carry at least the fixed header that
+	 * is parsed below. data_len is attacker controlled (derived from the
+	 * received Authentication frame), so a shorter value would make the
+	 * unsigned remaining_len underflow and drive an out-of-bounds read
+	 * through lim_process_fils_eap_tlv().
+	 */
+	if (data_len < SIR_FILS_WRAPPED_DATA_HDR_LEN) {
+		pe_err("wrapped data too short: %u", data_len);
+		return QDF_STATUS_E_FAILURE;
+	}
+
 	pe_debug("trying to process the wrappped data");
 
 	code = *wrapped_data;

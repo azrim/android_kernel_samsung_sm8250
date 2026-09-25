@@ -96,6 +96,11 @@
 /*9.4.2.188 FILS Wrapped Data element */
 #define SIR_FILS_WRAPPED_DATA_MAX_SIZE 255
 #define SIR_FILS_WRAPPED_DATA_EXT_EID   8
+/*
+ * Fixed header parsed from the wrapped data element before the EAP TLVs:
+ * code(1) + identifier(1) + length(2) + type(1) + flags(1) + sequence(2)
+ */
+#define SIR_FILS_WRAPPED_DATA_HDR_LEN 8
 
 /* RFC 6696 5.3.1: EAP-Initiate/Re-auth-Start Packet */
 #define SIR_FILS_EAP_REAUTH_PACKET_TYPE 1
