@@ -23461,7 +23461,7 @@ int q6audio_get_copp_idx_from_port_id(int port_id, enum sb_type func_type,
 		goto done;
 	}
 	*copp_idx = idx;
-	pr_info("%s: copp_idx=%d\n", __func__, *copp_idx);
+	pr_debug("%s: copp_idx=%d\n", __func__, *copp_idx);
 
 done:
 	return ret;
