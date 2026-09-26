@@ -2263,6 +2263,8 @@ static void spcom_signal_rx_done(struct work_struct *ignored)
 
 	spin_lock_irqsave(&spcom_dev->rx_lock, flags);
 	while (!list_empty(&spcom_dev->rx_list_head)) {
+		bool rx_abort;
+
 		/* detach last entry */
 		rx_item = list_last_entry(&spcom_dev->rx_list_head,
 					  struct rx_buff_list, list);
@@ -2286,26 +2288,37 @@ static void spcom_signal_rx_done(struct work_struct *ignored)
 				 ch->name, ch->txn_id);
 		}
 
+		rx_abort = false;
 		if (ch->rpmsg_abort) {
 			if (ch->rpmsg_rx_buf) {
 				spcom_pr_dbg("ch [%s] rx aborted free %zd bytes\n",
 					ch->name, ch->actual_rx_size);
 				kfree(ch->rpmsg_rx_buf);
+				ch->rpmsg_rx_buf = NULL;
 				ch->actual_rx_size = 0;
 			}
-			goto rx_aborted;
+			rx_abort = true;
+		} else {
+			if (ch->rpmsg_rx_buf) {
+				spcom_pr_err("ch [%s] previous buffer not consumed %zd bytes\n",
+				       ch->name, ch->actual_rx_size);
+				kfree(ch->rpmsg_rx_buf);
+				ch->rpmsg_rx_buf = NULL;
+				ch->actual_rx_size = 0;
+			}
+			if (!ch->is_server && (hdr->txn_id != ch->txn_id)) {
+				spcom_pr_err("ch [%s] rx dropped txn_id %d, ch->txn_id %d\n",
+					ch->name, hdr->txn_id, ch->txn_id);
+				rx_abort = true;
+			}
 		}
-		if (ch->rpmsg_rx_buf) {
-			spcom_pr_err("ch [%s] previous buffer not consumed %zd bytes\n",
-			       ch->name, ch->actual_rx_size);
-			kfree(ch->rpmsg_rx_buf);
-			ch->rpmsg_rx_buf = NULL;
-			ch->actual_rx_size = 0;
-		}
-		if (!ch->is_server && (hdr->txn_id != ch->txn_id)) {
-			spcom_pr_err("ch [%s] rx dropped txn_id %d, ch->txn_id %d\n",
-				ch->name, hdr->txn_id, ch->txn_id);
-			goto rx_aborted;
+		if (rx_abort) {
+			mutex_unlock(&ch->lock);
+			kfree(rx_item->rpmsg_rx_buf);
+			kfree(rx_item);
+			/* keep draining the remaining queued packets */
+			spin_lock_irqsave(&spcom_dev->rx_lock, flags);
+			continue;
 		}
 		spcom_pr_dbg("ch[%s] rx txn_id %d, ch->txn_id %d, size=%d\n",
 			     ch->name, hdr->txn_id, ch->txn_id,
@@ -2322,11 +2335,6 @@ static void spcom_signal_rx_done(struct work_struct *ignored)
 		spin_lock_irqsave(&spcom_dev->rx_lock, flags);
 	}
 	spin_unlock_irqrestore(&spcom_dev->rx_lock, flags);
-	return;
-rx_aborted:
-	mutex_unlock(&ch->lock);
-	kfree(rx_item->rpmsg_rx_buf);
-	kfree(rx_item);
 }
 
 static int spcom_rpdev_cb(struct rpmsg_device *rpdev,
