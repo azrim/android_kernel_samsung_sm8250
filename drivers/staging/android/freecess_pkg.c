@@ -122,14 +122,15 @@ static void kfreecess_cfb_hook(void* data, unsigned int len)
 
 static uid_t __sock_i_uid(struct sock *sk)
 {
-	uid_t uid;
-
-	if(sk && sk->sk_socket) {
-		uid = SOCK_INODE(sk->sk_socket)->i_uid.val;
-		return uid;
-	}
-
-	return 0;
+	/*
+	 * This runs in NET_RX softirq.  sk->sk_socket can be NULLed by
+	 * sock_orphan() in tcp_close() on another CPU; dereferencing it
+	 * (and SOCK_INODE()) is a TOCTOU.  sk_uid is stable on the sock
+	 * and does not depend on the socket inode.
+	 */
+	if (!sk)
+		return 0;
+	return from_kuid_munged(&init_user_ns, sk->sk_uid);
 }
 
 static unsigned int freecess_ip4_in(void *priv,
