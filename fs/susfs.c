@@ -92,17 +92,6 @@ int susfs_add_sus_path(struct st_susfs_sus_path* __user user_info) {
 	}
 	info.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
 
-	spin_lock(&susfs_spin_lock);
-	hash_for_each_safe(SUS_PATH_HLIST, bkt, tmp_node, tmp_entry, node) {
-		if (!strcmp(tmp_entry->target_pathname, info.target_pathname)) {
-			hash_del_rcu(&tmp_entry->node);
-			kfree_rcu(tmp_entry, rcu_head);
-			update_hlist = true;
-			break;
-		}
-	}
-	spin_unlock(&susfs_spin_lock);
-
 	new_entry = kmalloc(sizeof(struct st_susfs_sus_path_hlist), GFP_KERNEL);
 	if (!new_entry) {
 		SUSFS_LOGE("no enough memory\n");
@@ -116,7 +105,20 @@ int susfs_add_sus_path(struct st_susfs_sus_path* __user user_info) {
 		kfree(new_entry);
 		return 1;
 	}
+
+	/*
+	 * Replace only after the new entry is fully valid.  Deleting the
+	 * old entry first dropped the rule on a failed kern_path().
+	 */
 	spin_lock(&susfs_spin_lock);
+	hash_for_each_safe(SUS_PATH_HLIST, bkt, tmp_node, tmp_entry, node) {
+		if (!strcmp(tmp_entry->target_pathname, info.target_pathname)) {
+			hash_del_rcu(&tmp_entry->node);
+			kfree_rcu(tmp_entry, rcu_head);
+			update_hlist = true;
+			break;
+		}
+	}
 	hash_add_rcu(SUS_PATH_HLIST, &new_entry->node, info.target_ino);
 	if (update_hlist) {
 		SUSFS_LOGI("target_ino: '%lu', target_pathname: '%s' is successfully updated to SUS_PATH_HLIST\n",
@@ -760,10 +762,22 @@ int susfs_set_uname(struct st_susfs_uname* __user user_info) {
 }
 
 void susfs_spoof_uname(struct new_utsname* tmp) {
-	if (unlikely(my_uname.release[0] == '\0' || spin_is_locked(&susfs_uname_spin_lock)))
+	/*
+	 * spin_is_locked() is a lockdep helper, not synchronization.
+	 * Copy under the lock the writer uses so /proc/sys cannot see a
+	 * torn uname.  Force-terminate: strncpy() with __NEW_UTS_LEN
+	 * into a [__NEW_UTS_LEN+1] field never writes the last NUL.
+	 */
+	spin_lock(&susfs_uname_spin_lock);
+	if (my_uname.release[0] == '\0') {
+		spin_unlock(&susfs_uname_spin_lock);
 		return;
+	}
 	strncpy(tmp->release, my_uname.release, __NEW_UTS_LEN);
+	tmp->release[__NEW_UTS_LEN] = '\0';
 	strncpy(tmp->version, my_uname.version, __NEW_UTS_LEN);
+	tmp->version[__NEW_UTS_LEN] = '\0';
+	spin_unlock(&susfs_uname_spin_lock);
 }
 #endif // #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
 
@@ -791,19 +805,27 @@ int susfs_set_cmdline_or_bootconfig(char* __user user_fake_cmdline_or_bootconfig
 
 	if (!buf) {
 		// 4096 is enough I guess
-		buf = kmalloc(SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE, GFP_KERNEL);
-		if (!buf) {
+		char *fresh = kmalloc(SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE, GFP_KERNEL);
+		char *old;
+
+		if (!fresh) {
 			SUSFS_LOGE("no enough memory\n");
 			return -ENOMEM;
 		}
 		/*
 		 * Zero the buffer before publishing the pointer. A concurrent
 		 * reader of /proc/cmdline must never observe the pointer while
-		 * the buffer still holds uninitialised heap.
+		 * the buffer still holds uninitialised heap.  cmpxchg so two
+		 * first writers do not leak one buffer and drop one update.
 		 */
-		memset(buf, 0, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE);
-		/* Release: pairs with the smp_load_acquire() readers below. */
-		smp_store_release(&fake_cmdline_or_bootconfig, buf);
+		memset(fresh, 0, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE);
+		old = cmpxchg(&fake_cmdline_or_bootconfig, NULL, fresh);
+		if (old) {
+			kfree(fresh);
+			buf = old;
+		} else {
+			buf = fresh;
+		}
 	}
 
 	spin_lock(&susfs_spin_lock);
