@@ -4019,21 +4019,12 @@ static int max77705_usbc_remove(struct platform_device *pdev)
 	usb_external_notify_unregister(&usbc_data->usb_external_notifier_nb);
 	max77705_muic_remove(usbc_data);
 
-	wake_lock_destroy(&usbc_data->apcmd_wake_lock);
-	wake_lock_destroy(&usbc_data->sysmsg_wake_lock);
-	wake_lock_destroy(&usbc_data->pd_data->pdmsg_wake_lock);
-	wake_lock_destroy(&usbc_data->pd_data->datarole_wake_lock);
-	wake_lock_destroy(&usbc_data->pd_data->ssacc_wake_lock);
-	wake_lock_destroy(&usbc_data->pd_data->fct_id_wake_lock);
-	wake_lock_destroy(&usbc_data->cc_data->vconncop_wake_lock);
-	wake_lock_destroy(&usbc_data->cc_data->vsafe0v_wake_lock);
-	wake_lock_destroy(&usbc_data->cc_data->detabrt_wake_lock);
-	wake_lock_destroy(&usbc_data->cc_data->vconnsc_wake_lock);
-	wake_lock_destroy(&usbc_data->cc_data->ccpinstat_wake_lock);
-	wake_lock_destroy(&usbc_data->cc_data->ccistat_wake_lock);
-	wake_lock_destroy(&usbc_data->cc_data->ccvcnstat_wake_lock);
-	wake_lock_destroy(&usbc_data->cc_data->ccstat_wake_lock);
-
+	/*
+	 * free_irq() waits for running handlers.  Wake locks must be
+	 * destroyed only after that: handlers such as the ccstat IRQ
+	 * call wake_lock_timeout(), and wake_lock_destroy() now frees
+	 * the wakeup source (see include/linux/wakelock.h).
+	 */
 	free_irq(usbc_data->irq_apcmd, usbc_data);
 	free_irq(usbc_data->irq_sysmsg, usbc_data);
 	free_irq(usbc_data->irq_vdm0, usbc_data);
@@ -4056,6 +4047,21 @@ static int max77705_usbc_remove(struct platform_device *pdev)
 	free_irq(usbc_data->cc_data->irq_ccistat, usbc_data);
 	free_irq(usbc_data->cc_data->irq_ccvcnstat, usbc_data);
 	free_irq(usbc_data->cc_data->irq_ccstat, usbc_data);
+
+	wake_lock_destroy(&usbc_data->apcmd_wake_lock);
+	wake_lock_destroy(&usbc_data->sysmsg_wake_lock);
+	wake_lock_destroy(&usbc_data->pd_data->pdmsg_wake_lock);
+	wake_lock_destroy(&usbc_data->pd_data->datarole_wake_lock);
+	wake_lock_destroy(&usbc_data->pd_data->ssacc_wake_lock);
+	wake_lock_destroy(&usbc_data->pd_data->fct_id_wake_lock);
+	wake_lock_destroy(&usbc_data->cc_data->vconncop_wake_lock);
+	wake_lock_destroy(&usbc_data->cc_data->vsafe0v_wake_lock);
+	wake_lock_destroy(&usbc_data->cc_data->detabrt_wake_lock);
+	wake_lock_destroy(&usbc_data->cc_data->vconnsc_wake_lock);
+	wake_lock_destroy(&usbc_data->cc_data->ccpinstat_wake_lock);
+	wake_lock_destroy(&usbc_data->cc_data->ccistat_wake_lock);
+	wake_lock_destroy(&usbc_data->cc_data->ccvcnstat_wake_lock);
+	wake_lock_destroy(&usbc_data->cc_data->ccstat_wake_lock);
 
 	destroy_workqueue(usbc_data->op_wait_queue);
 	destroy_workqueue(usbc_data->op_send_queue);
