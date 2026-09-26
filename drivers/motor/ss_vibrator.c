@@ -330,7 +330,7 @@ static void set_vibrator(struct ss_vib *vib)
 {
 	int ret;
 
-	pr_info("[VIB]: %s, value[%d]\n", __func__, vib->state);
+	pr_debug("[VIB]: %s, value[%d]\n", __func__, vib->state);
 	if (vib->state) {
 		wake_lock(&vib_wake_lock);
 		pm_qos_update_request(&pm_qos_req, PM_QOS_NONIDLE_VALUE);
@@ -390,7 +390,7 @@ static void set_vibrator(struct ss_vib *vib)
 		wake_unlock(&vib_wake_lock);
 		pm_qos_update_request(&pm_qos_req, PM_QOS_DEFAULT_VALUE);
 	}
-	pr_info("[VIB]: %s, vibrator control finish value[%d]\n", __func__, vib->state);
+	pr_debug("[VIB]: %s, vibrator control finish value[%d]\n", __func__, vib->state);
 }
 
 static void vibrator_enable(struct ss_vib *vib, int value)
