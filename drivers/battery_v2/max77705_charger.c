@@ -180,7 +180,7 @@ static int max77705_get_charger_state(struct max77705_charger_data *charger)
 
 	max77705_read_reg(charger->i2c, MAX77705_CHG_REG_DETAILS_01, &reg_data);
 
-	pr_info("%s : charger status (0x%02x)\n", __func__, reg_data);
+	pr_debug("%s : charger status (0x%02x)\n", __func__, reg_data);
 
 	reg_data &= 0x0f;
 
@@ -244,7 +244,7 @@ static int max77705_chg_set_wdtmr_en(struct max77705_charger_data *charger, bool
 
 static int max77705_chg_set_wdtmr_kick(struct max77705_charger_data *charger)
 {
-	pr_info("%s: WDT Kick\n", __func__);
+	pr_debug("%s: WDT Kick\n", __func__);
 
 	max77705_update_reg(charger->i2c, MAX77705_CHG_REG_CNFG_06,
 			    (MAX77705_WDTCLR << CHG_CNFG_06_WDTCLR_SHIFT), CHG_CNFG_06_WDTCLR_MASK);
@@ -257,7 +257,7 @@ static bool max77705_is_constant_current(struct max77705_charger_data *charger)
 	u8 reg_data;
 
 	max77705_read_reg(charger->i2c, MAX77705_CHG_REG_DETAILS_01, &reg_data);
-	pr_info("%s : charger status (0x%02x)\n", __func__, reg_data);
+	pr_debug("%s : charger status (0x%02x)\n", __func__, reg_data);
 	reg_data &= 0x0f;
 
 	if (reg_data == 0x01)
@@ -337,7 +337,7 @@ static int max77705_get_charging_health(struct max77705_charger_data *charger)
 			max77705_set_switching_frequency(charger, MAX77705_CHG_FSW_1_5MHz);
 	}
 
-	pr_info("%s: reg_data(0x%x)\n", __func__, reg_data);
+	pr_debug("%s: reg_data(0x%x)\n", __func__, reg_data);
 	switch (reg_data) {
 	case 0x00:
 		pr_info("%s: No battery and the charger is suspended\n",
@@ -1159,7 +1159,7 @@ static void max77705_chg_monitor_work(struct max77705_charger_data *charger)
 	max77705_read_reg(charger->i2c, MAX77705_CHG_REG_CNFG_05, &reg_data);
 	reg_b2sovrc = (reg_data & CHG_CNFG_05_REG_B2SOVRC_MASK) >> CHG_CNFG_05_REG_B2SOVRC_SHIFT;
 
-	pr_info("%s: [CHG] MODE(0x%x), B2SOVRC(0x%x), otg_on(%d)\n",
+	pr_debug("%s: [CHG] MODE(0x%x), B2SOVRC(0x%x), otg_on(%d)\n",
 		__func__, reg_mode, reg_b2sovrc, charger->otg_on);
 }
 
@@ -2298,7 +2298,7 @@ static irqreturn_t max77705_bat_irq(int irq, void *data)
 	} else {
 		max77705_read_reg(charger->i2c, MAX77705_CHG_REG_DETAILS_01, &reg_data);
 		reg_data = ((reg_data & MAX77705_BAT_DTLS) >> MAX77705_BAT_DTLS_SHIFT);
-		pr_info("%s: reg_data(0x%x)\n", __func__, reg_data);
+		pr_debug("%s: reg_data(0x%x)\n", __func__, reg_data);
 	}
 
 	check_charger_unlock_state(charger);
