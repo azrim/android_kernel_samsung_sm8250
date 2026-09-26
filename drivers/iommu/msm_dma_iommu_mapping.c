@@ -424,6 +424,12 @@ void msm_dma_unmap_sg_attrs(struct device *dev, struct scatterlist *sgl,
 		goto out;
 
 	}
+	/*
+	 * Pin across the mutex drop: msm_dma_buf_freed() can look up the
+	 * same meta, drop the map mutex, and msm_iommu_meta_put() the last
+	 * reference (kfree) before we take meta->lock.
+	 */
+	kref_get(&meta->ref);
 	mutex_unlock(&msm_iommu_map_mutex);
 
 	mutex_lock(&meta->lock);
@@ -501,6 +507,7 @@ void msm_dma_buf_freed(void *buffer)
 		mutex_unlock(&msm_iommu_map_mutex);
 		return;
 	}
+	kref_get(&meta->ref);
 	mutex_unlock(&msm_iommu_map_mutex);
 
 	mutex_lock(&meta->lock);
