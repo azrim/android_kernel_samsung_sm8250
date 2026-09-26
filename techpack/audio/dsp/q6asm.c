@@ -1764,7 +1764,10 @@ static int32_t q6asm_srvc_callback(struct apr_client_data *data, void *priv)
 	}
 
 	if (data->opcode == APR_BASIC_RSP_RESULT) {
-		switch (payload[0]) {
+		if (!payload || data->payload_size < sizeof(payload[0])) {
+			pr_err("%s: short BASIC_RSP payload size %d\n",
+				__func__, data->payload_size);
+		} else switch (payload[0]) {
 		case ASM_CMD_SHARED_MEM_MAP_REGIONS:
 		case ASM_CMD_SHARED_MEM_UNMAP_REGIONS:
 		case ASM_CMD_ADD_TOPOLOGIES:
@@ -2262,6 +2265,11 @@ static int32_t q6asm_callback(struct apr_client_data *data, void *priv)
 		pr_debug("%s: ASM_STREAM_CMDRSP_GET_PP_PARAMS session %d opcode 0x%x token 0x%x src %d dest %d\n",
 			__func__, ac->session, data->opcode, data->token,
 			data->src_port, data->dest_port);
+		if (!payload || data->payload_size < sizeof(payload[0])) {
+			pr_err("%s: GET_PP_PARAMS short payload size %d\n",
+				__func__, data->payload_size);
+			break;
+		}
 		if (payload[0] != 0) {
 			pr_err("%s: ASM_STREAM_CMDRSP_GET_PP_PARAMS returned error = 0x%x\n",
 			       __func__, payload[0]);

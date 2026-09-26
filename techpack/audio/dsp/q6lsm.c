@@ -161,7 +161,8 @@ static int q6lsm_callback(struct apr_client_data *data, void *priv)
 	payload = data->payload;
 	pr_debug("%s: Session %d opcode 0x%x token 0x%x payload size %d\n"
 			 "payload [0] = 0x%x\n", __func__, client->session,
-		data->opcode, data->token, data->payload_size, payload[0]);
+		data->opcode, data->token, data->payload_size,
+		payload ? payload[0] : 0);
 	if (data->opcode == LSM_DATA_EVENT_READ_DONE) {
 		struct lsm_cmd_read_done read_done;
 
@@ -2047,6 +2048,11 @@ static int q6lsm_mmapcallback(struct apr_client_data *data, void *priv)
 		return 0;
 	}
 
+	if (!payload || data->payload_size < 2 * sizeof(payload[0])) {
+		pr_err("%s: short payload size %d\n",
+			__func__, data->payload_size);
+		return 0;
+	}
 	command = payload[0];
 	retcode = payload[1];
 	sid = (data->token >> 8) & 0x0F;
