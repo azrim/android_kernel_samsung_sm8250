@@ -2303,7 +2303,7 @@ static void dwc3_msm_notify_event(struct dwc3 *dwc, unsigned int event,
 			GSI_EN_MASK, 0);
 		break;
 	default:
-		dev_info(mdwc->dev, "unknown dwc3 event\n");
+		dev_dbg(mdwc->dev, "unknown dwc3 event\n");
 		break;
 	}
 }
@@ -3073,31 +3073,31 @@ static void dwc3_ext_event_notify(struct dwc3_msm *mdwc)
 	flush_delayed_work(&mdwc->sm_work);
 
 	if (mdwc->id_state == DWC3_ID_FLOAT) {
-		dev_info(mdwc->dev, "XCVR: ID set\n");
+		dev_dbg(mdwc->dev, "XCVR: ID set\n");
 		set_bit(ID, &mdwc->inputs);
 	} else {
-		dev_info(mdwc->dev, "XCVR: ID clear\n");
+		dev_dbg(mdwc->dev, "XCVR: ID clear\n");
 		clear_bit(ID, &mdwc->inputs);
 	}
 
 	if (mdwc->vbus_active && !mdwc->in_restart) {
 		if (mdwc->hs_phy->flags & EUD_SPOOF_DISCONNECT) {
-			dev_info(mdwc->dev, "XCVR:EUD: BSV clear\n");
+			dev_dbg(mdwc->dev, "XCVR:EUD: BSV clear\n");
 			clear_bit(B_SESS_VLD, &mdwc->inputs);
 		} else {
-			dev_info(mdwc->dev, "XCVR: BSV set\n");
+			dev_dbg(mdwc->dev, "XCVR: BSV set\n");
 			set_bit(B_SESS_VLD, &mdwc->inputs);
 		}
 	} else {
-		dev_info(mdwc->dev, "XCVR: BSV clear\n");
+		dev_dbg(mdwc->dev, "XCVR: BSV clear\n");
 		clear_bit(B_SESS_VLD, &mdwc->inputs);
 	}
 
 	if (mdwc->suspend) {
-		dev_info(mdwc->dev, "XCVR: SUSP set\n");
+		dev_dbg(mdwc->dev, "XCVR: SUSP set\n");
 		set_bit(B_SUSPEND, &mdwc->inputs);
 	} else {
-		dev_info(mdwc->dev, "XCVR: SUSP clear\n");
+		dev_dbg(mdwc->dev, "XCVR: SUSP clear\n");
 		clear_bit(B_SUSPEND, &mdwc->inputs);
 	}
 
