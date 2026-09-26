@@ -648,6 +648,18 @@ void apr_cb_func(void *buf, int len, void *priv)
 		return;
 	}
 
+	/*
+	 * The payload is handed to clients as hdr->pkt_size - hdr_size bytes
+	 * starting at hdr + hdr_size.  Nothing else ties pkt_size to the
+	 * number of bytes actually received, so a malformed packet could make
+	 * clients read far past the end of the rpmsg buffer.
+	 */
+	if (hdr->pkt_size > len) {
+		pr_err("APR: Packet size %d greater than received length %d\n",
+			hdr->pkt_size, len);
+		return;
+	}
+
 	msg_type = hdr->hdr_field;
 	msg_type = (msg_type >> 0x08) & 0x0003;
 	if (msg_type >= APR_MSG_TYPE_MAX && msg_type != APR_BASIC_RSP_RESULT) {
