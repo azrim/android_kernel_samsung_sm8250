@@ -728,18 +728,17 @@ static int mdm_dt_parse_gpios(struct mdm_ctrl *mdm)
 
 static int mdm_configure_ipc(struct mdm_ctrl *mdm, struct platform_device *pdev)
 {
-	int ret = -1;
+	int ret = -ENODEV;
 	int irq;
 	struct device *dev = mdm->dev;
 	struct device_node *node = pdev->dev.of_node;
 
-	ret = of_property_read_u32(node, "qcom,ramdump-timeout-ms",
-						&mdm->dump_timeout_ms);
-	if (ret)
+	/* These two only supply defaults; keep ret for real failures. */
+	if (of_property_read_u32(node, "qcom,ramdump-timeout-ms",
+						&mdm->dump_timeout_ms))
 		mdm->dump_timeout_ms = DEF_RAMDUMP_TIMEOUT;
-	ret = of_property_read_u32(node, "qcom,ramdump-delay-ms",
-						&mdm->ramdump_delay_ms);
-	if (ret)
+	if (of_property_read_u32(node, "qcom,ramdump-delay-ms",
+						&mdm->ramdump_delay_ms))
 		mdm->ramdump_delay_ms = DEF_RAMDUMP_DELAY;
 	/*
 	 * In certain scenarios, multiple esoc devices are monitoring
@@ -805,8 +804,8 @@ static int mdm_configure_ipc(struct mdm_ctrl *mdm, struct platform_device *pdev)
 	irq = gpio_to_irq(MDM_GPIO(mdm, MDM2AP_ERRFATAL));
 	if (irq < 0) {
 		dev_err(dev, "bad MDM2AP_ERRFATAL IRQ resource\n");
+		ret = irq;
 		goto errfatal_err;
-
 	}
 	ret = request_irq(irq, mdm_errfatal,
 			IRQF_TRIGGER_RISING, "mdm errfatal", mdm);
@@ -819,12 +818,12 @@ static int mdm_configure_ipc(struct mdm_ctrl *mdm, struct platform_device *pdev)
 	mdm->errfatal_irq = irq;
 	irq_set_irq_wake(mdm->errfatal_irq, 1);
 
-errfatal_err:
-	 /* status irq */
+	/* status irq */
 	irq = gpio_to_irq(MDM_GPIO(mdm, MDM2AP_STATUS));
 	if (irq < 0) {
 		dev_err(dev, "%s: bad MDM2AP_STATUS IRQ resource, err = %d\n",
 				__func__, irq);
+		ret = irq;
 		goto status_err;
 	}
 	ret = request_threaded_irq(irq, NULL, mdm_status_change,
@@ -837,12 +836,13 @@ errfatal_err:
 	}
 	mdm->status_irq = irq;
 	irq_set_irq_wake(mdm->status_irq, 1);
-status_err:
+
 	if (gpio_is_valid(MDM_GPIO(mdm, MDM2AP_PBLRDY))) {
 		irq =  platform_get_irq_byname(pdev, "plbrdy_irq");
 		if (irq < 0) {
 			dev_err(dev, "%s: MDM2AP_PBLRDY IRQ request failed\n",
 				 __func__);
+			ret = irq;
 			goto pblrdy_err;
 		}
 
@@ -856,11 +856,38 @@ status_err:
 		}
 		mdm->pblrdy_irq = irq;
 	}
+
 	mdm_disable_irqs(mdm);
 	g_mdm = mdm;
-pblrdy_err:
+
 	return 0;
+
+	/*
+	 * Unwind in reverse order.  Each edge frees only the IRQs that were
+	 * actually requested, then continues into the cleanup for the earlier
+	 * ones and finally tears the IPC down.  Without this the IRQ request
+	 * failures used to continue straight into a "return 0", leaving the
+	 * driver bound with no working errfatal/status interrupts and the
+	 * requested IRQs leaked.
+	 */
+pblrdy_err:
+	if (mdm->pblrdy_irq) {
+		free_irq(mdm->pblrdy_irq, mdm);
+		mdm->pblrdy_irq = 0;
+	}
+status_err:
+	if (mdm->status_irq) {
+		free_irq(mdm->status_irq, mdm);
+		mdm->status_irq = 0;
+	}
+errfatal_err:
+	if (mdm->errfatal_irq) {
+		free_irq(mdm->errfatal_irq, mdm);
+		mdm->errfatal_irq = 0;
+	}
 fatal_err:
+	if (ret >= 0)
+		ret = -ENODEV;
 	mdm_deconfigure_ipc(mdm);
 	return ret;
 
@@ -933,8 +960,12 @@ static void mdm_free_irq(struct mdm_ctrl *mdm)
 	if (!mdm)
 		return;
 
-	free_irq(mdm->errfatal_irq, mdm);
-	free_irq(mdm->status_irq, mdm);
+	if (mdm->errfatal_irq)
+		free_irq(mdm->errfatal_irq, mdm);
+	if (mdm->status_irq)
+		free_irq(mdm->status_irq, mdm);
+	if (mdm->pblrdy_irq)
+		free_irq(mdm->pblrdy_irq, mdm);
 }
 
 static int mdm9x55_setup_hw(struct mdm_ctrl *mdm,
