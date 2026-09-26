@@ -71,6 +71,10 @@ static unsigned int num_devices = 1;
 static size_t huge_class_size;
 
 static void zram_free_page(struct zram *zram, size_t index);
+static unsigned long zram_entry_handle(struct zram *zram,
+		struct zram_entry *entry);
+static struct zram_entry *zram_entry_alloc(struct zram *zram,
+		unsigned int len, gfp_t flags);
 static int zram_bvec_read(struct zram *zram, struct bio_vec *bvec,
 				u32 index, int offset, struct bio *bio);
 
@@ -1910,6 +1914,7 @@ static void zram_handle_remain(struct zram *zram, struct page *page,
 				unsigned int blk_idx)
 {
 	struct zram_wb_header *zhdr;
+	struct zram_entry *entry;
 	unsigned long alloced_pages;
 	unsigned long handle;
 	unsigned int offset = 0;
@@ -1945,26 +1950,34 @@ static void zram_handle_remain(struct zram *zram, struct page *page,
 		}
 		atomic64_inc(&zram->stats.bd_objreads);
 
-		handle = zs_malloc(zram->mem_pool, size,
+		/*
+		 * Rebuild the slot the same way the write path does:
+		 * with DEDUP the table slot holds a struct zram_entry *,
+		 * not a raw zs handle.  Storing the handle via
+		 * zram_set_element() is a type confusion that the next
+		 * read or free will treat as a pointer.
+		 */
+		entry = zram_entry_alloc(zram, size,
 				__GFP_KSWAPD_RECLAIM |
 				__GFP_NOWARN |
 				__GFP_HIGHMEM |
 				__GFP_MOVABLE);
-		if (!handle) {
+		if (!entry) {
 			zram_slot_unlock(zram, index);
 			break;
 		}
 		alloced_pages = zs_get_total_pages(zram->mem_pool);
 		update_used_max(zram, alloced_pages);
 
-		dst = zs_map_object(zram->mem_pool, handle, ZS_MM_WO);
+		dst = zs_map_object(zram->mem_pool,
+				    zram_entry_handle(zram, entry), ZS_MM_WO);
 		src = (u8 *)(zhdr + 1);
 		memcpy(dst, src, size);
-		zs_unmap_object(zram->mem_pool, handle);
+		zs_unmap_object(zram->mem_pool, zram_entry_handle(zram, entry));
 
 		atomic64_add(size, &zram->stats.compr_data_size);
 		zram_free_page(zram, index);
-		zram_set_element(zram, index, handle);
+		zram_set_entry(zram, index, entry);
 		zram_set_obj_size(zram, index, size);
 		zram_slot_unlock(zram, index);
 		atomic64_inc(&zram->stats.pages_stored);
