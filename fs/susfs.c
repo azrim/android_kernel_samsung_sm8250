@@ -192,6 +192,7 @@ int susfs_add_sus_mount(struct st_susfs_sus_mount* __user user_info) {
 	struct st_susfs_sus_mount_list *cursor = NULL, *temp = NULL;
 	struct st_susfs_sus_mount_list *new_list = NULL;
 	struct st_susfs_sus_mount info;
+	bool found = false;
 
 	if (copy_from_user(&info, user_info, sizeof(info))) {
 		SUSFS_LOGE("failed copying from userspace\n");
@@ -209,17 +210,26 @@ int susfs_add_sus_mount(struct st_susfs_sus_mount* __user user_info) {
 	info.target_dev = old_decode_dev(info.target_dev);
 #endif /* defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64) */
 
+	/*
+	 * LH_SUS_MOUNT is protected by susfs_spin_lock: traverse it under the
+	 * lock and only drop it for the sleepable inode update below.
+	 */
+	spin_lock(&susfs_spin_lock);
 	list_for_each_entry_safe(cursor, temp, &LH_SUS_MOUNT, list) {
 		if (unlikely(!strcmp(cursor->info.target_pathname, info.target_pathname))) {
-			spin_lock(&susfs_spin_lock);
 			memcpy(&cursor->info, &info, sizeof(info));
-			spin_unlock(&susfs_spin_lock);
-			// susfs_update_sus_mount_inode() calls kern_path(), which may sleep
-			susfs_update_sus_mount_inode(cursor->info.target_pathname);
-			SUSFS_LOGI("target_pathname: '%s', target_dev: '%lu', is successfully updated to LH_SUS_MOUNT\n",
-						cursor->info.target_pathname, cursor->info.target_dev);
-			return 0;
+			found = true;
+			break;
 		}
+	}
+	spin_unlock(&susfs_spin_lock);
+
+	if (found) {
+		// susfs_update_sus_mount_inode() calls kern_path(), which may sleep
+		susfs_update_sus_mount_inode(cursor->info.target_pathname);
+		SUSFS_LOGI("target_pathname: '%s', target_dev: '%lu', is successfully updated to LH_SUS_MOUNT\n",
+					cursor->info.target_pathname, cursor->info.target_dev);
+		return 0;
 	}
 
 	new_list = kmalloc(sizeof(struct st_susfs_sus_mount_list), GFP_KERNEL);
@@ -776,27 +786,38 @@ void susfs_set_log(bool enabled) {
 static char *fake_cmdline_or_bootconfig = NULL;
 int susfs_set_cmdline_or_bootconfig(char* __user user_fake_cmdline_or_bootconfig) {
 	int res;
+	/* Acquire: pairs with the smp_store_release() in the writer path. */
+	char *buf = smp_load_acquire(&fake_cmdline_or_bootconfig);
 
-	if (!fake_cmdline_or_bootconfig) {
+	if (!buf) {
 		// 4096 is enough I guess
-		fake_cmdline_or_bootconfig = kmalloc(SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE, GFP_KERNEL);
-		if (!fake_cmdline_or_bootconfig) {
+		buf = kmalloc(SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE, GFP_KERNEL);
+		if (!buf) {
 			SUSFS_LOGE("no enough memory\n");
 			return -ENOMEM;
 		}
+		/*
+		 * Zero the buffer before publishing the pointer. A concurrent
+		 * reader of /proc/cmdline must never observe the pointer while
+		 * the buffer still holds uninitialised heap.
+		 */
+		memset(buf, 0, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE);
+		/* Release: pairs with the smp_load_acquire() readers below. */
+		smp_store_release(&fake_cmdline_or_bootconfig, buf);
 	}
 
 	spin_lock(&susfs_spin_lock);
-	memset(fake_cmdline_or_bootconfig, 0, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE);
+	memset(buf, 0, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE);
 	spin_unlock(&susfs_spin_lock);
 	// strncpy_from_user() can fault and sleep, so it must not run under the spinlock
-	res = strncpy_from_user(fake_cmdline_or_bootconfig, user_fake_cmdline_or_bootconfig, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE-1);
+	res = strncpy_from_user(buf, user_fake_cmdline_or_bootconfig,
+				SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE - 1);
 
 	if (res > 0) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,0)
-		SUSFS_LOGI("fake_cmdline_or_bootconfig is set, length of string: %lu\n", strlen(fake_cmdline_or_bootconfig));
+		SUSFS_LOGI("fake_cmdline_or_bootconfig is set, length of string: %lu\n", strlen(buf));
 #else
-		SUSFS_LOGI("fake_cmdline_or_bootconfig is set, length of string: %u\n", strlen(fake_cmdline_or_bootconfig));
+		SUSFS_LOGI("fake_cmdline_or_bootconfig is set, length of string: %u\n", strlen(buf));
 #endif
 		return 0;
 	}
@@ -805,8 +826,11 @@ int susfs_set_cmdline_or_bootconfig(char* __user user_fake_cmdline_or_bootconfig
 }
 
 int susfs_spoof_cmdline_or_bootconfig(struct seq_file *m) {
-	if (fake_cmdline_or_bootconfig != NULL) {
-		seq_puts(m, fake_cmdline_or_bootconfig);
+	/* Acquire: pairs with the smp_store_release() in the writer path. */
+	char *buf = smp_load_acquire(&fake_cmdline_or_bootconfig);
+
+	if (buf != NULL) {
+		seq_puts(m, buf);
 		return 0;
 	}
 	return 1;
