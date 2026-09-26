@@ -173,8 +173,9 @@ static unsigned long limits_mitigation_notify(struct cpufreq_qcom *c,
 			freq = policy->cpuinfo.max_freq;
 	}
 
-	arch_set_thermal_pressure(&c->related_cpus, min_t(unsigned long, 0,
-				  max_capacity - capacity));
+	arch_set_thermal_pressure(&c->related_cpus,
+				  capacity < max_capacity ?
+				  max_capacity - capacity : 0);
 	snprintf(lmh_debug, 8, "lmh_%d", cpumask_first(&c->related_cpus));
 	trace_clock_set_rate(lmh_debug, freq, raw_smp_processor_id());
 	trace_dcvsh_freq(cpumask_first(&c->related_cpus), freq);
