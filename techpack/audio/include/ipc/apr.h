@@ -128,6 +128,13 @@ struct apr_svc {
 	void *priv;
 	struct mutex m_lock;
 	spinlock_t w_lock;
+	/*
+	 * Protects the RX dispatch tuple (fn/priv, port_fn[]/port_priv[],
+	 * port_cnt).  It must be a spinlock because apr_cb_func() runs from
+	 * the rpmsg RX callback under apr_ch->r_lock, where m_lock cannot be
+	 * taken.
+	 */
+	spinlock_t disp_lock;
 	uint8_t pkt_owner;
 #ifdef CONFIG_MSM_QDSP6_APRV2_VM
 	uint16_t vm_dest_svc;

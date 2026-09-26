@@ -485,6 +485,7 @@ struct apr_svc *apr_register(char *dest, char *svc_name, apr_fn svc_fn,
 	struct apr_svc *svc = NULL;
 	int rc = 0;
 	bool can_open_channel = true;
+	unsigned long flags;
 
 	if (!dest || !svc_name || !svc_fn)
 		return NULL;
@@ -573,11 +574,14 @@ struct apr_svc *apr_register(char *dest, char *svc_name, apr_fn svc_fn,
 		}
 		if (!svc->svc_cnt)
 			clnt->svc_cnt++;
+		spin_lock_irqsave(&svc->disp_lock, flags);
 		svc->port_cnt++;
 		svc->port_fn[temp_port] = svc_fn;
 		svc->port_priv[temp_port] = priv;
 		svc->svc_cnt++;
+		spin_unlock_irqrestore(&svc->disp_lock, flags);
 	} else {
+		spin_lock_irqsave(&svc->disp_lock, flags);
 		if (!svc->fn) {
 			if (!svc->svc_cnt)
 				clnt->svc_cnt++;
@@ -585,6 +589,7 @@ struct apr_svc *apr_register(char *dest, char *svc_name, apr_fn svc_fn,
 			svc->priv = priv;
 			svc->svc_cnt++;
 		}
+		spin_unlock_irqrestore(&svc->disp_lock, flags);
 	}
 
 	mutex_unlock(&svc->m_lock);
@@ -609,6 +614,7 @@ void apr_cb_func(void *buf, int len, void *priv)
 	int i;
 	int temp_port = 0;
 	uint32_t *ptr;
+	unsigned long flags;
 
 	pr_debug("APR2: len = %d\n", len);
 	ptr = buf;
@@ -754,6 +760,16 @@ void apr_cb_func(void *buf, int len, void *priv)
 		}
 	}
 
+	/*
+	 * Serialize the dispatch tuple against apr_register()/apr_deregister(),
+	 * which update it under disp_lock.  The tuple is read and used while the
+	 * lock is held so a concurrent teardown cannot clear fn/priv (or
+	 * port_cnt/port_fn[]) between the check and the call.  Taking a
+	 * spinlock is safe here: apr_cb_func() already runs in atomic context
+	 * (the rpmsg RX callback holds apr_ch->r_lock) and the client
+	 * callbacks are atomic-safe, so nothing sleeps under it.
+	 */
+	spin_lock_irqsave(&c_svc->disp_lock, flags);
 	temp_port = ((data.dest_port >> 8) * 8) + (data.dest_port & 0xFF);
 	if (((temp_port >= 0) && (temp_port < APR_MAX_PORTS))
 		&& (c_svc->port_cnt && c_svc->port_fn[temp_port]))
@@ -763,6 +779,7 @@ void apr_cb_func(void *buf, int len, void *priv)
 		c_svc->fn(&data, c_svc->priv);
 	else
 		pr_err("APR: Rxed a packet for NULL callback\n");
+	spin_unlock_irqrestore(&c_svc->disp_lock, flags);
 }
 
 int apr_get_svc(const char *svc_name, int domain_id, int *client_id,
@@ -927,6 +944,7 @@ int apr_deregister(void *handle)
 	struct apr_client *clnt;
 	uint16_t dest_id;
 	uint16_t client_id;
+	unsigned long flags;
 
 	if (!handle)
 		return -EINVAL;
@@ -943,6 +961,12 @@ int apr_deregister(void *handle)
 	client_id = svc->client_id;
 	clnt = &client[dest_id][client_id];
 
+	/*
+	 * Update the dispatch tuple under disp_lock so a concurrent apr_cb_func()
+	 * cannot observe fn != NULL with priv already cleared (or a half
+	 * updated port table).
+	 */
+	spin_lock_irqsave(&svc->disp_lock, flags);
 	if (svc->svc_cnt > 0) {
 		if (svc->port_cnt)
 			svc->port_cnt--;
@@ -961,6 +985,8 @@ int apr_deregister(void *handle)
 		svc->client_id = 0;
 		svc->need_reset = 0x0;
 	}
+	spin_unlock_irqrestore(&svc->disp_lock, flags);
+
 	if (client[dest_id][client_id].handle &&
 	    !client[dest_id][client_id].svc_cnt) {
 		apr_tal_close(client[dest_id][client_id].handle);
@@ -1177,6 +1203,7 @@ static int apr_probe(struct platform_device *pdev)
 			for (k = 0; k < APR_SVC_MAX; k++) {
 				mutex_init(&client[i][j].svc[k].m_lock);
 				spin_lock_init(&client[i][j].svc[k].w_lock);
+				spin_lock_init(&client[i][j].svc[k].disp_lock);
 			}
 		}
 	apr_set_subsys_state();
