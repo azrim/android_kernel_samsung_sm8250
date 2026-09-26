@@ -143,7 +143,7 @@ void trigger_input_booster(struct work_struct* work)
 		ib = find_release_ib(p_IbTrigger->dev_type, p_IbTrigger->key_id);
 
 		if (ib == NULL) {
-			pr_err("IB is null on release");
+			pr_debug("IB is null on release");
 			goto out_unlock;
 		}
 		pr_booster("IB Trigger Release :: Uniq ID(%d)", ib->uniq_id);
@@ -159,7 +159,7 @@ void trigger_input_booster(struct work_struct* work)
 					&(ib->ib_timeout_work[IB_TAIL]),
 					msecs_to_jiffies(ib->ib_dt->tail_time));
 			} else {
-				pr_err(ITAG" IB Trigger Release :: tail timeout start");
+				pr_debug(ITAG" IB Trigger Release :: tail timeout start");
 			}
 		}
 		mutex_unlock(&ib->lock);
@@ -282,7 +282,7 @@ void press_state_func(struct work_struct* work)
 		tv = find_update_target(target_ib->uniq_id, res.res_id);
 
 		if (tv == NULL) {
-			pr_err("Press State Func :::: %d's tv(%d) is null T.T",
+			pr_debug("Press State Func :::: %d's tv(%d) is null T.T",
 				target_ib->uniq_id, res.res_id);
 			continue;
 		}
@@ -408,7 +408,7 @@ void release_state_func(struct work_struct* work)
 				&(target_ib->ib_timeout_work[IB_TAIL]),
 				msecs_to_jiffies(target_ib->ib_dt->tail_time));
 		} else {
-			pr_err(ITAG" Release State Func :: tail timeout start");
+			pr_debug(ITAG" Release State Func :: tail timeout start");
 		}
 	}
 	mutex_unlock(&target_ib->lock);
@@ -433,7 +433,7 @@ void release_timeout_func(struct work_struct* work)
 
 		tv = find_update_target(target_ib->uniq_id, res.res_id);
 		if (tv == NULL) {
-			pr_err(ITAG" Release Timeout Func :::: %d's TV No Exist(%d)",
+			pr_debug(ITAG" Release Timeout Func :::: %d's TV No Exist(%d)",
 				target_ib->uniq_id, res.res_id);
 			continue;
 		}
@@ -609,6 +609,14 @@ void input_booster_exit(void)
 	kfree(ib_device_trees);
 	kfree(ib_list);
 	kfree(qos_list);
+	if (ev_unbound_wq) {
+		destroy_workqueue(ev_unbound_wq);
+		ev_unbound_wq = NULL;
+	}
+	if (ib_unbound_highwq) {
+		destroy_workqueue(ib_unbound_highwq);
+		ib_unbound_highwq = NULL;
+	}
 	input_booster_exit_vendor();
 }
 
@@ -617,7 +625,7 @@ void input_booster_exit(void)
 void input_booster_init(void)
 {
 	// ********** Load Frequency data from DTSI **********
-	struct device_node* np;
+	struct device_node* np = NULL;
 	int i;
 
 	int ib_dt_size = sizeof(struct t_ib_device_tree);
@@ -747,6 +755,10 @@ void input_booster_init(void)
 
 			if (inputbooster_size != 2) {
 				pr_err(ITAG" inputbooster size must be 2!");
+				of_node_put(child_resource_node);
+				of_node_put(resource_node);
+				of_node_put(cnp);
+				of_node_put(np);
 				return; // error
 			}
 
@@ -763,20 +775,24 @@ void input_booster_init(void)
 
 			resource_node_index++;
 		}
+		of_node_put(resource_node);
 
 		ib_dt->label = of_get_property(cnp, "input_booster,label", NULL);
 		pr_info(ITAG" %s   ib_dt->label : %s\n", __func__, ib_dt->label);
 
 		if (of_property_read_u32(cnp, "input_booster,type", &ib_dt->type)) {
 			pr_err(ITAG" Failed to get type property\n");
+			of_node_put(cnp);
 			break;
 		}
 		if (of_property_read_u32(cnp, "input_booster,head_time", &ib_dt->head_time)) {
 			pr_err(ITAG" Fail Get Head Time\n");
+			of_node_put(cnp);
 			break;
 		}
 		if (of_property_read_u32(cnp, "input_booster,tail_time", &ib_dt->tail_time)) {
 			pr_err(ITAG" Fail Get Tail Time\n");
+			of_node_put(cnp);
 			break;
 		}
 
@@ -789,6 +805,7 @@ void input_booster_init(void)
 	ib_init_succeed = is_ib_init_succeed();
 
 out:
+	of_node_put(np);
 	// ********** Initialize Sysfs **********
 	{
 		struct class* sysfs_class;

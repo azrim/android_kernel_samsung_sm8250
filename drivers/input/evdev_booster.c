@@ -73,7 +73,7 @@ int get_device_type(struct evdev_client *dev, unsigned int *keyId, int *cur_idx,
 	int target_idx = 0;
 
 	if (dev == NULL || dev->ev_cnt > MAX_EVENTS) {
-		pr_err("evdev client is null and exceed max event number");
+		pr_debug("evdev client is null and exceed max event number");
 		return ret_val;
 	}
 
@@ -212,12 +212,12 @@ void input_booster(struct evdev_client* dev, int dev_head) {
 	int slot = 0;
 
 	if (dev == NULL) {
-		pr_err(ITAG"dev is Null");
+		pr_debug(ITAG"dev is Null");
 		return;
 	}
 
 	if (!ib_init_succeed || dev->ev_cnt == 0) {
-		pr_err(ITAG"ev_cnt(%d) dt_infor hasn't mem alloc", dev->ev_cnt);
+		pr_debug(ITAG"ev_cnt(%d) dt_infor hasn't mem alloc", dev->ev_cnt);
 		return;
 	}
 
