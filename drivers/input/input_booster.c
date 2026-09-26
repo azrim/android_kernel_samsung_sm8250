@@ -44,6 +44,33 @@ struct t_ib_target* find_update_target(int uniq_id, int res_id);
 unsigned long get_qos_value(int res_id);
 void remove_ib_instance(struct t_ib_info* ib);
 
+/*
+ * Claim a free trigger slot for the caller, or return -1 when every slot is
+ * still owned by a queued/running worker.  The acquire pairs with the release
+ * in trigger_input_booster() so a slot's payload is never rewritten while its
+ * worker is still reading it (which would otherwise mis-attribute an event).
+ * Must be called with ib_type_lock held, so trigger_cnt has a single writer.
+ */
+int ib_trigger_get_slot(void)
+{
+	int slot = trigger_cnt;
+	int i;
+
+	for (i = 0; i < MAX_IB_COUNT; i++) {
+		if (!smp_load_acquire(&ib_trigger[slot].in_use))
+			break;
+		slot = (slot + 1) % MAX_IB_COUNT;
+	}
+
+	if (i == MAX_IB_COUNT)
+		return -1;
+
+	smp_store_release(&ib_trigger[slot].in_use, 1);
+	trigger_cnt = (slot + 1) % MAX_IB_COUNT;
+
+	return slot;
+}
+
 void trigger_input_booster(struct work_struct* work)
 {
 	unsigned int uniq_id = 0;
@@ -67,8 +94,7 @@ void trigger_input_booster(struct work_struct* work)
 
 		if (find_release_ib(p_IbTrigger->dev_type, p_IbTrigger->key_id) != NULL) {
 			pr_booster(ITAG" IB Trigger :: ib already exist. Key(%d)", p_IbTrigger->key_id);
-			mutex_unlock(&trigger_ib_lock);
-			return;
+			goto out_unlock;
 		}
 
 		// Check if uniqId exits.
@@ -84,10 +110,8 @@ void trigger_input_booster(struct work_struct* work)
 		ib = create_ib_instance(p_IbTrigger, uniq_id);
 		pr_booster("IB Uniq Id(%d)", uniq_id);
 
-		if (ib == NULL) {
-			mutex_unlock(&trigger_ib_lock);
-			return;
-		}
+		if (ib == NULL)
+			goto out_unlock;
 
 		ib->press_flag = FLAG_ON;
 
@@ -120,8 +144,7 @@ void trigger_input_booster(struct work_struct* work)
 
 		if (ib == NULL) {
 			pr_err("IB is null on release");
-			mutex_unlock(&trigger_ib_lock);
-			return;
+			goto out_unlock;
 		}
 		pr_booster("IB Trigger Release :: Uniq ID(%d)", ib->uniq_id);
 
@@ -142,8 +165,16 @@ void trigger_input_booster(struct work_struct* work)
 		mutex_unlock(&ib->lock);
 
 	}
+
+out_unlock:
 	mutex_unlock(&trigger_ib_lock);
 
+	/*
+	 * All payload reads from this slot are done; release it so the trigger
+	 * path can reuse it.  Pairs with the smp_load_acquire() in
+	 * ib_trigger_get_slot().
+	 */
+	smp_store_release(&p_IbTrigger->in_use, 0);
 }
 
 struct t_ib_info* create_ib_instance(struct t_ib_trigger* p_IbTrigger, int uniqId)

@@ -193,6 +193,9 @@ struct t_ib_trigger {
 	int event_type;
 	int dev_type;
 
+	/* Non-zero while a queued/running worker still owns this slot. */
+	int in_use;
+
 	struct work_struct ib_trigger_work;
 };
 
@@ -241,6 +244,7 @@ struct t_ddr_info {
 };
 
 void trigger_input_booster(struct work_struct* work);
+int ib_trigger_get_slot(void);
 void press_state_func(struct work_struct* work);
 void press_timeout_func(struct work_struct* work);
 void release_state_func(struct work_struct* work);

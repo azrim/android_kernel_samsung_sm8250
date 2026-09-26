@@ -209,6 +209,7 @@ void input_booster(struct evdev_client* dev, int dev_head) {
 	int cnt = 0;
 	int cur_idx = -1;
 	int head = 0;
+	int slot = 0;
 
 	if (dev == NULL) {
 		pr_err(ITAG"dev is Null");
@@ -241,22 +242,33 @@ void input_booster(struct evdev_client* dev, int dev_head) {
 			evdev_mt_event[dev_type]--;
 		}
 
-		if (cnt == 0 && dev->evdev->handle.dev != NULL) {
-			while(dev->evdev->handle.dev->name[cnt] != '\0') {
-				ib_trigger[trigger_cnt].dev_name[cnt] = dev->evdev->handle.dev->name[cnt];
-				cnt++;
-			}
-			ib_trigger[trigger_cnt].dev_name[cnt] = '\0';
+		/*
+		 * Claim a slot whose worker has already finished, so the payload
+		 * written below cannot race a worker still reading that slot.
+		 */
+		slot = ib_trigger_get_slot();
+		if (slot < 0) {
+			pr_booster("IB Trigger :: all slots busy, drop event");
+			continue;
 		}
 
-		pr_booster("Dev Name : %s(%d), Key Id(%d), IB_Cnt(%d)", ib_trigger[trigger_cnt].dev_name, dev_type, keyId, trigger_cnt);
+		if (cnt == 0 && dev->evdev->handle.dev != NULL) {
+			while (cnt < (int)sizeof(ib_trigger[slot].dev_name) - 1 &&
+					dev->evdev->handle.dev->name[cnt] != '\0') {
+				ib_trigger[slot].dev_name[cnt] = dev->evdev->handle.dev->name[cnt];
+				cnt++;
+			}
+			ib_trigger[slot].dev_name[cnt] = '\0';
+		}
 
-		ib_trigger[trigger_cnt].key_id = keyId;
-		ib_trigger[trigger_cnt].event_type = enable;
-		ib_trigger[trigger_cnt].dev_type = dev_type;
+		pr_booster("Dev Name : %s(%d), Key Id(%d), IB_Slot(%d)", ib_trigger[slot].dev_name, dev_type, keyId, slot);
 
-		queue_work(ev_unbound_wq, &(ib_trigger[trigger_cnt++].ib_trigger_work));
-		trigger_cnt = (trigger_cnt == MAX_IB_COUNT) ? 0 : trigger_cnt;
+		ib_trigger[slot].key_id = keyId;
+		ib_trigger[slot].event_type = enable;
+		ib_trigger[slot].dev_type = dev_type;
+
+		if (!queue_work(ev_unbound_wq, &ib_trigger[slot].ib_trigger_work))
+			smp_store_release(&ib_trigger[slot].in_use, 0);
 	}
 }
 #endif //--CONFIG_SEC_INPUT_BOOSTER
