@@ -441,7 +441,11 @@ static void rc_flush_page(int pool_id, struct cleancache_filekey key,
 		return;
 
 	if (handle != ZERO_HANDLE)
-		region_flush_cache(handle);
+		/*
+		 * Pass this key so region_load_cache() can reject a
+		 * handle recycled after rc_load_del_handle().
+		 */
+		region_load_cache(handle, NULL, pool_id, key.u.ino, index);
 
 	atomic_inc(&rc_num_succ_flush_page);
 }

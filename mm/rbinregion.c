@@ -152,11 +152,17 @@ int region_load_cache(struct rr_handle *handle, struct page *dst,
 		goto out;
 
 	spin_lock_irqsave(&region.lru_lock, flags);
-	/* skip if handle is invalid (freed or overwritten) */
+	/*
+	 * Skip if handle is invalid (freed or overwritten).  The identity
+	 * check must also run for flush (dst == NULL): after
+	 * rc_load_del_handle() drops the xarray entry a concurrent store
+	 * can recycle this handle for another page.  Flushing then
+	 * destroys that page's cache slot.
+	 */
 	if ((handle->usage != RC_INUSE) ||
-			(dst && (handle->pool_id != pool_id ||
+			(handle->pool_id != pool_id ||
 			handle->rb_index != rb_index ||
-			handle->ra_index != ra_index))) {
+			handle->ra_index != ra_index)) {
 		spin_unlock_irqrestore(&region.lru_lock, flags);
 		goto out;
 	}
