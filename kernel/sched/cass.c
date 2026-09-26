@@ -201,12 +201,21 @@ done:
 
 static int cass_best_cpu(struct task_struct *p, int prev_cpu, bool sync, bool rt)
 {
-	/* Initialize @best such that @best always has a valid CPU at the end */
+	/*
+	 * Initialize @best such that @best always has a valid CPU at the
+	 * end.  prev_cpu is the caller's fallback: if CPU hotplug empties
+	 * cpu_active_mask between the cpumask_intersects() check in the
+	 * caller and this scan, the loop body never runs and we would
+	 * otherwise return stack garbage.
+	 */
 	struct cass_cpu_cand cands[2], *best = cands;
 	int this_cpu = raw_smp_processor_id();
 	unsigned long p_util, uc_min;
 	bool has_idle = false;
 	int cidx = 0, cpu;
+
+	cands[0].cpu = prev_cpu;
+	cands[1].cpu = prev_cpu;
 
 	/*
 	 * Get the utilization and uclamp minimum threshold for this task. Note
