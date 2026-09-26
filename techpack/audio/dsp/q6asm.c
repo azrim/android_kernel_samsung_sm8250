@@ -2008,6 +2008,17 @@ static int32_t q6asm_callback(struct apr_client_data *data, void *priv)
 				__func__, data->payload_size);
 	}
 	if (data->opcode == APR_BASIC_RSP_RESULT) {
+		/*
+		 * payload can be shorter than the opcode word; payload[0] must
+		 * not be dereferenced before its size is known.
+		 */
+		if (data->payload_size < sizeof(payload[0])) {
+			pr_err("%s: basic rsp payload size[%d] too small\n",
+				__func__, data->payload_size);
+			spin_unlock_irqrestore(
+				&(session[session_id].session_lock), flags);
+			return -EINVAL;
+		}
 		switch (payload[0]) {
 		case ASM_STREAM_CMD_SET_PP_PARAMS_V2:
 		case ASM_STREAM_CMD_SET_PP_PARAMS_V3:
@@ -2493,6 +2504,18 @@ static int32_t q6asm_callback(struct apr_client_data *data, void *priv)
 		wake_up(&ac->cmd_wait);
 		break;
 	case ASM_SESSION_CMDRSP_GET_PATH_DELAY_V2:
+		/*
+		 * Both payload[0] and payload[1] are read below, so the size
+		 * must be validated before either is dereferenced.
+		 */
+		if (data->payload_size < 2 * sizeof(uint32_t)) {
+			pr_err("%s: payload size of %x is less than expected.\n",
+				__func__, data->payload_size);
+			atomic_set(&ac->cmd_state, -EINVAL);
+			ac->path_delay = UINT_MAX;
+			wake_up(&ac->cmd_wait);
+			break;
+		}
 		if (data->payload_size >= 3 * sizeof(uint32_t))
 			pr_debug("%s: ASM_SESSION_CMDRSP_GET_PATH_DELAY_V2 session %d status 0x%x msw %u lsw %u\n",
 					__func__, ac->session, payload[0], payload[2],
