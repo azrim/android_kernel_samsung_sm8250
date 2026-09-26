@@ -56,7 +56,7 @@ static int ksu_install_fd_with_permissions(unsigned int fd_flags, unsigned long 
 	}
 
 	fd_install(fd, filp);
-	pr_info("ksu fd installed: %d for pid %d\n", fd, current->pid);
+	pr_debug("ksu fd installed: %d for pid %d\n", fd, current->pid);
 	return fd;
 }
 
