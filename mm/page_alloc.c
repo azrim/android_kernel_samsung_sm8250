@@ -5399,7 +5399,12 @@ long si_mem_available(void)
 	available += reclaimable - min(reclaimable / 2, wmark_low);
 
 #ifdef CONFIG_ION_RBIN_HEAP
-	available += atomic_read(&rbin_cached_pages);
+	/*
+	 * rbin cache is reclaimable in principle but not free buddy
+	 * pages.  Counting it made si_mem_available() look healthy while
+	 * order-0 user allocations (e.g. swap-in) were already failing.
+	 */
+	available += atomic_read(&rbin_cached_pages) / 2;
 #endif
 	if (available < 0)
 		available = 0;

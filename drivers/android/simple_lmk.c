@@ -9,6 +9,7 @@
 #include <linux/kthread.h>
 #include <linux/math64.h>
 #include <linux/mm.h>
+#include <linux/vmstat.h>
 #include <linux/sort.h>
 #include <linux/moduleparam.h>
 #include <linux/mutex.h>
@@ -156,8 +157,16 @@ static unsigned int max_kills = CONFIG_ANDROID_SIMPLE_LMK_MAX_KILLS;
  */
 static unsigned int poll_msec = 200;
 
-/* Skip routine reclaim while at least this much memory is available, in MiB */
-static unsigned int reserve_mib = 1024;
+/*
+ * Skip routine reclaim while at least this much memory is available, in MiB.
+ *
+ * si_mem_available() counts roughly half the page cache as free, so this
+ * number is an *estimate*.  When free pages are already under the min
+ * watermark we ignore it entirely (see pages_below_min_wmark()) and kill
+ * anyway -- otherwise binder swap-in and other user faults fail with
+ * warn_alloc while LMK still thinks there is plenty of "available" RAM.
+ */
+static unsigned int reserve_mib = 256;
 
 /*
  * Minimum settle time after a reclaim that killed victims, in ms. The victims
@@ -747,6 +756,24 @@ static bool scan_and_kill(short adj_floor, struct mem_cgroup *scope)
 	return nr_to_kill > 0;
 }
 
+/*
+ * True when the buddy allocator is already at the min watermark.  This is
+ * a hard signal: si_mem_available() can still report GiBs of "available"
+ * memory (page cache / slab / rbin) that reclaim is not actually giving
+ * back, and user allocations for swap-in start failing.
+ */
+static bool pages_below_min_wmark(void)
+{
+	unsigned long free = global_zone_page_state(NR_FREE_PAGES);
+	unsigned long min = 0;
+	struct zone *zone;
+
+	for_each_zone(zone)
+		min += min_wmark_pages(zone);
+
+	return free < min;
+}
+
 static bool reclaim_needed(int *adj_floor, struct mem_cgroup **scope)
 {
 	struct psi_trigger *t;
@@ -790,7 +817,8 @@ static bool reclaim_needed(int *adj_floor, struct mem_cgroup **scope)
 	 * is never gated: when the allocator is out of memory, waiting is a
 	 * luxury.
 	 */
-	if (needed && grace_msec && READ_ONCE(last_reclaim_end) &&
+	if (needed && grace_msec && !pages_below_min_wmark() &&
+	    READ_ONCE(last_reclaim_end) &&
 	    time_before(jiffies, READ_ONCE(last_reclaim_end) +
 			msecs_to_jiffies(grace_msec))) {
 		stat_grace_dropped++;
@@ -805,7 +833,13 @@ static bool reclaim_needed(int *adj_floor, struct mem_cgroup **scope)
 	 * returning false here makes it invisible to stat_events, and the
 	 * counter would otherwise under-report real memory pressure.
 	 */
-	if (needed && reserve_mib && si_mem_available() >
+	/*
+	 * Only trust si_mem_available() when the buddy allocator is
+	 * healthy.  Under the min watermark, cache/slab estimates are
+	 * fiction and we must kill.
+	 */
+	if (needed && reserve_mib && !pages_below_min_wmark() &&
+	    si_mem_available() >
 	    ((unsigned long)reserve_mib << (20 - PAGE_SHIFT))) {
 		stat_gated++;
 		return false;
