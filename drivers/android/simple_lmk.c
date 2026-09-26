@@ -17,6 +17,9 @@
 #include <linux/sched/task.h>
 #include <linux/psi.h>
 #include <linux/psi_types.h>
+#include <linux/cgroup.h>
+#include <linux/memcontrol.h>
+#include <linux/simple_lmk.h>
 #include <uapi/linux/sched/types.h>
 
 /* Consider at most this many victims per reclaim */
@@ -73,6 +76,28 @@ static bool reclaim_active;
 static DEFINE_MUTEX(reclaim_lock);
 static atomic_t needs_emergency = ATOMIC_INIT(0);
 static atomic_t needs_reap = ATOMIC_INIT(0);
+
+/*
+ * Memcg cooperation (OneUI).  The memory controller stays enabled
+ * because Samsung userspace expects it; Simple LMK treats a group's
+ * limit as a kill signal instead of charging past it silently.
+ *
+ * emergency_scope pins the memcg of a memcg-OOM until the reclaim
+ * thread consumes it.  NULL means a global (PSI / stock OOM) pass.
+ * css_tryget() in the notifier; css_put() after the scoped scan.
+ */
+static struct mem_cgroup *emergency_scope;
+/* Protects emergency_scope; held from the allocator OOM path, so spinlock */
+static DEFINE_SPINLOCK(scope_lock);
+static bool memcg_aware = true;
+/*
+ * When a candidate's memcg is at or above this percentage of its
+ * limit, boost its kill score so global PSI passes prefer the group
+ * that is actually about to OOM, not a random background app.
+ */
+static unsigned int memcg_boost_pct = 80;
+static unsigned long stat_memcg_scoped;
+static unsigned long stat_memcg_skipped;
 
 /*
  * What the last completed scan achieved, published for the OOM notifier.
@@ -208,6 +233,36 @@ static void victim_swap(void *lhs_ptr, void *rhs_ptr, int size)
 	swap(*lhs, *rhs);
 }
 
+static bool slmk_memcg_in_scope(struct mem_cgroup *memcg,
+				struct mem_cgroup *scope)
+{
+	for (; memcg; memcg = parent_mem_cgroup(memcg))
+		if (memcg == scope)
+			return true;
+	return false;
+}
+
+/* Caller must hold RCU or a css ref on the result's group. */
+static struct mem_cgroup *slmk_task_memcg(struct task_struct *tsk)
+{
+	if (!memcg_aware)
+		return NULL;
+	return mem_cgroup_from_task(tsk);
+}
+
+static bool slmk_memcg_hot(struct mem_cgroup *memcg)
+{
+	unsigned long max, usage;
+
+	if (!memcg || !memcg_aware || !memcg_boost_pct)
+		return false;
+	max = mem_cgroup_get_max(memcg);
+	if (!max)
+		return false;
+	usage = page_counter_read(&memcg->memory);
+	return usage * 100 >= max * memcg_boost_pct;
+}
+
 static unsigned long get_reclaimable_mm_pages(struct mm_struct *mm)
 {
 	/*
@@ -250,7 +305,7 @@ static unsigned long get_mm_kill_score(struct mm_struct *mm)
 }
 
 static unsigned long find_victims(int *vindex, unsigned long target,
-				  short adj_floor)
+				  short adj_floor, struct mem_cgroup *scope)
 {
 	short i, min_adj = SHRT_MAX, max_adj = 0;
 	unsigned long pages_found = 0;
@@ -318,6 +373,20 @@ static unsigned long find_victims(int *vindex, unsigned long target,
 		     boot_now - tsk->real_start_time < grace_ns))
 			continue;
 
+		/*
+		 * Memcg OOM pass: only kill inside the group that is
+		 * over its limit (or a descendant).  Killing a cached
+		 * app in some other memcg cannot relieve this charge.
+		 */
+		if (scope) {
+			struct mem_cgroup *memcg = slmk_task_memcg(tsk);
+
+			if (!memcg || !slmk_memcg_in_scope(memcg, scope)) {
+				stat_memcg_skipped++;
+				continue;
+			}
+		}
+
 		/* Store the task in a linked-list bucket based on its adj */
 		tsk->simple_lmk_next = task_bucket[adj];
 		task_bucket[adj] = tsk;
@@ -378,6 +447,17 @@ static unsigned long find_victims(int *vindex, unsigned long target,
 			victims[*vindex].size = get_reclaimable_mm_pages(mm);
 			victims[*vindex].score = get_mm_kill_score(mm);
 			victims[*vindex].anon = 0;
+
+			/*
+			 * Prefer the process sitting in a memcg that is
+			 * about to hit its limit: that is the allocation
+			 * that will trip memcg OOM next, and its pages are
+			 * charged to a group OneUI userspace is watching.
+			 */
+			if (slmk_memcg_hot(slmk_task_memcg(vtsk)))
+				victims[*vindex].score = victims[*vindex].score
+							 ? victims[*vindex].score << 1
+							 : 1;
 
 			/* Count the number of pages that have been found */
 			pages_found += victims[*vindex].size;
@@ -512,11 +592,13 @@ static unsigned long reclaim_target_pages(void)
 }
 
 /* Returns whether any victim was killed */
-static bool scan_and_kill(short adj_floor)
+static bool scan_and_kill(short adj_floor, struct mem_cgroup *scope)
 {
 	int i, nr_to_kill, nr_found = 0, kill_cap;
 	unsigned long pages_found, pages_freed = 0, target;
 
+	if (scope)
+		stat_memcg_scoped++;
 	target = reclaim_target_pages();
 	kill_cap = clamp_t(unsigned int, max_kills, 1, MAX_VICTIMS);
 
@@ -529,7 +611,7 @@ static bool scan_and_kill(short adj_floor)
 	write_unlock(&mm_free_lock);
 
 	/* Populate the victims array with tasks sorted by adj and then score */
-	pages_found = find_victims(&nr_found, target, adj_floor);
+	pages_found = find_victims(&nr_found, target, adj_floor, scope);
 	nr_found = compact_victims(nr_found);
 	if (unlikely(!nr_found)) {
 		stat_no_victims++;
@@ -665,14 +747,20 @@ static bool scan_and_kill(short adj_floor)
 	return nr_to_kill > 0;
 }
 
-static bool reclaim_needed(int *adj_floor)
+static bool reclaim_needed(int *adj_floor, struct mem_cgroup **scope)
 {
 	struct psi_trigger *t;
 	bool needed;
 
-	/* The emergency batch armed by the OOM notifier */
+	*scope = NULL;
+
+	/* The emergency batch armed by the OOM / memcg-OOM notifier */
 	if (atomic_cmpxchg(&needs_emergency, 1, 0)) {
 		*adj_floor = ADJ_FLOOR_EMERGENCY;
+		spin_lock(&scope_lock);
+		*scope = emergency_scope;
+		emergency_scope = NULL;
+		spin_unlock(&scope_lock);
 		return true;
 	}
 
@@ -734,6 +822,7 @@ static int simple_lmk_reclaim_thread(void *data)
 
 	while (1) {
 		int adj_floor = ADJ_FLOOR_ROUTINE;
+		struct mem_cgroup *scope = NULL;
 		bool killed;
 		/*
 		 * Clamped: this is user-writable, and a zero timeout would
@@ -754,7 +843,7 @@ static int simple_lmk_reclaim_thread(void *data)
 					     timeout);
 		if (kthread_should_stop())
 			break;
-		if (!reclaim_needed(&adj_floor))
+		if (!reclaim_needed(&adj_floor, &scope))
 			continue;
 		stat_events++;
 		/*
@@ -765,7 +854,9 @@ static int simple_lmk_reclaim_thread(void *data)
 		 */
 		mutex_lock(&reclaim_lock);
 		atomic_set(&kill_state, SLMK_RUNNING);
-		killed = scan_and_kill(adj_floor);
+		killed = scan_and_kill(adj_floor, scope);
+		if (scope)
+			css_put(&scope->css);
 		atomic_set(&kill_state, killed ? SLMK_KILLED : SLMK_EMPTY);
 		mutex_unlock(&reclaim_lock);
 	}
@@ -930,6 +1021,46 @@ void simple_lmk_mm_freed(struct mm_struct *mm)
 		}
 	}
 	write_unlock(&mm_free_lock);
+}
+
+/*
+ * Memcg OOM hook.  Called from out_of_memory() with the charge still
+ * outstanding and the allocator locks held: must not sleep.  Pins the
+ * group for the scoped pass and wakes the reclaim thread.  Does not
+ * itself choose a victim -- scan_and_kill() does that in process
+ * context, where it may sleep.
+ */
+void simple_lmk_notify_memcg_oom(struct mem_cgroup *memcg)
+{
+	struct mem_cgroup *old_scope;
+
+	if (!memcg_aware || !memcg)
+		return;
+
+	/*
+	 * Replace any older scope: the newest over-limit group is the
+	 * one whose charge is stuck now.  tryget fails if the css is
+	 * already offline; then leave the previous scope alone.
+	 */
+	if (!css_tryget(&memcg->css))
+		return;
+
+	/*
+	 * out_of_memory() runs in the charge path and must not sleep,
+	 * so this lock is a spinlock, not slmk_lock's mutex.  css_put()
+	 * does not sleep.
+	 */
+	spin_lock(&scope_lock);
+	old_scope = emergency_scope;
+	emergency_scope = memcg;
+	spin_unlock(&scope_lock);
+	if (old_scope)
+		css_put(&old_scope->css);
+
+	atomic_set(&needs_emergency, 1);
+	smp_mb__after_atomic();
+	if (waitqueue_active(&reclaim_waitq))
+		wake_up(&reclaim_waitq);
 }
 
 static int simple_lmk_oom_cb(struct notifier_block *nb,
@@ -1284,6 +1415,8 @@ static const struct kernel_param_ops simple_lmk_init_ops = {
 #define MODULE_PARAM_PREFIX "simple_lmk."
 
 module_param_cb(psi_threshold_us, &psi_threshold_ops, &psi_threshold_us, 0644);
+module_param_named(memcg_aware, memcg_aware, bool, 0644);
+module_param_named(memcg_boost_pct, memcg_boost_pct, uint, 0644);
 MODULE_PARM_DESC(psi_threshold_us,
 		 "Microseconds of memory stall per window before reclaiming; not a percentage");
 module_param_cb(psi_window_us, &psi_window_ops, &psi_window_us, 0644);

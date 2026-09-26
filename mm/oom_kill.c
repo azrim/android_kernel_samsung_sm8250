@@ -18,6 +18,7 @@
  */
 
 #include <linux/oom.h>
+#include <linux/simple_lmk.h>
 #include <linux/mm.h>
 #include <linux/err.h>
 #include <linux/gfp.h>
@@ -1342,8 +1343,20 @@ bool out_of_memory(struct oom_control *oc)
 	 * the allocation succeeds, and global pressure stays Simple LMK's job
 	 * off PSI stalls.
 	 */
-	if (IS_ENABLED(CONFIG_ANDROID_SIMPLE_LMK) && is_memcg_oom(oc))
+	if (IS_ENABLED(CONFIG_ANDROID_SIMPLE_LMK) && is_memcg_oom(oc)) {
+		/*
+		 * OneUI needs the memory controller for userspace, so
+		 * memcg stays enabled.  Its limit is a kill signal for
+		 * Simple LMK rather than something we blindly charge
+		 * past forever: queue a pass scoped to this group so the
+		 * reclaim thread kills inside it.  Still answer false so
+		 * this charge is forced through -- the scoped kill cannot
+		 * finish before we return, and a true answer would reset
+		 * __mem_cgroup_try_charge()'s retry budget into a loop.
+		 */
+		simple_lmk_notify_memcg_oom(oc->memcg);
 		return false;
+	}
 
 	if (oom_killer_disabled)
 		return false;
