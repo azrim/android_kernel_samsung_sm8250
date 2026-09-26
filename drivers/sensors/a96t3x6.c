@@ -3825,8 +3825,8 @@ static int a96t3x6_probe(struct i2c_client *client,
 
 err_req_irq:
 	sensors_unregister(data->dev, grip_sensor_attributes);
-	input_unregister_device(noti_input_dev);
 err_sensor_register:
+	input_unregister_device(noti_input_dev);
 err_reg_noti_input_dev:
 	sysfs_remove_group(&data->input_dev->dev.kobj,
 			&a96t3x6_attribute_group);
