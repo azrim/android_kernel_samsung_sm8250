@@ -23,6 +23,7 @@
 #define GRIP_ERR(fmt, ...) pr_err("[GRIP] %s: "fmt, __func__, ##__VA_ARGS__)
 #define GRIP_INFO(fmt, ...) pr_info("[GRIP] %s: "fmt, __func__, ##__VA_ARGS__)
 #define GRIP_WARN(fmt, ...) pr_warn("[GRIP] %s: "fmt, __func__, ##__VA_ARGS__)
+#define GRIP_DEBUG(fmt, ...) pr_debug("[GRIP] %s: "fmt, __func__, ##__VA_ARGS__)
 
 #define VENDOR_NAME	"ABOV"
 #define MODEL_NAME	"A96T3X6"

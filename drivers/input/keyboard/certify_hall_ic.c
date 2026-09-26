@@ -63,13 +63,13 @@ static void certify_cover_work(struct work_struct *work)
 
 	first = !gpio_get_value(ddata->gpio_certify_cover);
 
-	pr_info("keys:%s #1 : %d\n", __func__, first);
+	pr_debug("keys:%s #1 : %d\n", __func__, first);
 
 	msleep(50);
 
 	second = !gpio_get_value(ddata->gpio_certify_cover);
 
-	pr_info("keys:%s #2 : %d\n", __func__, second);
+	pr_debug("keys:%s #2 : %d\n", __func__, second);
 
 	if (first == second) {
 		certify_cover = first;
@@ -87,7 +87,7 @@ static void certify_cover_work(struct work_struct *work)
 
 	first = !gpio_get_value(ddata->gpio_certify_cover);
 
-	pr_info("keys:%s #1 : %d\n", __func__, first);
+	pr_debug("keys:%s #1 : %d\n", __func__, first);
 
 	certify_cover = first;
 	input_report_switch(ddata->input,
@@ -119,7 +119,7 @@ static irqreturn_t certify_cover_detect(int irq, void *dev_id)
 
 	flip_certify_status = !gpio_get_value(ddata->gpio_certify_cover);
 
-	pr_info("keys:%s flip_certify_status : %d\n",
+	pr_debug("keys:%s flip_certify_status : %d\n",
 		 __func__, flip_certify_status);
 
 	__certify_cover_detect(ddata, flip_certify_status);
@@ -264,6 +264,13 @@ static int certify_hall_probe(struct platform_device *pdev)
 	return 0;
 
  fail1:
+	if (ddata->input) {
+		if (ddata->irq_certify_cover > 0)
+			free_irq(ddata->irq_certify_cover, ddata);
+		cancel_delayed_work_sync(&ddata->certify_cover_dwork);
+		wake_lock_destroy(&ddata->certify_wake_lock);
+		input_free_device(ddata->input);
+	}
 	kfree(ddata);
 
 	return error;
@@ -277,6 +284,11 @@ static int certify_hall_remove(struct platform_device *pdev)
 	pr_info("%s start\n", __func__);
 
 	device_init_wakeup(&pdev->dev, 0);
+
+	/* Stop the IRQ first, then drain any queued debounce work. */
+	if (ddata->irq_certify_cover > 0)
+		free_irq(ddata->irq_certify_cover, ddata);
+	cancel_delayed_work_sync(&ddata->certify_cover_dwork);
 
 	input_unregister_device(input);
 

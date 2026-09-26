@@ -439,6 +439,7 @@ error_return:
 
 	if (priv->boot_slpi_obj) {
 		kobject_del(priv->boot_slpi_obj);
+		kobject_put(priv->boot_slpi_obj);
 		priv->boot_slpi_obj = NULL;
 	}
 
@@ -462,6 +463,7 @@ static int slpi_loader_remove(struct platform_device *pdev)
 	if (priv->boot_slpi_obj) {
 		sysfs_remove_group(priv->boot_slpi_obj, priv->attr_group);
 		kobject_del(priv->boot_slpi_obj);
+		kobject_put(priv->boot_slpi_obj);
 		priv->boot_slpi_obj = NULL;
 	}
 
@@ -544,7 +546,7 @@ static int sensors_ssc_probe(struct platform_device *pdev)
 	}
 
 	sns_ctl.dev_class = class_create(THIS_MODULE, CLASS_NAME);
-	if (sns_ctl.dev_class == NULL) {
+	if (IS_ERR(sns_ctl.dev_class)) {
 		pr_err("%s: class_create fail.\n", __func__);
 		goto res_err;
 	}
@@ -596,6 +598,7 @@ res_err:
 static int sensors_ssc_remove(struct platform_device *pdev)
 {
 	slpi_loader_remove(pdev);
+	cancel_work_sync(&slpi_ldr_work);
 	cdev_del(sns_ctl.cdev);
 	kfree(sns_ctl.cdev);
 	sns_ctl.cdev = NULL;

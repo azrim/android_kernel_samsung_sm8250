@@ -990,7 +990,7 @@ static void a96t3x6_debug_work_func(struct work_struct *work)
 
 #if defined(CONFIG_TABLET_MODEL_CONCEPT)
 	if ((hall_state == HALL_CLOSE_STATE && hall_prev_state != hall_state)) {
-		GRIP_INFO("%s - hall is closed %d %d\n", __func__, hall_state, cert_hall_state);
+		GRIP_DEBUG("%s - hall is closed %d %d\n", __func__, hall_state, cert_hall_state);
 		GRIP_INFO("%s - hall reset skip for tablet only\n", __func__);
 	} else if ((cert_hall_state == HALL_CLOSE_STATE && cert_hall_prev_state != cert_hall_state)
 #if defined(CONFIG_WACOM_HALL)
@@ -1010,7 +1010,7 @@ static void a96t3x6_debug_work_func(struct work_struct *work)
 	    || (wacom_hall_state == HALL_CLOSE_STATE && wacom_hall_prev_state != wacom_hall_state)
 #endif
 		) {
-		GRIP_INFO("%s - hall is closed %d %d\n", __func__, hall_state, cert_hall_state);
+		GRIP_DEBUG("%s - hall is closed %d %d\n", __func__, hall_state, cert_hall_state);
 #if defined(CONFIG_WACOM_HALL)
 		GRIP_INFO("%s - wacom hall is closed %d\n", __func__, wacom_hall_state);
 #endif
@@ -1147,7 +1147,7 @@ static irqreturn_t a96t3x6_interrupt(int irq, void *dev_id)
 		}
 	}
 
-	GRIP_INFO("buf = 0x%02x\n", buf);
+	GRIP_DEBUG("buf = 0x%02x\n", buf);
 
 	grip_data = (buf >> 4) & 0x03;
 	grip_press = !(grip_data % 2);
@@ -1158,7 +1158,7 @@ static irqreturn_t a96t3x6_interrupt(int irq, void *dev_id)
 
 	if (grip_data) {
 		if (data->skip_event) {
-			GRIP_INFO("int was generated, but event skipped\n");
+			GRIP_DEBUG("int was generated, but event skipped\n");
 		} else {
 			if (grip_press) {
 				input_report_rel(data->input_dev, REL_MISC, 1);
@@ -1168,7 +1168,7 @@ static irqreturn_t a96t3x6_interrupt(int irq, void *dev_id)
 				input_report_rel(data->input_dev, REL_MISC, 2);
 				if (data->is_unknown_mode == UNKNOWN_ON && data->motion) {
 					if (data->first_working) {
-						GRIP_INFO("unknown mode off\n");
+						GRIP_DEBUG("unknown mode off\n");
 						data->is_unknown_mode = UNKNOWN_OFF;
 					}
 				}
@@ -1183,7 +1183,7 @@ static irqreturn_t a96t3x6_interrupt(int irq, void *dev_id)
 #ifdef CONFIG_SENSORS_A96T3X6_2CH
 	if (grip_data_2ch) {
 		if (data->skip_event) {
-			GRIP_INFO("2ch int was generated, but event skipped\n");
+			GRIP_DEBUG("2ch int was generated, but event skipped\n");
 		} else {
 			if (grip_press_2ch) {
 				input_report_rel(data->input_dev, REL_DIAL, 1);
@@ -1193,7 +1193,7 @@ static irqreturn_t a96t3x6_interrupt(int irq, void *dev_id)
 				input_report_rel(data->input_dev, REL_DIAL, 2);
 				if (data->is_unknown_mode_2ch == UNKNOWN_ON && data->motion) {
 					if (data->first_working_2ch) {
-						GRIP_INFO("2ch unknown mode off\n");
+						GRIP_DEBUG("2ch unknown mode off\n");
 						data->is_unknown_mode_2ch = UNKNOWN_OFF;
 					}
 				}
@@ -1206,7 +1206,7 @@ static irqreturn_t a96t3x6_interrupt(int irq, void *dev_id)
 		}
 	}
 #endif
-	a96t3x6_diff_getdata(data, 1);
+	a96t3x6_diff_getdata(data, 0);
 #ifdef CONFIG_SENSORS_A96T3X6_2CH
 	a96t3x6_2ch_diff_getdata(data);
 #endif	
@@ -3581,7 +3581,7 @@ static int a96t3x6_parse_dt(struct a96t3x6_data *data, struct device *dev)
 		data->earjack_noise = 1;
 	}
 
-	p = pinctrl_get_select_default(dev);
+	p = devm_pinctrl_get_select_default(dev);
 	if (IS_ERR(p)) {
 		GRIP_INFO("failed pinctrl_get\n");
 	}
@@ -3789,13 +3789,13 @@ static int a96t3x6_probe(struct i2c_client *client,
 
 	ret = request_threaded_irq(client->irq, NULL, a96t3x6_interrupt,
 			IRQF_TRIGGER_LOW | IRQF_ONESHOT, MODEL_NAME, data);
-
-	disable_irq(client->irq);
-
 	if (ret < 0) {
 		GRIP_ERR("Failed to register interrupt\n");
 		goto err_req_irq;
 	}
+
+	disable_irq(client->irq);
+
 	data->irq = client->irq;
 	data->dev = &client->dev;
 
@@ -3859,6 +3859,14 @@ static int a96t3x6_remove(struct i2c_client *client)
 	hall_ic_unregister_notify(&data->hall_nb);
 #endif
 	device_init_wakeup(&client->dev, false);
+
+	/*
+	 * Tear the IRQ down before the wake lock and work objects it may
+	 * touch from the threaded handler.
+	 */
+	if (data->irq >= 0)
+		free_irq(data->irq, data);
+
 	wake_lock_destroy(&data->grip_wake_lock);
 	cancel_delayed_work_sync(&data->debug_work);
 #ifdef CONFIG_SENSORS_FW_VENDOR
@@ -3873,8 +3881,9 @@ static int a96t3x6_remove(struct i2c_client *client)
 	cancel_work_sync(&data->cmdoff_work);
 	cancel_work_sync(&data->cmdon_work);
 #endif
-	if (data->irq >= 0)
-		free_irq(data->irq, data);
+#if defined(CONFIG_CCIC_NOTIFIER) && defined(CONFIG_USB_TYPEC_MANAGER_NOTIFIER)
+	manager_notifier_unregister(&data->cpuidle_ccic_nb);
+#endif
 	sensors_unregister(data->dev, grip_sensor_attributes);
 	sysfs_remove_group(&data->noti_input_dev->dev.kobj,
 				&a96t3x6_attribute_group);
