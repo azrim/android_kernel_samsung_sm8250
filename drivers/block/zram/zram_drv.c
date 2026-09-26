@@ -2024,7 +2024,15 @@ static void zram_handle_comp_page(struct work_struct *work)
 		return;
 	}
 
+	/*
+	 * Take init_lock so zram_reset_device() cannot free table/comp
+	 * underneath us.  The previous NULL checks were TOCTOU: reset
+	 * can drop the write lock and free between the test and use.
+	 * down_read() may sleep, which is fine in this work context.
+	 */
+	down_read(&zram->init_lock);
 	if (!zram->comp || !zram->table) {
+		up_read(&zram->init_lock);
 		kunmap_atomic(src);
 		page_endio(dst_page, op_is_write(bio_op(bio)), -EIO);
 		bio_put(bio);
@@ -2063,6 +2071,7 @@ static void zram_handle_comp_page(struct work_struct *work)
 	bio_put(bio);
 
 	zram_handle_remain(zram, src_page, blk_idx);
+	up_read(&zram->init_lock);
 	kfree(zw);
 	__free_page(src_page);
 }
