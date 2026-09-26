@@ -211,6 +211,10 @@ void max77705_ccic_event_work(void *data, int dest, int id, int attach, int even
 
 	msg_maxim("usb: DIAES %d-%d-%d-%d-%d", dest, id, attach, event, sub);
 	event_work = kmalloc(sizeof(struct ccic_state_work), GFP_ATOMIC);
+	if (!event_work) {
+		msg_maxim("usb: failed to alloc ccic_state_work");
+		return;
+	}
 	INIT_WORK(&event_work->ccic_work, max77705_ccic_event_notifier);
 
 	event_work->dest = dest;
@@ -1019,7 +1023,10 @@ int max77705_cc_init(struct max77705_usbc_platform_data *usbc_data)
 	return 0;
 
 err_irq:
-	kfree(cc_data);
+	/*
+	 * cc_data is owned by usbc_data and freed by max77705_usbc_remove();
+	 * do not free it here or it becomes a double free.
+	 */
 	return ret;
 
 }

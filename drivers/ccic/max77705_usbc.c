@@ -802,10 +802,12 @@ int max77705_get_pd_support(struct max77705_usbc_platform_data *usbc_data)
 
 	np = of_find_compatible_node(NULL, NULL, "maxim,max77705");
 
-	if (np)
+	if (np) {
 		support_pd_role_swap = of_property_read_bool(np, "support_pd_role_swap");
-	else
+		of_node_put(np);
+	} else {
 		msg_maxim("np is null");
+	}
 
 	msg_maxim("TYPEC_CLASS: support_pd_role_swap is %d, usbc_data->pd_support : %d",
 		support_pd_role_swap, usbc_data->pd_support);
@@ -4055,6 +4057,14 @@ static int max77705_usbc_remove(struct platform_device *pdev)
 	free_irq(usbc_data->cc_data->irq_ccvcnstat, usbc_data);
 	free_irq(usbc_data->cc_data->irq_ccstat, usbc_data);
 
+	destroy_workqueue(usbc_data->op_wait_queue);
+	destroy_workqueue(usbc_data->op_send_queue);
+#if defined(CONFIG_CCIC_NOTIFIER)
+	destroy_workqueue(usbc_data->ccic_wq);
+#endif
+	if (usbc_data->pd_data->wqueue)
+		destroy_workqueue(usbc_data->pd_data->wqueue);
+
 	kfree(usbc_data->cc_data);
 	kfree(usbc_data->pd_data);
 	kfree(usbc_data);
@@ -4125,6 +4135,7 @@ static void max77705_usbc_shutdown(struct platform_device *pdev)
 			np = of_find_node_by_name(NULL, "qcom,dp_display");
 			gpio_dp_sw_oe = of_get_named_gpio(np, "qcom,aux-en-gpio", 0);
 			gpio_direction_output(gpio_dp_sw_oe, 1);
+			of_node_put(np);
 		}
 		max77705_write_reg(usbc_data->muic, REG_PD_INT_M, 0xFF);
 		max77705_write_reg(usbc_data->muic, REG_CC_INT_M, 0xFF);

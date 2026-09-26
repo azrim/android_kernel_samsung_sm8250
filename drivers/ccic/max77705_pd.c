@@ -1262,10 +1262,10 @@ static irqreturn_t max77705_pdmsg_irq(int irq, void *data)
 
 	max77705_read_reg(usbc_data->muic, REG_PD_STATUS0, &pd_data->pd_status0);
 	pdmsg = pd_data->pd_status0;
-	msg_maxim("IRQ(%d)_IN pdmsg: %02x", irq, pdmsg);
+	msg_maxim_dbg("IRQ(%d)_IN pdmsg: %02x", irq, pdmsg);
 	max77705_pd_check_pdmsg(usbc_data, pdmsg);
 	pd_data->pdsmg = pdmsg;
-	msg_maxim("IRQ(%d)_OUT", irq);
+	msg_maxim_dbg("IRQ(%d)_OUT", irq);
 
 	return IRQ_HANDLED;
 }
@@ -1358,7 +1358,7 @@ static void max77705_datarole_irq_handler(void *data, int irq)
 			>> FFS(BIT_PD_DataRole);
 	/* abnormal data role without setting power role */
 	if (usbc_data->cc_data->current_pr == 0xFF) {
-		msg_maxim("INVALID IRQ IRQ(%d)_OUT", irq);
+		msg_maxim_dbg("INVALID IRQ IRQ(%d)_OUT", irq);
 		return;
 	}
 
@@ -1601,6 +1601,9 @@ int max77705_pd_init(struct max77705_usbc_platform_data *usbc_data)
 	return 0;
 
 err_irq:
-	kfree(pd_data);
+	/*
+	 * pd_data is owned by usbc_data and freed by max77705_usbc_remove();
+	 * do not free it here or it becomes a double free.
+	 */
 	return ret;
 }

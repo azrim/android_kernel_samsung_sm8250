@@ -370,7 +370,15 @@ void factory_execute_monitor(int);
 #ifdef DEBUG_MAX77705
 #define msg_maxim(format, args...) \
 		pr_info("max77705: %s: " format "\n", __func__, ## args)
+/*
+ * msg_maxim_dbg() is the debug-level sibling of msg_maxim() for the hot
+ * paths (threaded IRQ handlers, state machines) that would otherwise
+ * flood dmesg on every event.
+ */
+#define msg_maxim_dbg(format, args...) \
+		pr_debug("max77705: %s: " format "\n", __func__, ## args)
 #else
 #define msg_maxim(format, args...)
+#define msg_maxim_dbg(format, args...)
 #endif /* DEBUG_MAX77766*/
 #endif
