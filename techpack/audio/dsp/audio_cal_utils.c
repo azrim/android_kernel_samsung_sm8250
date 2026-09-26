@@ -993,8 +993,14 @@ int cal_utils_set_cal(size_t data_size, void *data,
 		goto done;
 	}
 
+	/*
+	 * data_size is size_t, so the old "(data_size < 0)" test was dead.
+	 * The memcpy below subtracts sizeof(struct audio_cal_type_basic), so a
+	 * smaller data_size would underflow and copy a huge amount of memory.
+	 */
 	if ((data_size > get_user_cal_type_size(
-		cal_type->info.reg.cal_type)) || (data_size < 0)) {
+		cal_type->info.reg.cal_type)) ||
+		(data_size < sizeof(struct audio_cal_type_basic))) {
 		pr_err("%s: cal_type %d, data_size of %zd is invalid, expecting %zd!\n",
 			__func__, cal_type->info.reg.cal_type, data_size,
 			get_user_cal_type_size(cal_type->info.reg.cal_type));
