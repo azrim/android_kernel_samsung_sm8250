@@ -10294,6 +10294,25 @@ static int sec_battery_remove(struct platform_device *pdev)
 
 	pr_info("%s: ++\n", __func__);
 
+	/*
+	 * Stop the charger/USB notifiers first: their callbacks resolve back
+	 * to this struct via container_of(), so they must not be able to fire
+	 * after battery is freed below.
+	 */
+#if defined(CONFIG_USB_TYPEC_MANAGER_NOTIFIER)
+	manager_notifier_unregister(&battery->usb_typec_nb);
+#else
+#if defined(CONFIG_MUIC_NOTIFIER)
+	muic_notifier_unregister(&battery->batt_nb);
+#endif
+#if defined(CONFIG_CCIC_NOTIFIER)
+	pdic_notifier_unregister(&battery->pdic_nb);
+#endif
+#endif
+#if defined(CONFIG_VBUS_NOTIFIER)
+	vbus_notifier_unregister(&battery->vbus_nb);
+#endif
+
 	switch (battery->pdata->polling_type) {
 	case SEC_BATTERY_MONITOR_WORKQUEUE:
 		cancel_delayed_work(&battery->polling_work);
