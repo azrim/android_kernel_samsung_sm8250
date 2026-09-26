@@ -47,6 +47,12 @@ struct apr_reset_work {
 	struct work_struct work;
 };
 
+
+static inline struct apr_svc *apr_hdl_svc(void *handle)
+{
+	return ((struct apr_reg_handle *)handle)->svc;
+}
+
 struct apr_chld_device {
 	struct platform_device *pdev;
 	struct list_head node;
@@ -354,7 +360,7 @@ struct apr_client *apr_get_client(int dest_id, int client_id)
  */
 int apr_send_pkt(void *handle, uint32_t *buf)
 {
-	struct apr_svc *svc = handle;
+	struct apr_svc *svc = apr_hdl_svc(handle);
 	struct apr_client *clnt;
 	struct apr_hdr *hdr;
 	uint16_t dest_id;
@@ -483,6 +489,7 @@ struct apr_svc *apr_register(char *dest, char *svc_name, apr_fn svc_fn,
 	int domain_id = 0;
 	int temp_port = 0;
 	struct apr_svc *svc = NULL;
+	struct apr_reg_handle *hdl;
 	int rc = 0;
 	bool can_open_channel = true;
 	unsigned long flags;
@@ -575,11 +582,37 @@ struct apr_svc *apr_register(char *dest, char *svc_name, apr_fn svc_fn,
 		if (!svc->svc_cnt)
 			clnt->svc_cnt++;
 		spin_lock_irqsave(&svc->disp_lock, flags);
+		if (svc->port_fn[temp_port]) {
+			/* Slot still armed from a previous registration. */
+			spin_unlock_irqrestore(&svc->disp_lock, flags);
+			mutex_unlock(&svc->m_lock);
+			pr_err("%s: port %d already registered\n",
+				__func__, temp_port);
+			goto done;
+		}
 		svc->port_cnt++;
 		svc->port_fn[temp_port] = svc_fn;
 		svc->port_priv[temp_port] = priv;
 		svc->svc_cnt++;
 		spin_unlock_irqrestore(&svc->disp_lock, flags);
+		hdl = kzalloc(sizeof(*hdl), GFP_KERNEL);
+		if (!hdl) {
+			spin_lock_irqsave(&svc->disp_lock, flags);
+			svc->port_fn[temp_port] = NULL;
+			svc->port_priv[temp_port] = NULL;
+			if (svc->port_cnt)
+				svc->port_cnt--;
+			if (svc->svc_cnt)
+				svc->svc_cnt--;
+			if (!svc->svc_cnt && clnt->svc_cnt)
+				clnt->svc_cnt--;
+			spin_unlock_irqrestore(&svc->disp_lock, flags);
+			mutex_unlock(&svc->m_lock);
+			goto done;
+		}
+		hdl->id = svc->id;
+		hdl->port = temp_port;
+		hdl->svc = svc;
 	} else {
 		spin_lock_irqsave(&svc->disp_lock, flags);
 		if (!svc->fn) {
@@ -588,13 +621,34 @@ struct apr_svc *apr_register(char *dest, char *svc_name, apr_fn svc_fn,
 			svc->fn = svc_fn;
 			svc->priv = priv;
 			svc->svc_cnt++;
+		} else {
+			spin_unlock_irqrestore(&svc->disp_lock, flags);
+			mutex_unlock(&svc->m_lock);
+			goto done;
 		}
 		spin_unlock_irqrestore(&svc->disp_lock, flags);
+		hdl = kzalloc(sizeof(*hdl), GFP_KERNEL);
+		if (!hdl) {
+			spin_lock_irqsave(&svc->disp_lock, flags);
+			svc->fn = NULL;
+			svc->priv = NULL;
+			if (svc->svc_cnt)
+				svc->svc_cnt--;
+			if (!svc->svc_cnt && clnt->svc_cnt)
+				clnt->svc_cnt--;
+			spin_unlock_irqrestore(&svc->disp_lock, flags);
+			mutex_unlock(&svc->m_lock);
+			goto done;
+		}
+		hdl->id = svc->id;
+		hdl->port = APR_MAX_PORTS;
+		hdl->svc = svc;
 	}
 
 	mutex_unlock(&svc->m_lock);
+	return (struct apr_svc *)hdl;
 done:
-	return svc;
+	return NULL;
 }
 EXPORT_SYMBOL(apr_register);
 
@@ -772,7 +826,7 @@ void apr_cb_func(void *buf, int len, void *priv)
 	spin_lock_irqsave(&c_svc->disp_lock, flags);
 	temp_port = ((data.dest_port >> 8) * 8) + (data.dest_port & 0xFF);
 	if (((temp_port >= 0) && (temp_port < APR_MAX_PORTS))
-		&& (c_svc->port_cnt && c_svc->port_fn[temp_port]))
+		&& c_svc->port_fn[temp_port])
 		c_svc->port_fn[temp_port](&data,
 			c_svc->port_priv[temp_port]);
 	else if (c_svc->fn)
@@ -840,7 +894,7 @@ static void apr_reset_deregister(struct work_struct *work)
 int apr_start_rx_rt(void *handle)
 {
 	int rc = 0;
-	struct apr_svc *svc = handle;
+	struct apr_svc *svc = apr_hdl_svc(handle);
 	uint16_t dest_id = 0;
 	uint16_t client_id = 0;
 
@@ -891,7 +945,7 @@ EXPORT_SYMBOL(apr_start_rx_rt);
 int apr_end_rx_rt(void *handle)
 {
 	int rc = 0;
-	struct apr_svc *svc = handle;
+	struct apr_svc *svc = apr_hdl_svc(handle);
 	uint16_t dest_id = 0;
 	uint16_t client_id = 0;
 
@@ -940,7 +994,8 @@ EXPORT_SYMBOL(apr_end_rx_rt);
  */
 int apr_deregister(void *handle)
 {
-	struct apr_svc *svc = handle;
+	struct apr_reg_handle *hdl = handle;
+	struct apr_svc *svc;
 	struct apr_client *clnt;
 	uint16_t dest_id;
 	uint16_t client_id;
@@ -949,11 +1004,18 @@ int apr_deregister(void *handle)
 	if (!handle)
 		return -EINVAL;
 
+	svc = hdl->svc;
+	if (!svc) {
+		kfree(hdl);
+		return -EINVAL;
+	}
+
 	mutex_lock(&svc->m_lock);
 	if (!svc->svc_cnt) {
 		pr_err("%s: svc already deregistered. svc = %pK\n",
 			__func__, svc);
 		mutex_unlock(&svc->m_lock);
+		kfree(hdl);
 		return -EINVAL;
 	}
 
@@ -967,23 +1029,41 @@ int apr_deregister(void *handle)
 	 * updated port table).
 	 */
 	spin_lock_irqsave(&svc->disp_lock, flags);
-	if (svc->svc_cnt > 0) {
-		if (svc->port_cnt)
-			svc->port_cnt--;
-		svc->svc_cnt--;
-		if (!svc->svc_cnt) {
-			client[dest_id][client_id].svc_cnt--;
-			pr_debug("%s: service is reset %pK\n", __func__, svc);
+	if (hdl->port < APR_MAX_PORTS) {
+		/*
+		 * Invalidate this registration's dispatch slot before the
+		 * caller frees its priv.  Leaving port_fn[] set with a
+		 * stale priv is a UAF the next RX packet will call.
+		 */
+		if (svc->port_fn[hdl->port] || svc->port_priv[hdl->port]) {
+			svc->port_fn[hdl->port] = NULL;
+			svc->port_priv[hdl->port] = NULL;
+			if (svc->port_cnt)
+				svc->port_cnt--;
 		}
+		if (svc->svc_cnt)
+			svc->svc_cnt--;
+	} else if (svc->svc_cnt > 0) {
+		svc->fn = NULL;
+		svc->priv = NULL;
+		svc->svc_cnt--;
 	}
 
-	if (!svc->svc_cnt) {
+	if (!svc->svc_cnt && !svc->port_cnt) {
+		int p;
+
 		svc->priv = NULL;
 		svc->id = 0;
 		svc->fn = NULL;
 		svc->dest_id = 0;
 		svc->client_id = 0;
 		svc->need_reset = 0x0;
+		for (p = 0; p < APR_MAX_PORTS; p++) {
+			svc->port_fn[p] = NULL;
+			svc->port_priv[p] = NULL;
+		}
+		client[dest_id][client_id].svc_cnt--;
+		pr_debug("%s: service is reset %pK\n", __func__, svc);
 	}
 	spin_unlock_irqrestore(&svc->disp_lock, flags);
 
@@ -993,6 +1073,7 @@ int apr_deregister(void *handle)
 		client[dest_id][client_id].handle = NULL;
 	}
 	mutex_unlock(&svc->m_lock);
+	kfree(hdl);
 
 	return 0;
 }
@@ -1035,6 +1116,8 @@ EXPORT_SYMBOL(apr_reset);
 /* Dispatch the Reset events to Modem and audio clients */
 static void dispatch_event(unsigned long code, uint16_t proc)
 {
+	unsigned long flags;
+
 	struct apr_client *apr_client;
 	struct apr_client_data data;
 	struct apr_svc *svc;
@@ -1059,10 +1142,12 @@ static void dispatch_event(unsigned long code, uint16_t proc)
 		if (apr_client->svc[i].port_cnt) {
 			svc = &(apr_client->svc[i]);
 			svc->need_reset = 0x1;
+			spin_lock_irqsave(&svc->disp_lock, flags);
 			for (j = 0; j < APR_MAX_PORTS; j++)
 				if (svc->port_fn[j])
 					svc->port_fn[j](&data,
 						svc->port_priv[j]);
+			spin_unlock_irqrestore(&svc->disp_lock, flags);
 		}
 		mutex_unlock(&apr_client->svc[i].m_lock);
 	}
@@ -1078,10 +1163,12 @@ static void dispatch_event(unsigned long code, uint16_t proc)
 		if (apr_client->svc[i].port_cnt) {
 			svc = &(apr_client->svc[i]);
 			svc->need_reset = 0x1;
+			spin_lock_irqsave(&svc->disp_lock, flags);
 			for (j = 0; j < APR_MAX_PORTS; j++)
 				if (svc->port_fn[j])
 					svc->port_fn[j](&data,
 						svc->port_priv[j]);
+			spin_unlock_irqrestore(&svc->disp_lock, flags);
 		}
 		mutex_unlock(&apr_client->svc[i].m_lock);
 	}

@@ -142,6 +142,20 @@ struct apr_svc {
 #endif
 };
 
+/*
+ * Per-registration handle returned by apr_register().
+ *
+ * Clients historically cast the handle to struct apr_svc * to read the
+ * service id (e.g. ((struct apr_svc *)handle)->id), so `id` MUST remain
+ * the first member.  `port` is the dispatch slot this registration owns,
+ * or APR_MAX_PORTS for a service-level (non-port) registration.
+ */
+struct apr_reg_handle {
+	uint16_t id;
+	uint16_t port;
+	struct apr_svc *svc;
+};
+
 struct apr_client {
 	uint8_t id;
 	uint8_t svc_cnt;
