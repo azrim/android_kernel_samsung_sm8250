@@ -1033,7 +1033,15 @@ static int qcom_glink_rx_data(struct qcom_glink *glink, size_t avail)
 		dev_err(glink->dev,
 			"Callback not available on channel %s\n",
 			channel->name);
-		return -EAGAIN;
+		/*
+		 * The channel is mid-teardown (destroy_ept cleared the
+		 * callback) but the remote may still have data in flight.
+		 * Drop the packet and release the reference: returning here
+		 * would leak the kref and wedge the RX FIFO, because the
+		 * caller stops draining as soon as the return value is
+		 * non-zero.
+		 */
+		goto advance_rx;
 	}
 
 	CH_INFO(channel, "chunk_size:%d left_size:%d\n", chunk_size, left_size);
@@ -1122,10 +1130,10 @@ advance_rx:
 	return ret;
 }
 
-static void qcom_glink_handle_intent(struct qcom_glink *glink,
-				     unsigned int cid,
-				     unsigned int count,
-				     size_t avail)
+static int qcom_glink_handle_intent(struct qcom_glink *glink,
+				    unsigned int cid,
+				    unsigned int count,
+				    size_t avail)
 {
 	struct glink_core_rx_intent *intent;
 	struct glink_channel *channel;
@@ -1146,20 +1154,20 @@ static void qcom_glink_handle_intent(struct qcom_glink *glink,
 
 	if (avail < msglen) {
 		dev_dbg(glink->dev, "Not enough data in fifo\n");
-		return;
+		return -EAGAIN;
 	}
 
 	channel = qcom_glink_channel_ref_get(glink, true, cid);
 	if (!channel) {
 		dev_err(glink->dev, "intents for non-existing channel\n");
 		qcom_glink_rx_advance(glink, ALIGN(msglen, 8));
-		return;
+		return 0;
 	}
 
 	msg = kmalloc(msglen, GFP_ATOMIC);
 	if (!msg) {
 		qcom_glink_channel_ref_put(channel);
-		return;
+		return -ENOMEM;
 	}
 
 	qcom_glink_rx_peak(glink, msg, 0, msglen);
@@ -1180,14 +1188,17 @@ static void qcom_glink_handle_intent(struct qcom_glink *glink,
 				intent->id, intent->id + 1, GFP_ATOMIC);
 		spin_unlock_irqrestore(&channel->intent_lock, flags);
 
-		if (ret < 0)
+		if (ret < 0) {
 			dev_err(glink->dev, "failed to store remote intent\n");
+			kfree(intent);
+		}
 
 	}
 
 	kfree(msg);
 	qcom_glink_rx_advance(glink, ALIGN(msglen, 8));
 	qcom_glink_channel_ref_put(channel);
+	return 0;
 }
 
 static int qcom_glink_rx_open_ack(struct qcom_glink *glink, unsigned int lcid)
@@ -1303,7 +1314,8 @@ static irqreturn_t qcom_glink_native_intr(int irq, void *data)
 			mbox_client_txdone(glink->mbox_chan, 0);
 			break;
 		case GLINK_CMD_INTENT:
-			qcom_glink_handle_intent(glink, param1, param2, avail);
+			ret = qcom_glink_handle_intent(glink, param1, param2,
+						       avail);
 			break;
 		case GLINK_CMD_RX_DONE:
 			qcom_glink_handle_rx_done(glink, param1, param2, false);
