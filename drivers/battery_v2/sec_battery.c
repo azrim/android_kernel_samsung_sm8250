@@ -421,7 +421,7 @@ void sec_bat_set_current_event(struct sec_battery_info *battery,
 	battery->current_event &= ~current_event_mask;
 	battery->current_event |= current_event_val;
 
-	pr_info("%s: current event before(0x%x), after(0x%x)\n",
+	pr_debug("%s: current event before(0x%x), after(0x%x)\n",
 		__func__, temp, battery->current_event);
 
 	mutex_unlock(&battery->current_eventlock);
@@ -4570,7 +4570,7 @@ static void sec_bat_set_polling(
 		(battery->charging_mode ==
 		SEC_BATTERY_CHARGING_NONE) ? "No" : "Yes",
 		battery->polling_short ? "Yes" : "No");
-	dev_info(battery->dev,
+	dev_dbg(battery->dev,
 		"%s: Polling time %d/%d sec.\n", __func__,
 		battery->polling_short ?
 		(polling_time_temp * battery->polling_count) :
@@ -5851,7 +5851,7 @@ skip_current_monitor:
 		battery->temp_high_threshold, battery->temp_high_recovery,
 		battery->temp_low_threshold, battery->temp_low_recovery, lpcharge);
 
-	pr_info("%s: Status(%s), mode(%s), Health(%s), Cable(%s, %s, %d, %d), rp(%d), level(%d%%), lcd(%d), slate_mode(%d), store_mode(%d), charging_enabled(%d)"
+	pr_debug("%s: Status(%s), mode(%s), Health(%s), Cable(%s, %s, %d, %d), rp(%d), level(%d%%), lcd(%d), slate_mode(%d), store_mode(%d), charging_enabled(%d)"
 #if defined(CONFIG_AFC_CHARGER_MODE)
 		", HV(%s, %d), sleep_mode(%d)"
 #endif
