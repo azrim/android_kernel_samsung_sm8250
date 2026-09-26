@@ -312,7 +312,7 @@ static ssize_t idle_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t len)
 {
 	struct zram *zram = dev_to_zram(dev);
-	unsigned long nr_pages = zram->disksize >> PAGE_SHIFT;
+	unsigned long nr_pages;
 	int index;
 
 	if (!sysfs_streq(buf, "all"))
@@ -323,6 +323,13 @@ static ssize_t idle_store(struct device *dev,
 		up_read(&zram->init_lock);
 		return -EINVAL;
 	}
+
+	/*
+	 * Read disksize under init_lock: a reset + reinit with a smaller
+	 * disksize between declaration time and lock acquisition would
+	 * otherwise make this scan run past the end of the new table.
+	 */
+	nr_pages = zram->disksize >> PAGE_SHIFT;
 
 	for (index = 0; index < nr_pages; index++) {
 		/*
@@ -2723,6 +2730,9 @@ out:
 #ifdef CONFIG_ZRAM_LRU_WRITEBACK
 	if (zram_test_flag(zram, index, ZRAM_UNDER_PPR))
 		zram_clear_flag(zram, index, ZRAM_UNDER_PPR);
+	/* zram_handle_comp_page() only clears this on the success path */
+	if (zram_test_flag(zram, index, ZRAM_READ_BDEV))
+		zram_clear_flag(zram, index, ZRAM_READ_BDEV);
 	spin_lock_irqsave(&zram->list_lock, flags);
 	if (!list_empty(&zram->table[index].lru_list)) {
 		list_del_init(&zram->table[index].lru_list);
@@ -3383,7 +3393,7 @@ static ssize_t disksize_store(struct device *dev,
 	revalidate_disk(zram->disk);
 	up_write(&zram->init_lock);
 
-	INIT_DELAYED_WORK(&zram->compact_work, zram_auto_compact_work);
+	/* compact_work was initialised in zram_add() */
 	schedule_delayed_work(&zram->compact_work, msecs_to_jiffies(60000));
 
 	return len;
@@ -3540,6 +3550,14 @@ static int zram_add(void)
 	device_id = ret;
 
 	init_rwsem(&zram->init_lock);
+
+	/*
+	 * Initialise compact_work here, not in disksize_store(): a reset of a
+	 * device that never had a disksize would otherwise run
+	 * cancel_delayed_work_sync() on an all-zero work_struct.
+	 */
+	INIT_DELAYED_WORK(&zram->compact_work, zram_auto_compact_work);
+
 #ifdef CONFIG_ZRAM_WRITEBACK
 	spin_lock_init(&zram->wb_limit_lock);
 #endif
