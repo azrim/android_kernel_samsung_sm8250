@@ -168,31 +168,31 @@ static void cs35l41_log_status(struct cs35l41_private *cs35l41, int mute)
 	if (!mute) {
 		regmap_read(cs35l41->regmap,
 			CS35L41_PWR_CTRL1, &status);
-		dev_info(cs35l41->dev, "PWR_CTRL1 = 0x%x\n", status);
+		dev_dbg(cs35l41->dev, "PWR_CTRL1 = 0x%x\n", status);
 
 		regmap_read(cs35l41->regmap,
 			CS35L41_PWR_CTRL2, &status);
-		dev_info(cs35l41->dev, "PWR_CTRL2 = 0x%x\n", status);
+		dev_dbg(cs35l41->dev, "PWR_CTRL2 = 0x%x\n", status);
 
 		regmap_read(cs35l41->regmap,
 			CS35L41_AMP_DIG_VOL_CTRL, &status);
-		dev_info(cs35l41->dev, "DIG_VOL_CTRL = 0x%x\n", status);
+		dev_dbg(cs35l41->dev, "DIG_VOL_CTRL = 0x%x\n", status);
 
 		regmap_read(cs35l41->regmap,
 			CS35L41_AMP_GAIN_CTRL, &status);
-		dev_info(cs35l41->dev, "GAIN_CTRL = 0x%x\n", status);
+		dev_dbg(cs35l41->dev, "GAIN_CTRL = 0x%x\n", status);
 	} else {
 		regmap_read(cs35l41->regmap,
 			CS35L41_IRQ1_STATUS1, &status);
-		dev_info(cs35l41->dev, "IRQ1_STATUS1 = 0x%x\n", status);
+		dev_dbg(cs35l41->dev, "IRQ1_STATUS1 = 0x%x\n", status);
 
 		regmap_read(cs35l41->regmap,
 			CS35L41_CSPL_MBOX_STS, &status);
-		dev_info(cs35l41->dev, "MBOX status = 0x%x\n", status);
+		dev_dbg(cs35l41->dev, "MBOX status = 0x%x\n", status);
 
 		regmap_read(cs35l41->regmap,
 			CS35L41_HALO_STATE, &status);
-		dev_info(cs35l41->dev, "HALO status = 0x%x\n", status);
+		dev_dbg(cs35l41->dev, "HALO status = 0x%x\n", status);
 	}
 }
 
@@ -279,7 +279,7 @@ static int cs35l41_pcm_vol_put(struct snd_kcontrol *kcontrol,
 		return -EINVAL;
 	}
 
-	dev_info(cs35l41->dev, "%s: 0x%lx\n", __func__,
+	dev_dbg(cs35l41->dev, "%s: 0x%lx\n", __func__,
 	ucontrol->value.integer.value[0]);
 
 	cs35l41->pcm_vol = ucontrol->value.integer.value[0];
@@ -1296,7 +1296,7 @@ static int cs35l41_pcm_mute(struct snd_soc_dai *dai, int mute)
 	unsigned int vol, vol_ramp, dsprx2_src, status;
 	int vol_ramp_ms;
 
-	dev_info(cs35l41->dev, "%s mute=%d\n", __func__, mute);
+	dev_dbg(cs35l41->dev, "%s mute=%d\n", __func__, mute);
 
 	if (mute) {
 		regmap_update_bits(cs35l41->regmap,
@@ -1426,7 +1426,7 @@ static int cs35l41_pcm_hw_params(struct snd_pcm_substream *substream,
 		asp_wl = params_width(params);
 	}
 
-	dev_info(cs35l41->dev, "%s\trate:%d, width:%d, wl:%d\n",
+	dev_dbg(cs35l41->dev, "%s\trate:%d, width:%d, wl:%d\n",
 			__func__, rate, asp_width, asp_wl);
 
 	for (i = 0; i < ARRAY_SIZE(cs35l41_fs_rates); i++) {
