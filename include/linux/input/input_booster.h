@@ -295,10 +295,6 @@ extern struct workqueue_struct *ib_unbound_highwq;
 extern int trigger_cnt;
 // @ ib_trigger : input trigger starts input booster in evdev.c.
 extern struct t_ib_trigger* ib_trigger;
-// @evdev_mt_slot : save the number of inputed touch slot.
-extern int evdev_mt_slot;
-// @evdev_mt_event[] : save count of each boooter's events.
-extern int evdev_mt_event[MAX_DEVICE_TYPE_NUM];
 
 #endif // _INPUT_BOOSTER_H_
 #endif // Input Booster -

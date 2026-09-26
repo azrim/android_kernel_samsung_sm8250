@@ -42,6 +42,10 @@ struct evdev {
 	bool exist;
 };
 
+#ifdef CONFIG_SEC_INPUT_BOOSTER
+#include <linux/input/input_booster.h>
+#endif
+
 struct evdev_client {
 	unsigned int head;
 	unsigned int tail;
@@ -56,17 +60,20 @@ struct evdev_client {
 	unsigned int bufsize;
 
 #ifdef CONFIG_SEC_INPUT_BOOSTER
+	/*
+	 * Per-client booster state.  input_booster() runs once per client for
+	 * the same physical event, so this bookkeeping MUST live in the client
+	 * and not in a global, otherwise N clients count every event N times
+	 * (a single finger would be mis-classified as MULTI_TOUCH).
+	 */
 	int device_type;
 	int touch_slot_cnt;
+	int mt_event[MAX_DEVICE_TYPE_NUM];
 	int ev_cnt;
 #endif
 
 	struct input_event buffer[];
 };
-
-#ifdef CONFIG_SEC_INPUT_BOOSTER
-#include <linux/input/input_booster.h>
-#endif
 
 static size_t evdev_get_mask_cnt(unsigned int type)
 {

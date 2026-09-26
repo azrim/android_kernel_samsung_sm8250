@@ -30,10 +30,6 @@ int max_resource_size;
 struct list_head* ib_list;
 struct list_head* qos_list;
 
-// @evdev_mt_slot : save the number of inputed touch slot.
-int evdev_mt_slot = 0;
-// @evdev_mt_event[] : save count of each boooter's events.
-int evdev_mt_event[MAX_DEVICE_TYPE_NUM];
 int trigger_cnt = 0;
 int send_ev_enable = 0;
 

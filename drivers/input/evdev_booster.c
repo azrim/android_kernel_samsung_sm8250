@@ -36,9 +36,9 @@ int chk_boost_on_off(struct evdev_client *dev, int idx, int dev_type)
 	 * Before starting input booster.
 	 */
 	if (dev_type == SPEN || dev_type == HOVER) {
-		if (!evdev_mt_event[dev_type] && dev->buffer[idx].value)
+		if (!dev->mt_event[dev_type] && dev->buffer[idx].value)
 			ret_val = 1;
-		else if (evdev_mt_event[dev_type] && !dev->buffer[idx].value)
+		else if (dev->mt_event[dev_type] && !dev->buffer[idx].value)
 			ret_val = 0;
 	} else if (dev_type == TOUCH || dev_type == MULTI_TOUCH) {
 		if (dev->buffer[idx].value >= 0)
@@ -122,32 +122,32 @@ int get_device_type(struct evdev_client *dev, unsigned int *keyId, int *cur_idx,
 			case ABS_MT_TRACKING_ID:
 
 				if (dev->buffer[i].value >= 0) {
-					evdev_mt_slot++;
+					dev->touch_slot_cnt++;
 				} else {
-					evdev_mt_slot--;
+					dev->touch_slot_cnt--;
 				}
 
 				if (dev->buffer[i].value >= 0) {
-					if (evdev_mt_slot == 1) {
+					if (dev->touch_slot_cnt == 1) {
 						dev_type = TOUCH;
 						uniq_slot = 1;
-					} else if (evdev_mt_slot == 2) {
+					} else if (dev->touch_slot_cnt == 2) {
 						dev_type = MULTI_TOUCH;
 						uniq_slot = 2;
 					}
 				} else if (dev->buffer[i].value < 0) {
 					//ret_val = 0;
-					if (evdev_mt_slot == 0) {
+					if (dev->touch_slot_cnt == 0) {
 						dev_type = TOUCH;
 						uniq_slot = 1;
-					} else if (evdev_mt_slot == 1) {
+					} else if (dev->touch_slot_cnt == 1) {
 						dev_type = MULTI_TOUCH;
 						uniq_slot = 2;
 					}
 				}
 
 				pr_booster("Touch Booster Trigger(%d), Type(%d), Code(%d), Val(%d), head(%d), Tail(%d), uniq_slot(%d), Idx(%d), Cnt(%d)",
-					evdev_mt_slot, dev->buffer[i].type, dev->buffer[i].code, dev->buffer[i].value, head, dev->tail, uniq_slot, i, dev->ev_cnt);
+					dev->touch_slot_cnt, dev->buffer[i].type, dev->buffer[i].code, dev->buffer[i].value, head, dev->tail, uniq_slot, i, dev->ev_cnt);
 
 				break;
 			}
@@ -237,9 +237,9 @@ void input_booster(struct evdev_client* dev, int dev_head) {
 		}
 
 		if (enable == BOOSTER_ON) {
-			evdev_mt_event[dev_type]++;
+			dev->mt_event[dev_type]++;
 		} else {
-			evdev_mt_event[dev_type]--;
+			dev->mt_event[dev_type]--;
 		}
 
 		/*
