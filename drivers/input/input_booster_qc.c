@@ -191,6 +191,8 @@ int set_freq_limit(unsigned long id, unsigned int freq)
 #endif
 
 #ifdef USE_HMP_BOOST
+static int current_hmp_boost;
+
 void set_hmp(int level)
 {
 	if (level != current_hmp_boost) {
