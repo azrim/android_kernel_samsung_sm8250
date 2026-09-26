@@ -573,9 +573,9 @@ void ib_auto_test(int type, int code, int val)
 
 
 //+++++++++++++++++++++++++++++++++++++++++++++++  STRUCT & VARIABLE FOR SYSFS  +++++++++++++++++++++++++++++++++++++++++++++++//
-SYSFS_CLASS(enable_event, (buf, "%u\n", enable_event), 1)
-SYSFS_CLASS(debug_level, (buf, "%u\n", debug_level), 1)
-SYSFS_CLASS(sendevent, (buf, "%d\n", sendevent), 3)
+SYSFS_CLASS(enable_event, enable_event_booster, "%u\n")
+SYSFS_CLASS(debug_level, debug_flag, "%u\n")
+SYSFS_CLASS(sendevent, send_ev_enable, "%d\n")
 HEAD_TAIL_SYSFS_DEVICE(head)
 HEAD_TAIL_SYSFS_DEVICE(tail)
 LEVEL_SYSFS_DEVICE(level)
