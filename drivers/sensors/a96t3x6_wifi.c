@@ -2263,6 +2263,14 @@ static int a96t3x6_load_fw_kernel(struct a96t3x6_data *data)
 		return ret;
 	}
 	data->firm_size = data->firm_data_bin->size;
+	/* The header bytes read below (data[1],[5],[8],[9]) require >= 10 bytes. */
+	if (data->firm_size < 10) {
+		GRIP_ERR("firmware too small: %ld\n", data->firm_size);
+		/* Drop the reference taken by request_firmware(). */
+		release_firmware(data->firm_data_bin);
+		data->firm_data_bin = NULL;
+		return -EINVAL;
+	}
 	data->fw_ver_bin = data->firm_data_bin->data[5];
 	data->md_ver_bin = data->firm_data_bin->data[1];
 	GRIP_INFO("fw = 0x%x, md = 0x%x\n", data->fw_ver_bin, data->md_ver_bin);

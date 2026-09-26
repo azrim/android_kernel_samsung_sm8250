@@ -2267,6 +2267,9 @@ static int a96t3x6_load_fw_kernel(struct a96t3x6_data *data)
 	/* The header bytes read below (data[1],[5],[8],[9]) require >= 10 bytes. */
 	if (data->firm_size < 10) {
 		GRIP_ERR("firmware too small: %ld\n", data->firm_size);
+		/* Drop the reference taken by request_firmware(). */
+		release_firmware(data->firm_data_bin);
+		data->firm_data_bin = NULL;
 		return -EINVAL;
 	}
 	data->fw_ver_bin = data->firm_data_bin->data[5];
