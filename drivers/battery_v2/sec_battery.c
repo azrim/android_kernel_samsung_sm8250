@@ -4459,7 +4459,7 @@ static unsigned int sec_bat_get_polling_time(
 		if (!battery->wc_enable) {
 			battery->polling_time = battery->pdata->polling_time[
 					SEC_BATTERY_POLLING_TIME_CHARGING];
-			pr_info("%s: wc_enable is false, polling time is 30sec\n", __func__);
+			pr_debug("%s: wc_enable is false, polling time is 30sec\n", __func__);
 		}
 
 		battery->polling_short = false;
@@ -5577,7 +5577,7 @@ static void sec_bat_calculate_safety_time(struct sec_battery_info *battery)
 	else
 		input_power = battery->current_max * battery->input_voltage * 100;
 
-	pr_info("%s : current_max(%d),charging_current(%d),input_voltage(%d),pd_max_charge_power(%d),chg_limit(%d),mix_limit(%d),direct_chg_done(%d) lrp_limit(%d)\n",
+	pr_debug("%s : current_max(%d),charging_current(%d),input_voltage(%d),pd_max_charge_power(%d),chg_limit(%d),mix_limit(%d),direct_chg_done(%d) lrp_limit(%d)\n",
 		__func__, battery->current_max, battery->charging_current, battery->input_voltage,
 		battery->pd_max_charge_power, battery->chg_limit, battery->mix_limit, direct_chg_done, battery->lrp_limit);
 #else
@@ -5662,7 +5662,7 @@ static void sec_bat_monitor_work(
 
 	mutex_lock(&battery->wclock);
 	if (!battery->wc_enable) {
-		pr_info("%s: wc_enable(%d), cnt(%d)\n",
+		pr_debug("%s: wc_enable(%d), cnt(%d)\n",
 			__func__, battery->wc_enable, battery->wc_enable_cnt);
 		if (battery->wc_enable_cnt > battery->wc_enable_cnt_value) {
 #if defined(CONFIG_DISABLE_MFC_IC)
@@ -10250,22 +10250,22 @@ err_supply_unreg_pogo:
 err_workqueue:
 	destroy_workqueue(battery->monitor_wqueue);
 err_irq:
-	wakeup_source_remove(battery->monitor_wake_lock);
-	wakeup_source_remove(battery->cable_wake_lock);
-	wakeup_source_remove(battery->vbus_wake_lock);
-	wakeup_source_remove(battery->afc_wake_lock);
-	wakeup_source_remove(battery->siop_level_wake_lock);
-	wakeup_source_remove(battery->ext_event_wake_lock);
-	wakeup_source_remove(battery->wc_headroom_wake_lock);
-	wakeup_source_remove(battery->wpc_tx_wake_lock);
-	wakeup_source_remove(battery->wpc_tx_en_wake_lock);
+	wakeup_source_unregister(battery->monitor_wake_lock);
+	wakeup_source_unregister(battery->cable_wake_lock);
+	wakeup_source_unregister(battery->vbus_wake_lock);
+	wakeup_source_unregister(battery->afc_wake_lock);
+	wakeup_source_unregister(battery->siop_level_wake_lock);
+	wakeup_source_unregister(battery->ext_event_wake_lock);
+	wakeup_source_unregister(battery->wc_headroom_wake_lock);
+	wakeup_source_unregister(battery->wpc_tx_wake_lock);
+	wakeup_source_unregister(battery->wpc_tx_en_wake_lock);
 #if defined(CONFIG_UPDATE_BATTERY_DATA)
-	wakeup_source_remove(battery->batt_data_wake_lock);
+	wakeup_source_unregister(battery->batt_data_wake_lock);
 #endif
-	wakeup_source_remove(battery->misc_event_wake_lock);
-	wakeup_source_remove(battery->tx_event_wake_lock);
+	wakeup_source_unregister(battery->misc_event_wake_lock);
+	wakeup_source_unregister(battery->tx_event_wake_lock);
 #ifdef CONFIG_OF
-	wakeup_source_remove(battery->parse_mode_dt_wake_lock);
+	wakeup_source_unregister(battery->parse_mode_dt_wake_lock);
 #endif
 
 	mutex_destroy(&battery->adclock);
@@ -10278,7 +10278,6 @@ err_irq:
 	mutex_destroy(&battery->wclock);
 	mutex_destroy(&battery->voutlock);
 	mutex_destroy(&battery->init_soc_updatelock);
-	kfree(pdata);
 err_bat_free:
 	kfree(battery);
 
@@ -10326,22 +10325,22 @@ static int sec_battery_remove(struct platform_device *pdev)
 
 	flush_workqueue(battery->monitor_wqueue);
 	destroy_workqueue(battery->monitor_wqueue);
-	wakeup_source_remove(battery->monitor_wake_lock);
-	wakeup_source_remove(battery->cable_wake_lock);
-	wakeup_source_remove(battery->vbus_wake_lock);
-	wakeup_source_remove(battery->afc_wake_lock);
-	wakeup_source_remove(battery->siop_level_wake_lock);
-	wakeup_source_remove(battery->ext_event_wake_lock);
-	wakeup_source_remove(battery->misc_event_wake_lock);
-	wakeup_source_remove(battery->tx_event_wake_lock);
-	wakeup_source_remove(battery->wc_headroom_wake_lock);
-	wakeup_source_remove(battery->wpc_tx_wake_lock);
-	wakeup_source_remove(battery->wpc_tx_en_wake_lock);
+	wakeup_source_unregister(battery->monitor_wake_lock);
+	wakeup_source_unregister(battery->cable_wake_lock);
+	wakeup_source_unregister(battery->vbus_wake_lock);
+	wakeup_source_unregister(battery->afc_wake_lock);
+	wakeup_source_unregister(battery->siop_level_wake_lock);
+	wakeup_source_unregister(battery->ext_event_wake_lock);
+	wakeup_source_unregister(battery->misc_event_wake_lock);
+	wakeup_source_unregister(battery->tx_event_wake_lock);
+	wakeup_source_unregister(battery->wc_headroom_wake_lock);
+	wakeup_source_unregister(battery->wpc_tx_wake_lock);
+	wakeup_source_unregister(battery->wpc_tx_en_wake_lock);
 #if defined(CONFIG_UPDATE_BATTERY_DATA)
-	wakeup_source_remove(battery->batt_data_wake_lock);
+	wakeup_source_unregister(battery->batt_data_wake_lock);
 #endif
 #ifdef CONFIG_OF
-	wakeup_source_remove(battery->parse_mode_dt_wake_lock);
+	wakeup_source_unregister(battery->parse_mode_dt_wake_lock);
 #endif
 
 	mutex_destroy(&battery->adclock);
@@ -10360,6 +10359,7 @@ static int sec_battery_remove(struct platform_device *pdev)
 	for (i = 0; i < SEC_BAT_ADC_CHANNEL_NUM; i++)
 		adc_exit(battery->pdata, i);
 #endif
+	sb_full_soc_exit(battery);
 	power_supply_unregister(battery->psy_ps);
 	power_supply_unregister(battery->psy_wireless);
 	power_supply_unregister(battery->psy_ac);

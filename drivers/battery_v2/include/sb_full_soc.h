@@ -32,5 +32,6 @@ void sec_bat_recov_full_capacity(struct sec_battery_info *battery);
 void sec_bat_check_full_capacity(struct sec_battery_info *battery);
 
 int sb_full_soc_init(struct sec_battery_info *battery);
+void sb_full_soc_exit(struct sec_battery_info *battery);
 
 #endif /* __SB_FULL_SOC_H */

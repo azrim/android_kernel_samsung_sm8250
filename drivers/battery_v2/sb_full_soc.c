@@ -206,7 +206,7 @@ static void eu_eco_work(struct work_struct *work)
 	struct sec_battery_info *battery = fs->battery;
 	union power_supply_propval value = {0, };
 
-	pr_info("%s: start (%d, %d, %d, %d)\n",
+	pr_debug("%s: start (%d, %d, %d, %d)\n",
 		__func__,
 		fs->eu_eco_rechg_state, fs->is_eu_eco_rechg,
 		battery->status, battery->capacity);
@@ -220,7 +220,7 @@ static void eu_eco_work(struct work_struct *work)
 		goto update_state;
 
 	if (fs->eu_eco_rechg_state) {
-		pr_info("%s : Update fg scale to %d%%\n", __func__, battery->capacity);
+		pr_debug("%s : Update fg scale to %d%%\n", __func__, battery->capacity);
 		value.intval = 99;
 		psy_do_property(battery->pdata->fuelgauge_name, set,
 			POWER_SUPPLY_PROP_CHARGE_FULL, value);
@@ -229,7 +229,7 @@ static void eu_eco_work(struct work_struct *work)
 		battery->is_recharging = false;
 		battery->charging_mode = SEC_BATTERY_CHARGING_1ST;
 		sec_bat_set_charge(battery, SEC_BAT_CHG_MODE_CHARGING);
-		pr_info("%s: battery status full -> charging, Cap(%d)\n",
+		pr_debug("%s: battery status full -> charging, Cap(%d)\n",
 			__func__, battery->capacity);
 		value.intval = POWER_SUPPLY_STATUS_CHARGING;
 		psy_do_property(battery->pdata->wireless_charger_name, set,
@@ -241,7 +241,7 @@ static void eu_eco_work(struct work_struct *work)
 	queue_delayed_work(battery->monitor_wqueue, &battery->monitor_work, 0);
 
 update_state:
-	pr_info("%s: update eu eco rechg(%d --> %d)\n",
+	pr_debug("%s: update eu eco rechg(%d --> %d)\n",
 		__func__, fs->is_eu_eco_rechg, fs->eu_eco_rechg_state);
 	fs->is_eu_eco_rechg = fs->eu_eco_rechg_state;
 end_work:
@@ -552,3 +552,18 @@ err_attrs:
 	return ret;
 }
 EXPORT_SYMBOL(sb_full_soc_init);
+
+void sb_full_soc_exit(struct sec_battery_info *battery)
+{
+	struct sb_full_soc *fs = battery->fs;
+
+	if (!fs)
+		return;
+
+	wakeup_source_unregister(fs->ws);
+	sb_full_soc_remove_attrs(&battery->psy_bat->dev);
+	mutex_destroy(&fs->lock);
+	kfree(fs);
+	battery->fs = NULL;
+}
+EXPORT_SYMBOL(sb_full_soc_exit);

@@ -2959,7 +2959,7 @@ static int max77705_fuelgauge_probe(struct platform_device *pdev)
 				if (ret) {
 					pr_err("%s: Failed to Request IRQ\n",
 					       __func__);
-					wakeup_source_remove(fuelgauge->fuel_alert_wake_lock);
+					wakeup_source_unregister(fuelgauge->fuel_alert_wake_lock);
 					goto err_supply_unreg;
 				}
 			}
@@ -3013,7 +3013,7 @@ static int max77705_fuelgauge_remove(struct platform_device *pdev)
 		power_supply_unregister(fuelgauge->psy_fg);
 
 	free_irq(fuelgauge->fg_irq, fuelgauge);
-	wakeup_source_remove(fuelgauge->fuel_alert_wake_lock);
+	wakeup_source_unregister(fuelgauge->fuel_alert_wake_lock);
 #if defined(CONFIG_OF)
 	kfree(fuelgauge->battery_data);
 #endif

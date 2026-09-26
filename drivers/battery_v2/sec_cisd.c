@@ -220,7 +220,7 @@ static irqreturn_t cisd_irq_thread(int irq, void *data)
 {
 	struct cisd *pcisd = data;
 
-	pr_info("%s: irq(%d)\n", __func__, irq);
+	pr_debug("%s: irq(%d)\n", __func__, irq);
 	if (irq == pcisd->irq_ovp_power &&
 		!gpio_get_value(pcisd->gpio_ovp_power))
 		pcisd->event_data[EVENT_OVP_POWER]++;

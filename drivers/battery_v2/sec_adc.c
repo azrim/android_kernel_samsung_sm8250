@@ -85,7 +85,16 @@ static int sec_bat_adc_ap_read(struct sec_battery_info *battery, int channel)
 
 static void sec_bat_adc_ap_exit(void)
 {
-	return;
+	int i;
+
+	/* Release every IIO channel acquired in sec_bat_adc_ap_init(). */
+	for (i = 0; i < SEC_BAT_ADC_CHANNEL_NUM; i++) {
+		if (!IS_ERR_OR_NULL(batt_adc_list[i].channel)) {
+			iio_channel_release(batt_adc_list[i].channel);
+			batt_adc_list[i].channel = NULL;
+			batt_adc_list[i].is_used = false;
+		}
+	}
 }
 
 static void sec_bat_adc_none_init(struct platform_device *pdev)

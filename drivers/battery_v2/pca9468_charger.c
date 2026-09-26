@@ -210,7 +210,7 @@ static void pca9468_monitor_work(struct pca9468_charger *pca9468)
 	pca9468_read_adc(pca9468, ADCCH_VBAT);
 	pca9468_read_adc(pca9468, ADCCH_DIETEMP);
 
-	pr_info("%s: state(%s), iin_cc(%dmA), v_float(%dmV), vbat(%dmV), vin(%dmV), iin(%dmA), die_temp(%d), isys(%dmA), pps_requested(%d/%dmV/%dmA)", __func__,
+	pr_debug("%s: state(%s), iin_cc(%dmA), v_float(%dmV), vbat(%dmV), vin(%dmV), iin(%dmA), die_temp(%d), isys(%dmA), pps_requested(%d/%dmV/%dmA)", __func__,
 		charging_state_str[pca9468->charging_state],
 		pca9468->iin_cc / PCA9468_SEC_DENOM_U_M, pca9468->pdata->v_float / PCA9468_SEC_DENOM_U_M,
 		pca9468->adc_val[ADCCH_VBAT], pca9468->adc_val[ADCCH_VIN],
@@ -234,7 +234,7 @@ static void pca9468_set_wdt_enable(struct pca9468_charger *pca9468, bool enable)
 	val = enable << MASK2SHIFT(PCA9468_BIT_WATCHDOG_EN);
 	ret = pca9468_update_reg(pca9468, PCA9468_REG_SAFETY_CTRL,
 			PCA9468_BIT_WATCHDOG_EN, val);
-	pr_info("%s: set wdt enable = %d\n", __func__, enable);
+	pr_debug("%s: set wdt enable = %d\n", __func__, enable);
 }
 
 static void pca9468_set_wdt_timer(struct pca9468_charger *pca9468, int time)
@@ -245,7 +245,7 @@ static void pca9468_set_wdt_timer(struct pca9468_charger *pca9468, int time)
 	val = time << MASK2SHIFT(PCA9468_BIT_WATCHDOG_CFG);
 	ret = pca9468_update_reg(pca9468, PCA9468_REG_SAFETY_CTRL,
 			PCA9468_BIT_WATCHDOG_CFG, val);
-	pr_info("%s: set wdt time = %d\n", __func__, time);
+	pr_debug("%s: set wdt time = %d\n", __func__, time);
 }
 
 static void pca9468_check_wdt_control(struct pca9468_charger *pca9468)
@@ -3654,10 +3654,10 @@ static void pca9468_timer_work(struct work_struct *work)
 #ifdef CONFIG_RTC_HCTOSYS
 	get_current_time(&pca9468->last_update_time);
 
-	pr_info("%s: timer id=%d, charging_state=%d, last_update_time=%lu\n",
+	pr_debug("%s: timer id=%d, charging_state=%d, last_update_time=%lu\n",
 		__func__, pca9468->timer_id, pca9468->charging_state, pca9468->last_update_time);
 #else
-	pr_info("%s: timer id=%d, charging_state=%d\n",
+	pr_debug("%s: timer id=%d, charging_state=%d\n",
 		__func__, pca9468->timer_id, pca9468->charging_state);
 #endif
 
@@ -3987,7 +3987,7 @@ static irqreturn_t pca9468_interrupt_handler(int irq, void *data)
 		return IRQ_NONE;
 	}
 
-	pr_info("%s: int1=0x%2x, int1_sts=0x%2x, sts_a=0x%2x\n", __func__,
+	pr_debug("%s: int1=0x%2x, int1_sts=0x%2x, sts_a=0x%2x\n", __func__,
 			int1[REG_INT1], int1[REG_INT1_STS], sts[REG_STS_A]);
 
 	/* Check Interrupt */
@@ -5031,7 +5031,7 @@ static int pca9468_charger_probe(struct i2c_client *client,
 
 	ret = pca9468_create_debugfs_entries(pca9468_chg);
 	if (ret < 0)
-		return ret;
+		goto err_power_supply_regsister;
 
 #if defined(CONFIG_BATTERY_SAMSUNG)
 	pr_info("%s: PCA9468 Charger Driver Loaded\n", __func__);
@@ -5042,9 +5042,11 @@ static int pca9468_charger_probe(struct i2c_client *client,
 
 #if defined(CONFIG_BATTERY_SAMSUNG)
 err_power_supply_regsister:
+	if (!IS_ERR_OR_NULL(pca9468_chg->psy_chg))
+		power_supply_unregister(pca9468_chg->psy_chg);
 err_hw_init:
 err_regmap_init:
-	wakeup_source_remove(pca9468_chg->monitor_wake_lock);
+	wakeup_source_unregister(pca9468_chg->monitor_wake_lock);
 	return ret;
 #endif
 }
@@ -5055,13 +5057,26 @@ static int pca9468_charger_remove(struct i2c_client *client)
 
 	pr_info("%s: ++\n", __func__);
 
+	/* Quiesce the deferred work before tearing the device down. */
+	cancel_delayed_work_sync(&pca9468_chg->timer_work);
+	cancel_delayed_work_sync(&pca9468_chg->pps_work);
+#if defined(CONFIG_BATTERY_SAMSUNG)
+	cancel_delayed_work_sync(&pca9468_chg->wdt_control_work);
+#endif
+
 	if (client->irq) {
 		free_irq(client->irq, pca9468_chg);
 		if (pca9468_chg->pdata->irq_gpio >= 0)
 			gpio_free(pca9468_chg->pdata->irq_gpio);
 	}
+#if defined(CONFIG_BATTERY_SAMSUNG)
+	if (pca9468_chg->pdata->chgen_gpio >= 0)
+		gpio_free(pca9468_chg->pdata->chgen_gpio);
+#endif
 
-	wakeup_source_remove(pca9468_chg->monitor_wake_lock);
+	debugfs_remove_recursive(pca9468_chg->debug_root);
+
+	wakeup_source_unregister(pca9468_chg->monitor_wake_lock);
 #if defined(CONFIG_BATTERY_SAMSUNG)
 	if (pca9468_chg->psy_chg)
 		power_supply_unregister(pca9468_chg->psy_chg);

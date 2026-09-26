@@ -1486,7 +1486,7 @@ static void mfc_tx_handle_rx_packet(struct mfc_charger_data *charger)
 	charger->pdata->trx_data_cmd = cmd_data;
 	charger->pdata->trx_data_val = val_data;
 
-	pr_info("@Tx_Mode %s: CMD : 0x%x, DATA : 0x%x, DATA2 : 0x%x\n",
+	pr_debug("@Tx_Mode %s: CMD : 0x%x, DATA : 0x%x, DATA2 : 0x%x\n",
 		__func__, cmd_data, val_data, val2_data);
 
 	/* When RX device has got a AFC TA, this TX device should turn off TX power sharing(uno) */
@@ -4917,7 +4917,7 @@ static irqreturn_t mfc_wpc_det_irq_thread(int irq, void *irq_data)
 			mfc_reg_write(charger->client, MFC_INT_A_CLEAR_L_REG, irq_src[0]); // clear int
 			mfc_reg_write(charger->client, MFC_INT_A_CLEAR_H_REG, irq_src[1]); // clear int
 			mfc_set_cmd_l_reg(charger, 0x20, MFC_CMD_CLEAR_INT_MASK); // command
-			pr_info("%s wc_w_state_irq = %d\n", __func__, gpio_get_value(charger->pdata->wpc_int));
+			pr_debug("%s wc_w_state_irq = %d\n", __func__, gpio_get_value(charger->pdata->wpc_int));
 		}
 	}
 	else
@@ -5084,10 +5084,10 @@ static irqreturn_t mfc_wpc_irq_thread(int irq, void *irq_data)
 	bool clear_irq = true;
 	union power_supply_propval value;
 
-	pr_info("%s start!\n", __func__);
+	pr_debug("%s start!\n", __func__);
 
 	wc_w_state_irq = gpio_get_value(charger->pdata->wpc_int);
-	pr_info("%s wc_w_state_irq = %d\n", __func__, wc_w_state_irq);
+	pr_debug("%s wc_w_state_irq = %d\n", __func__, wc_w_state_irq);
 
 	if (wc_w_state_irq == 1 &&
 		charger->pdata->cable_type == SEC_WIRELESS_PAD_FAKE) {
@@ -5284,33 +5284,35 @@ static void mfc_chg_parse_fod_data(struct device_node *np,
 		mfc_charger_platform_data_t *pdata)
 {
 	const char* fod_state_string[FOD_STATE_MAX] = {"cc", "cv", "full"};
+	struct device_node *fod_np = NULL;
 	struct device_node *child = NULL;
 	int ret = 0, idx = 0, i = 0;
 
-	np = of_find_node_by_name(np, "fod_list");
-	if (!np) {
+	fod_np = of_find_node_by_name(np, "fod_list");
+	if (!fod_np) {
 		pr_err("%s: fod list is NULL!\n", __func__);
 		return;
 	}
 
-	ret = of_property_read_u32(np, "count", &pdata->fod_data_count);
+	ret = of_property_read_u32(fod_np, "count", &pdata->fod_data_count);
 	if (ret < 0) {
 		pr_err("%s: fod data size is NULL!\n", __func__);
-		return;
+		goto out_put_np;
 	}
 
 	pdata->fod_list = kzalloc(sizeof(mfc_fod_data) * pdata->fod_data_count, GFP_KERNEL);
 	if (pdata->fod_list == NULL) {
 		pr_err("%s: failed to alloc memory(%d)\n", __func__, pdata->fod_data_count);
 		pdata->fod_data_count = 0;
-		return;
+		goto out_put_np;
 	}
 
-	for_each_child_of_node(np, child) {
+	for_each_child_of_node(fod_np, child) {
 		mfc_fod_data* pfod_data = NULL;
 
 		if (idx >= pdata->fod_data_count) {
 			pr_err("%s: skip set fod data because of overflow\n", __func__);
+			of_node_put(child);
 			break;
 		}
 		pfod_data = &pdata->fod_list[idx++];
@@ -5395,6 +5397,9 @@ static void mfc_chg_parse_fod_data(struct device_node *np,
 			}
 		}
 	}
+
+out_put_np:
+	of_node_put(fod_np);
 }
 
 static int mfc_chg_parse_dt(struct device *dev, 
@@ -5989,20 +5994,22 @@ static int mfc_charger_probe(
 	return 0;
 
 err_irq_wpc_det:
-	wakeup_source_remove(charger->wpc_wake_lock);
-	wakeup_source_remove(charger->wpc_rx_wake_lock);
-	wakeup_source_remove(charger->wpc_tx_wake_lock);
-	wakeup_source_remove(charger->wpc_update_lock);
-	wakeup_source_remove(charger->wpc_opfq_lock);
-	wakeup_source_remove(charger->wpc_tx_opfq_lock);
-	wakeup_source_remove(charger->wpc_tx_min_opfq_lock);
-	wakeup_source_remove(charger->wpc_afc_vout_lock);
-	wakeup_source_remove(charger->wpc_vout_mode_lock);
-	wakeup_source_remove(charger->wpc_rx_connection_lock);
-	wakeup_source_remove(charger->wpc_rx_det_lock);
-	wakeup_source_remove(charger->wpc_tx_phm_lock);
-	wakeup_source_remove(charger->wpc_vrect_check_lock);
-	wakeup_source_remove(charger->wpc_tx_id_lock);
+	destroy_workqueue(charger->wqueue);
+	wakeup_source_unregister(charger->wpc_wake_lock);
+	wakeup_source_unregister(charger->wpc_rx_wake_lock);
+	wakeup_source_unregister(charger->wpc_tx_wake_lock);
+	wakeup_source_unregister(charger->wpc_update_lock);
+	wakeup_source_unregister(charger->wpc_opfq_lock);
+	wakeup_source_unregister(charger->wpc_tx_opfq_lock);
+	wakeup_source_unregister(charger->wpc_tx_min_opfq_lock);
+	wakeup_source_unregister(charger->wpc_afc_vout_lock);
+	wakeup_source_unregister(charger->wpc_vout_mode_lock);
+	wakeup_source_unregister(charger->wpc_rx_connection_lock);
+	wakeup_source_unregister(charger->wpc_rx_det_lock);
+	wakeup_source_unregister(charger->wpc_tx_phm_lock);
+	wakeup_source_unregister(charger->wpc_vrect_check_lock);
+	wakeup_source_unregister(charger->wpc_tx_id_lock);
+	wakeup_source_unregister(charger->wpc_cs100_lock);
 err_pdata_free:
 	power_supply_unregister(charger->psy_chg);
 err_supply_unreg:
@@ -6022,7 +6029,46 @@ static int mfc_charger_remove(struct i2c_client *client)
 {
 	struct mfc_charger_data *charger = i2c_get_clientdata(client);
 
+	charger->is_probed = false;
+
 	alarm_cancel(&charger->phm_alarm);
+
+	device_init_wakeup(charger->dev, false);
+
+	if (charger->pdata->irq_wpc_det)
+		free_irq(charger->pdata->irq_wpc_det, charger);
+
+	/*
+	 * Every WPC work item is queued on charger->wqueue, so destroying the
+	 * queue drains all pending work before the data it touches is freed.
+	 */
+	if (charger->wqueue)
+		destroy_workqueue(charger->wqueue);
+
+	wakeup_source_unregister(charger->wpc_wake_lock);
+	wakeup_source_unregister(charger->wpc_rx_wake_lock);
+	wakeup_source_unregister(charger->wpc_tx_wake_lock);
+	wakeup_source_unregister(charger->wpc_update_lock);
+	wakeup_source_unregister(charger->wpc_opfq_lock);
+	wakeup_source_unregister(charger->wpc_tx_opfq_lock);
+	wakeup_source_unregister(charger->wpc_tx_min_opfq_lock);
+	wakeup_source_unregister(charger->wpc_afc_vout_lock);
+	wakeup_source_unregister(charger->wpc_vout_mode_lock);
+	wakeup_source_unregister(charger->wpc_rx_connection_lock);
+	wakeup_source_unregister(charger->wpc_rx_det_lock);
+	wakeup_source_unregister(charger->wpc_tx_phm_lock);
+	wakeup_source_unregister(charger->wpc_vrect_check_lock);
+	wakeup_source_unregister(charger->wpc_tx_id_lock);
+	wakeup_source_unregister(charger->wpc_cs100_lock);
+
+	if (charger->psy_chg)
+		power_supply_unregister(charger->psy_chg);
+
+	mutex_destroy(&charger->io_lock);
+	mutex_destroy(&charger->wpc_en_lock);
+	mutex_destroy(&charger->fw_lock);
+
+	kfree(charger);
 
 	return 0;
 }

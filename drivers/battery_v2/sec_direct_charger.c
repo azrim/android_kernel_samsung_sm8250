@@ -754,7 +754,6 @@ static int sec_direct_charger_probe(struct platform_device *pdev)
 
 err_pdata_free:
 	mutex_destroy(&charger->charger_mutex);
-	kfree(pdata);
 err_charger_free:
 	kfree(charger);
 
@@ -772,7 +771,6 @@ static int sec_direct_charger_remove(struct platform_device *pdev)
 
 	dev_dbg(charger->dev, "%s: End\n", __func__);
 
-	kfree(charger->pdata);
 	kfree(charger);
 
 	pr_info("%s: --\n", __func__);

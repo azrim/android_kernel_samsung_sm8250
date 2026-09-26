@@ -27,7 +27,7 @@
 
 void sec_bat_reset_step_charging(struct sec_battery_info *battery)
 {
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	if ((battery->step_charging_type) &&
 		(battery->step_charging_status >= 0) &&
@@ -112,7 +112,7 @@ bool sec_bat_check_step_charging(struct sec_battery_info *battery)
 			return false;
 	}
 
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	if (battery->step_charging_type & STEP_CHARGING_CONDITION_CHARGE_POWER) {
 		if (battery->max_charge_power < battery->step_charging_charge_power) {
@@ -406,7 +406,7 @@ bool sec_bat_check_dc_step_charging(struct sec_battery_info *battery)
 		step_input = battery->dc_step_chg_step - 1;
 
 check_dc_step_change:
-	pr_info("%s : curr_step(%d), step_vol(%d), step_soc(%d), step_input(%d), curr_cnt(%d/%d)\n",
+	pr_debug("%s : curr_step(%d), step_vol(%d), step_soc(%d), step_input(%d), curr_cnt(%d/%d)\n",
 		__func__, step, step_vol, step_soc, step_input,
 		battery->dc_step_chg_iin_cnt, battery->pdata->dc_step_chg_iin_check_cnt);
 

@@ -2185,7 +2185,7 @@ static irqreturn_t max77705_chg_irq_thread(int irq, void *irq_data)
 {
 	struct max77705_charger_data *charger = irq_data;
 
-	pr_info("%s: Charger interrupt occurred\n", __func__);
+	pr_debug("%s: Charger interrupt occurred\n", __func__);
 
 	if ((charger->pdata->full_check_type ==
 	     SEC_BATTERY_FULLCHARGED_CHGINT) ||
@@ -2233,7 +2233,7 @@ static irqreturn_t wpc_charger_irq(int irq, void *data)
 {
 	struct max77705_charger_data *charger = data;
 
-	pr_info("%s: irq(%d)\n", __func__, irq);
+	pr_debug("%s: irq(%d)\n", __func__, irq);
 
 	max77705_update_reg(charger->i2c, MAX77705_CHG_REG_INT_MASK,
 			    MAX77705_WCIN_IM, MAX77705_WCIN_IM);
@@ -2250,7 +2250,7 @@ static irqreturn_t max77705_batp_irq(int irq, void *data)
 	union power_supply_propval value;
 	u8 reg_data;
 
-	pr_info("%s : irq(%d)\n", __func__, irq);
+	pr_debug("%s : irq(%d)\n", __func__, irq);
 
 	max77705_update_reg(charger->i2c, MAX77705_CHG_REG_INT_MASK,
 		MAX77705_BATP_IM, MAX77705_BATP_IM);
@@ -2283,7 +2283,7 @@ static irqreturn_t max77705_bat_irq(int irq, void *data)
 		max77705_read_reg(charger->i2c, MAX77705_CHG_REG_DETAILS_01, &reg_data);
 		reg_data = ((reg_data & MAX77705_BAT_DTLS) >> MAX77705_BAT_DTLS_SHIFT);
 		if (reg_data == 0x06) {
-			pr_info("OCP(B2SOVRC)\n");
+			pr_debug("OCP(B2SOVRC)\n");
 
 			if (charger->uno_on) {
 #if defined(CONFIG_WIRELESS_TX_MODE)
@@ -2322,7 +2322,7 @@ static irqreturn_t max77705_bypass_irq(int irq, void *data)
 	o_notify = get_otg_notify();
 #endif
 
-	pr_info("%s: irq(%d)\n", __func__, irq);
+	pr_debug("%s: irq(%d)\n", __func__, irq);
 
 	/* check and unlock */
 	check_charger_unlock_state(charger);
@@ -2385,7 +2385,7 @@ static void max77705_aicl_isr_work(struct work_struct *work)
 
 	if (!(aicl_state & MAX77705_AICL_OK)) {
 		/* AICL mode */
-		pr_info("%s : AICL Mode : CHG_INT_OK(0x%02x), prev_aicl(%d)\n",
+		pr_debug("%s : AICL Mode : CHG_INT_OK(0x%02x), prev_aicl(%d)\n",
 			__func__, aicl_state, charger->prev_aicl_mode);
 		reduce_input_current(charger, REDUCE_CURRENT_STEP);
 
@@ -2442,7 +2442,7 @@ static irqreturn_t max77705_aicl_irq(int irq, void *data)
 	queue_delayed_work(charger->wqueue, &charger->aicl_work,
 		msecs_to_jiffies(AICL_WORK_DELAY));
 
-	pr_info("%s: irq(%d)\n", __func__, irq);
+	pr_debug("%s: irq(%d)\n", __func__, irq);
 	__pm_relax(charger->wc_current_wake_lock);
 	cancel_delayed_work(&charger->wc_current_work);
 
@@ -2513,7 +2513,7 @@ static void max77705_chgin_isr_work(struct work_struct *work)
 		else
 			stable_count = 0;
 		if (stable_count > 10) {
-			pr_info
+			pr_debug
 			    ("%s: irq(%d), chgin(0x%x), chg_dtls(0x%x) prev 0x%x\n",
 			     __func__, charger->irq_chgin, chgin_dtls, chg_dtls,
 			     prev_chgin_dtls);
@@ -2677,7 +2677,7 @@ static void max77705_wc_current_work(struct work_struct *work)
 		queue_delayed_work(charger->wqueue, &charger->wc_current_work,
 				   msecs_to_jiffies(WC_CURRENT_WORK_STEP));
 	}
-	pr_info("%s: wc_current(%d), wc_pre_current(%d), diff(%d)\n",
+	pr_debug("%s: wc_current(%d), wc_pre_current(%d), diff(%d)\n",
 		__func__, charger->wc_current, charger->wc_pre_current, diff_current);
 }
 
@@ -3049,14 +3049,14 @@ err_power_supply_register_otg:
 	power_supply_unregister(charger->psy_chg);
 err_power_supply_register:
 	destroy_workqueue(charger->wqueue);
-	wakeup_source_remove(charger->sysovlo_wake_lock);
-	wakeup_source_remove(charger->otg_wake_lock);
-	wakeup_source_remove(charger->wc_current_wake_lock);
+	wakeup_source_unregister(charger->sysovlo_wake_lock);
+	wakeup_source_unregister(charger->otg_wake_lock);
+	wakeup_source_unregister(charger->wc_current_wake_lock);
 #if defined(CONFIG_USE_POGO)
-	wakeup_source_remove(charger->wpc_wake_lock);
+	wakeup_source_unregister(charger->wpc_wake_lock);
 #endif
-	wakeup_source_remove(charger->aicl_wake_lock);
-	wakeup_source_remove(charger->chgin_wake_lock);
+	wakeup_source_unregister(charger->aicl_wake_lock);
+	wakeup_source_unregister(charger->chgin_wake_lock);
 err_pdata_free:
 	kfree(charger_data);
 err_free:
@@ -3101,14 +3101,14 @@ static int max77705_charger_remove(struct platform_device *pdev)
 	if (charger->psy_otg)
 		power_supply_unregister(charger->psy_otg);
 
-	wakeup_source_remove(charger->sysovlo_wake_lock);
-	wakeup_source_remove(charger->otg_wake_lock);
-	wakeup_source_remove(charger->wc_current_wake_lock);
+	wakeup_source_unregister(charger->sysovlo_wake_lock);
+	wakeup_source_unregister(charger->otg_wake_lock);
+	wakeup_source_unregister(charger->wc_current_wake_lock);
 #if defined(CONFIG_USE_POGO)
-	wakeup_source_remove(charger->wpc_wake_lock);
+	wakeup_source_unregister(charger->wpc_wake_lock);
 #endif
-	wakeup_source_remove(charger->aicl_wake_lock);
-	wakeup_source_remove(charger->chgin_wake_lock);
+	wakeup_source_unregister(charger->aicl_wake_lock);
+	wakeup_source_unregister(charger->chgin_wake_lock);
 
 	kfree(charger);
 
