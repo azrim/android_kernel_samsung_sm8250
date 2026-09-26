@@ -449,7 +449,7 @@ static int max77705_fg_read_qh(struct max77705_fuelgauge_data *fuelgauge)
 	if (sign)
 		qh *= -1;
 
-	pr_info("%s : QH(%d)\n", __func__, qh);
+	pr_debug("%s : QH(%d)\n", __func__, qh);
 
 	return qh;
 }
@@ -735,7 +735,7 @@ static int max77705_fg_read_isys(
 		i_current = i_current - inow_comp;
 	}
 	if (!(fuelgauge->info.pr_cnt % PRINT_COUNT))
-		pr_info("%s: isys_current=%d%s\n", __func__, i_current,
+		pr_debug("%s: isys_current=%d%s\n", __func__, i_current,
 			(unit == SEC_BATTERY_CURRENT_UA)? "uA" : "mA");
 
 	return i_current;
@@ -1477,7 +1477,7 @@ static void max77705_fg_get_scaled_capacity(struct max77705_fuelgauge_data
 	    0 : ((val->intval - fuelgauge->pdata->capacity_min) * 1000 /
 		 (fuelgauge->capacity_max - fuelgauge->pdata->capacity_min));
 
-	pr_info("%s : capacity_max (%d) scaled capacity(%d.%d), raw_soc(%d.%d)\n",
+	pr_debug("%s : capacity_max (%d) scaled capacity(%d.%d), raw_soc(%d.%d)\n",
 		__func__, fuelgauge->capacity_max, val->intval / 10, val->intval % 10,
 		raw_capacity / 10, raw_capacity % 10);
 }
