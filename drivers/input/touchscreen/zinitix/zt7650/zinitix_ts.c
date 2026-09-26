@@ -8985,6 +8985,18 @@ fail_hw_cal:
 			pr_err("%s %s misc device NULL?\n", SECLOG, __func__);
 			return -1;
 		}
+
+		/*
+		 * Copy the request in before taking work_lock. The touch IRQ
+		 * handler only mutex_trylock()s this lock, so a page fault on the
+		 * userspace buffer while it is held would make the handler give
+		 * up and drop the pending touch frame.
+		 */
+		if (copy_from_user(&reg_ioctl, argp, sizeof(struct reg_ioctl))) {
+			input_info(true, &misc_info->client->dev, "%s: error : copy_from_user\n", __func__);
+			return -1;
+		}
+
 		mutex_lock(&misc_info->work_lock);
 		if (misc_info->work_state != NOTHING) {
 			input_info(true, &misc_info->client->dev, "[zinitix_touch]:other process occupied.. (%d)\n",
@@ -8995,38 +9007,51 @@ fail_hw_cal:
 
 		misc_info->work_state = SET_MODE;
 
-		if (copy_from_user(&reg_ioctl, argp, sizeof(struct reg_ioctl))) {
-			misc_info->work_state = NOTHING;
-			mutex_unlock(&misc_info->work_lock);
-			input_info(true, &misc_info->client->dev, "%s: error : copy_from_user\n", __func__);
-			return -1;
-		}
-
 		if (read_data(misc_info->client,
 					(u16)reg_ioctl.addr, (u8 *)&val, 2) < 0)
 			ret = -1;
 
 		nval = (int)val;
 
+		misc_info->work_state = NOTHING;
+		mutex_unlock(&misc_info->work_lock);
+
+		input_info(true, &misc_info->client->dev, "%s read : reg addr = 0x%x, val = 0x%x\n", __func__,
+				reg_ioctl.addr, nval);
+
 #ifdef CONFIG_COMPAT
 		if (copy_to_user(compat_ptr(reg_ioctl.val), (u8 *)&nval, 4)) {
 #else
 		if (copy_to_user((void __user *)(reg_ioctl.val), (u8 *)&nval, 4)) {
 #endif
-			misc_info->work_state = NOTHING;
-			mutex_unlock(&misc_info->work_lock);
 			input_info(true, &misc_info->client->dev, "%s: error : copy_to_user\n", __func__);
 			return -1;
 		}
 
-		input_info(true, &misc_info->client->dev, "%s read : reg addr = 0x%x, val = 0x%x\n", __func__,
-				reg_ioctl.addr, nval);
-
-		misc_info->work_state = NOTHING;
-		mutex_unlock(&misc_info->work_lock);
 		return ret;
 
 		case TOUCH_IOCTL_SET_REG:
+
+		if (misc_info == NULL) {
+			pr_err("%s %s misc device NULL?\n", SECLOG, __func__);
+			return -1;
+		}
+
+		/* stage both userspace copies before taking work_lock (see above) */
+		if (copy_from_user(&reg_ioctl,
+					argp, sizeof(struct reg_ioctl))) {
+			input_info(true, &misc_info->client->dev, "%s: error : copy_from_user(1)\n", __func__);
+			return -1;
+		}
+
+#ifdef CONFIG_COMPAT
+		if (copy_from_user(&val, compat_ptr(reg_ioctl.val), sizeof(val))) {
+#else
+		if (copy_from_user(&val,(void __user *)(reg_ioctl.val), sizeof(val))) {
+#endif
+			input_info(true, &misc_info->client->dev, "%s: error : copy_from_user(2)\n", __func__);
+			return -1;
+		}
 
 		mutex_lock(&misc_info->work_lock);
 		if (misc_info->work_state != NOTHING) {
@@ -9037,24 +9062,6 @@ fail_hw_cal:
 		}
 
 		misc_info->work_state = SET_MODE;
-		if (copy_from_user(&reg_ioctl,
-					argp, sizeof(struct reg_ioctl))) {
-			misc_info->work_state = NOTHING;
-			mutex_unlock(&misc_info->work_lock);
-			input_info(true, &misc_info->client->dev, "%s: error : copy_from_user(1)\n", __func__);
-			return -1;
-		}
-
-#ifdef CONFIG_COMPAT
-		if (copy_from_user(&val, compat_ptr(reg_ioctl.val), sizeof(val))) {
-#else
-		if (copy_from_user(&val,(void __user *)(reg_ioctl.val), sizeof(val))) {
-#endif
-			misc_info->work_state = NOTHING;
-			mutex_unlock(&misc_info->work_lock);
-			input_info(true, &misc_info->client->dev, "%s: error : copy_from_user(2)\n", __func__);
-			return -1;
-		}
 
 		if (write_reg(misc_info->client,
 					(u16)reg_ioctl.addr, val) != I2C_SUCCESS)
