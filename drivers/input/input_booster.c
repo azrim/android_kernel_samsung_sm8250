@@ -341,9 +341,18 @@ void press_timeout_func(struct work_struct* work)
 		for (res_type = 0; res_type < max_resource_size; res_type++) {
 			res = target_ib->ib_dt->res[res_type];
 
+			/*
+			 * Targets are only allocated for resources with a
+			 * non-zero head_value (see create_ib_instance).
+			 * Detaching the rest is a no-op and used to spam
+			 * "TV No Exist" for every idle slot.
+			 */
+			if (res.head_value == 0)
+				continue;
+
 			tv = detach_target(target_ib->uniq_id, res.res_id);
 			if (tv == NULL) {
-				pr_err(ITAG" Press Timeout Func :::: %d's TV No Exist(%d)",
+				pr_debug(ITAG" Press Timeout Func :::: %d's TV No Exist(%d)",
 					target_ib->uniq_id, res.res_id);
 				continue;
 			}
@@ -436,6 +445,10 @@ void release_timeout_func(struct work_struct* work)
 
 	for (res_type = 0; res_type < max_resource_size; res_type++) {
 		res = target_ib->ib_dt->res[res_type];
+
+		/* Same as press_timeout: only resources with head_value got a target. */
+		if (res.head_value == 0)
+			continue;
 
 		tv = detach_target(target_ib->uniq_id, res.res_id);
 		if (tv == NULL) {
