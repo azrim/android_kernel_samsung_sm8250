@@ -75,6 +75,7 @@ void trigger_input_booster(struct work_struct* work)
 {
 	unsigned int uniq_id = 0;
 	int res_type = -1;
+	int i;
 
 	struct t_ib_info* ib;
 	struct t_ib_trigger* p_IbTrigger = container_of(work, struct t_ib_trigger, ib_trigger_work);
@@ -97,14 +98,32 @@ void trigger_input_booster(struct work_struct* work)
 			goto out_unlock;
 		}
 
-		// Check if uniqId exits.
-		do {
+		/*
+		 * Claim a free uniq id.  This search MUST be bounded: we are
+		 * holding trigger_ib_lock, and remove_ib_instance() -- the only
+		 * path that ever frees a uniq id -- takes that same lock.  If
+		 * every MAX_IB_COUNT id is outstanding, an unbounded search
+		 * would spin here forever and deadlock every pending release
+		 * (the ordered ev_unbound_wq worker never yields, so the whole
+		 * booster wedges until reboot).  Drop the event instead: the
+		 * booster is only a performance hint, so losing one under a
+		 * burst is harmless.
+		 */
+		for (i = 0; i < MAX_IB_COUNT; i++) {
 			uniq_id = total_ib_cnt++;
 
 			if (total_ib_cnt == MAX_IB_COUNT)
 				total_ib_cnt = 0;
 
-		} while (!is_validate_uniqid(uniq_id));
+			if (is_validate_uniqid(uniq_id))
+				break;
+		}
+
+		if (i == MAX_IB_COUNT) {
+			pr_err(ITAG" IB Trigger :: all %d uniq ids in use, drop event",
+				MAX_IB_COUNT);
+			goto out_unlock;
+		}
 
 		// Make ib instance with all needed factor.
 		ib = create_ib_instance(p_IbTrigger, uniq_id);
