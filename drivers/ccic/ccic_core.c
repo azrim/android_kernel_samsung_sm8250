@@ -88,6 +88,7 @@ void enable_dp_switch_regulator(int mode)
 				pr_err("%s - enable vdd085_usb ldo enable failed, ret=%d\n",
 				       __func__, ret);
 				regulator_put(vdd085_usb);
+				of_node_put(np);
 				return;
 			}
 		}
@@ -100,6 +101,7 @@ void enable_dp_switch_regulator(int mode)
 				pr_err("%s - enable vdd085_usb ldo enable failed, ret=%d\n",
 				__func__, ret);
 				regulator_put(vdd085_usb);
+				of_node_put(np);
 				return;
 			}
 		}
