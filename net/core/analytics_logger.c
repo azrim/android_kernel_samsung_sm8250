@@ -36,7 +36,7 @@ static void *ipc_log_ctx;
 
 #define DEBUG_NETIO_STAT_PRINT BIT(1)
 
-static int verbose_log __read_mostly = DEBUG_NETIO_STAT_PRINT;
+static int verbose_log __read_mostly;
 module_param(verbose_log, int, 0644);
 MODULE_PARM_DESC(verbose_log, "turn on/off log on dmesg");
 
