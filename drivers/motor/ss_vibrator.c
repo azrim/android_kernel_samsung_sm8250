@@ -232,7 +232,7 @@ void vibe_set_freq(struct ss_vib *vib, int set_freq)
 			motor_strength = vib->strength_default;
 	}
 
-	pr_info("[VIB]: %s current temp: %d, motor_strength: %d\n", __func__, vib_get_temperature(), motor_strength);
+	pr_debug("[VIB]: %s current temp: %d, motor_strength: %d\n", __func__, vib_get_temperature(), motor_strength);
 
 	g_nlra_gp_clk_d = g_nlra_gp_clk_n / 2;
 	g_nlra_gp_clk_pwm_mul = motor_strength;
@@ -400,7 +400,7 @@ static void vibrator_enable(struct ss_vib *vib, int value)
 	hrtimer_cancel(&vib->vib_timer);
 
 	if (value == 0) {
-		pr_info("[VIB]: OFF\n");
+		pr_debug("[VIB]: OFF\n");
 		vib->state = 0;
 		vib->timevalue = 0;
 
@@ -419,12 +419,12 @@ static void vibrator_enable(struct ss_vib *vib, int value)
 				vibe_set_intensity(vib->haptic_eng[0].intensity);
 				vib->timevalue = vib->haptic_eng[0].time;
 				vib->intensity = vib->haptic_eng[0].intensity;
-				pr_info("[VIB] packet enabled");
+				pr_debug("[VIB] packet enabled");
 			}
-			pr_info("[VIB]: ON, Duration : %d msec, intensity : %d, freq : %d strength : %d od : %d\n",
+			pr_debug("[VIB]: ON, Duration : %d msec, intensity : %d, freq : %d strength : %d od : %d\n",
 				vib->timevalue, vib->intensity, vib->freq, motor_strength, vib->f_overdrive_en);
 		} else {
-			pr_info("[VIB]: ON, Duration : %d msec, intensity : %d, strength : %d od : %d\n", 
+			pr_debug("[VIB]: ON, Duration : %d msec, intensity : %d, strength : %d od : %d\n", 
 				vib->timevalue, vib->intensity, motor_strength, vib->f_overdrive_en);
 		}
 	}
@@ -458,7 +458,7 @@ static void ss_haptic_engine_update(struct work_struct *work)
 	vibe_set_intensity(vib->haptic_eng[vib->packet_cnt].intensity);
 	vib->intensity = vib->haptic_eng[vib->packet_cnt].intensity;
 
-	pr_info("[VIB] %s time[%d] intensity[%d] freq[%d](m=%d,n=%d) od[%d]\n",	__func__,
+	pr_debug("[VIB] %s time[%d] intensity[%d] freq[%d](m=%d,n=%d) od[%d]\n",	__func__,
 		vib->timevalue, vib->intensity, vib->freq,
 		g_nlra_gp_clk_m, g_nlra_gp_clk_n, vib->f_overdrive_en);
 }
@@ -1140,8 +1140,10 @@ static int ss_vibrator_probe(struct platform_device *pdev)
 	}
 
 	vib->to_dev = device_create(vib->to_class, NULL, 0, vib, "vibrator");
-	if (IS_ERR(vib->to_dev))
-		return PTR_ERR(vib->to_dev);
+	if (IS_ERR(vib->to_dev)) {
+		rc = PTR_ERR(vib->to_dev);
+		goto err_read_vib;
+	}
 
 	rc = sysfs_create_file(&vib->to_dev->kobj, &dev_attr_enable.attr);
 	if (rc < 0)
@@ -1170,12 +1172,14 @@ static int ss_vibrator_probe(struct platform_device *pdev)
 	}
 
 	vib_dev = device_create(vib->to_class, NULL, 0, vib, "vib");
-	if (IS_ERR(vib_dev))
+	if (IS_ERR(vib_dev)) {
 		pr_info("[VIB]: Failed to create device for samsung vib\n");
-
-	rc = sysfs_create_file(&vib_dev->kobj, &dev_attr_vib_tuning.attr);
-	if (rc)
-		pr_info("Failed to create sysfs group for samsung specific led\n");
+		vib_dev = NULL;
+	} else {
+		rc = sysfs_create_file(&vib_dev->kobj, &dev_attr_vib_tuning.attr);
+		if (rc)
+			pr_info("Failed to create sysfs group for samsung specific led\n");
+	}
 
 	wake_lock_init(&vib_wake_lock, WAKE_LOCK_SUSPEND, "vib_present");
 	pm_qos_add_request(&pm_qos_req, PM_QOS_CPU_DMA_LATENCY, PM_QOS_DEFAULT_VALUE);
@@ -1210,6 +1214,9 @@ static int ss_vibrator_remove(struct platform_device *pdev)
 {
 	struct ss_vib *vib = dev_get_drvdata(&pdev->dev);
 
+	/* Stop the timer before the driver data it touches goes away. */
+	hrtimer_cancel(&vib->vib_timer);
+
 	iounmap(virt_mmss_gp1_base);
 	pm_qos_remove_request(&pm_qos_req);
 
@@ -1217,6 +1224,17 @@ static int ss_vibrator_remove(struct platform_device *pdev)
 	mutex_destroy(&vib->lock);
 	mutex_destroy(&vib->sysfs_lock);
 	wake_lock_destroy(&vib_wake_lock);
+
+	if (vib->to_dev) {
+		device_destroy(vib->to_class, 0);
+		vib->to_dev = NULL;
+	}
+	if (vib_dev) {
+		device_destroy(vib->to_class, 0);
+		vib_dev = NULL;
+	}
+	class_destroy(vib->to_class);
+
 	return 0;
 }
 

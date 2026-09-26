@@ -106,21 +106,21 @@ static void uvlo_haptic_init_reg(struct work_struct *work)
 
 	max77705_read_reg(drvdata->i2c,
 			MAX77705_PMIC_REG_MCONFIG, &reg_data);
-	pr_info("[VIB],before haptic reg init, data = %02x\n", reg_data);
+	pr_debug("[VIB],before haptic reg init, data = %02x\n", reg_data);
 
 	max77705_haptic_init_reg(drvdata);
 	max77705_vibtonz_en(true);
 
 	max77705_read_reg(drvdata->i2c,
 			MAX77705_PMIC_REG_MCONFIG, &reg_data);
-	pr_info("[VIB],after haptic reg init, data = %02x\n", reg_data);
+	pr_debug("[VIB],after haptic reg init, data = %02x\n", reg_data);
 }
 
 static irqreturn_t max77705_haptic_irq(int irq, void *data)
 {
 	struct max77705_haptic_drvdata *drvdata = data;
 
-	pr_info("%s: [VIB] UVLO INT occurred, init haptic reg\n", __func__);
+	pr_debug("%s: [VIB] UVLO INT occurred, init haptic reg\n", __func__);
 
 	schedule_delayed_work(&drvdata->haptic_work, msecs_to_jiffies(1000));
 
@@ -209,7 +209,7 @@ static int max77705_haptic_probe(struct platform_device *pdev)
 	return 0;
 err_alloc1:
 	kfree(drvdata);
-	return error;
+	return -ENOMEM;
 }
 
 static int max77705_haptic_remove(struct platform_device *pdev)

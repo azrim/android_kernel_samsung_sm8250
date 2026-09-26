@@ -63,10 +63,10 @@ int vib_notifier_notify(void)
 	switch (ret) {
 	case NOTIFY_DONE:
 	case NOTIFY_OK:
-		pr_info("%s done(0x%x)\n", __func__, ret);
+		pr_debug("%s done(0x%x)\n", __func__, ret);
 		break;
 	default:
-		pr_info("%s failed(0x%x)\n", __func__, ret);
+		pr_debug("%s failed(0x%x)\n", __func__, ret);
 		break;
 	}
 
