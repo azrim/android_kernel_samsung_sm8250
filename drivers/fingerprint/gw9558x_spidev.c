@@ -213,10 +213,14 @@ int gw9558_ioctl_transfer_raw_cmd(struct gf_device *gf_dev,
 		return -ENOMEM;
 	}
 
-	/* change speed and set transfer mode */
-	gw9558_spi_setup_conf(gf_dev, ioc_xraw.bits_per_word);
-
+	/*
+	 * setup_conf mutates spi->bits_per_word and calls spi_setup().
+	 * It must stay inside buf_lock together with the transfer so two
+	 * concurrent raw-command ioctls cannot interleave configuration
+	 * and SPI I/O.  Only the usercopies sit outside the lock.
+	 */
 	mutex_lock(&gf_dev->buf_lock);
+	gw9558_spi_setup_conf(gf_dev, ioc_xraw.bits_per_word);
 	memcpy(gf_dev->tx_buf, tx_buf, ioc_xraw.len);
 	gw9558_spi_transfer_raw(gf_dev, gf_dev->tx_buf, gf_dev->rx_buf,
 			ioc_xraw.len);
