@@ -217,7 +217,18 @@ static int max77705_haptic_remove(struct platform_device *pdev)
 	struct max77705_haptic_drvdata *drvdata
 		= platform_get_drvdata(pdev);
 
+	/*
+	 * Quiesce the IRQ and the delayed work before freeing drvdata: the
+	 * UVLO handler re-arms haptic_work, and uvlo_haptic_init_reg()
+	 * dereferences drvdata, so freeing first would leave both running
+	 * against freed memory.
+	 */
+	if (drvdata->pdata && drvdata->pdata->irq)
+		free_irq(drvdata->pdata->irq, drvdata);
+	cancel_delayed_work_sync(&drvdata->haptic_work);
+
 	max77705_haptic_i2c(drvdata, false);
+	max77705_g_hap_data = NULL;
 	kfree(drvdata);
 	return 0;
 }
