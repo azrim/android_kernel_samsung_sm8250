@@ -153,7 +153,7 @@ static void ap_health_work_write_fn(struct work_struct *work)
 	unsigned long delay = 5 * HZ;
 	static unsigned int err_cnt;
 
-	pr_info("start.\n");
+	pr_debug("start.\n");
 
 	if (!mutex_trylock(&ap_health_work_lock)) {
 		pr_err("already locked.\n");
@@ -189,7 +189,7 @@ static void ap_health_work_write_fn(struct work_struct *work)
 	set_fs(fs);
 
 	mutex_unlock(&ap_health_work_lock);
-	pr_info("end.\n");
+	pr_debug("end.\n");
 	return;
 
 remained:
@@ -200,7 +200,7 @@ openfail_retry:
 	mutex_unlock(&ap_health_work_lock);
 occupied_retry:
 	queue_delayed_work(dbg_part_wq, &ap_health_work, delay);
-	pr_info("end, will retry, wr(%u).\n",
+	pr_debug("end, will retry, wr(%u).\n",
 		ap_health_data.header.need_write);
 }
 
