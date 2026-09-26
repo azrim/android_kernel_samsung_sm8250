@@ -206,7 +206,6 @@ void input_booster(struct evdev_client* dev, int dev_head) {
 	int keyId = 0;
 	unsigned int uniqId = 0;
 	int res_type = 0;
-	int cnt = 0;
 	int cur_idx = -1;
 	int head = 0;
 	int slot = 0;
@@ -252,13 +251,16 @@ void input_booster(struct evdev_client* dev, int dev_head) {
 			continue;
 		}
 
-		if (cnt == 0 && dev->evdev->handle.dev != NULL) {
-			while (cnt < (int)sizeof(ib_trigger[slot].dev_name) - 1 &&
-					dev->evdev->handle.dev->name[cnt] != '\0') {
-				ib_trigger[slot].dev_name[cnt] = dev->evdev->handle.dev->name[cnt];
-				cnt++;
+		if (dev->evdev->handle.dev != NULL) {
+			const char *name = dev->evdev->handle.dev->name;
+			int n = 0;
+
+			while (n < (int)sizeof(ib_trigger[slot].dev_name) - 1 &&
+					name[n] != '\0') {
+				ib_trigger[slot].dev_name[n] = name[n];
+				n++;
 			}
-			ib_trigger[slot].dev_name[cnt] = '\0';
+			ib_trigger[slot].dev_name[n] = '\0';
 		}
 
 		pr_booster("Dev Name : %s(%d), Key Id(%d), IB_Slot(%d)", ib_trigger[slot].dev_name, dev_type, keyId, slot);
