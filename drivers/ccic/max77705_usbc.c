@@ -2062,11 +2062,20 @@ int max77705_i2c_opcode_read(struct max77705_usbc_platform_data *usbc_data,
 	for (i = 0; i < length + OPCODE_SIZE; i++)
 		msg_maxim("[%d], 0x[%x]", i, values[i]);
 #else
-	msg_maxim("opcode 0x%x, read_length %d, ret_error %d",
-			opcode, length + OPCODE_SIZE, size);
-	print_hex_dump(KERN_INFO, "max77705: opcode_read: ",
-			DUMP_PREFIX_OFFSET, 16, 1, values,
-			length + OPCODE_SIZE, false);
+	/*
+	 * Successful PD/typec traffic used to dump a hex blob at info on
+	 * every opcode read.  Only shout when the transaction failed.
+	 */
+	if (size < 0) {
+		pr_err("max77705: opcode 0x%x, read_length %d, ret_error %d\n",
+		       opcode, length + OPCODE_SIZE, size);
+		print_hex_dump(KERN_ERR, "max77705: opcode_read: ",
+			       DUMP_PREFIX_OFFSET, 16, 1, values,
+			       length + OPCODE_SIZE, false);
+	} else {
+		pr_debug("max77705: opcode 0x%x, read_length %d, ret_error %d\n",
+			 opcode, length + OPCODE_SIZE, size);
+	}
 #endif
 	return size;
 }
