@@ -441,7 +441,7 @@ EXPORT_SYMBOL(apr_send_pkt);
 
 int apr_pkt_config(void *handle, struct apr_pkt_cfg *cfg)
 {
-	struct apr_svc *svc = (struct apr_svc *)handle;
+	struct apr_svc *svc = apr_hdl_svc(handle);
 	uint16_t dest_id;
 	uint16_t client_id;
 	struct apr_client *clnt;
