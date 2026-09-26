@@ -2260,6 +2260,7 @@ static ssize_t reclaim_write(struct file *file, const char __user *buf,
 	if (type == RECLAIM_WRITEBACK) {
 		if (alloc_zwbs(zwbs)) {
 			pr_info("%s alloc_zwbs failed", __func__);
+			put_task_struct(task);
 			return -ENOMEM;
 		}
 		wb_walk.zwbs = zwbs;
