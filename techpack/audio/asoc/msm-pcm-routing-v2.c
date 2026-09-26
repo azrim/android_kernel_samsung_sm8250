@@ -1316,6 +1316,11 @@ static void msm_pcm_routing_build_matrix(int fedai_id, int sess_type,
 				unsigned long copp =
 				      session_copp_map[fedai_id][sess_type][i];
 				if (test_bit(j, &copp)) {
+					if (num_copps >= MAX_COPPS_PER_PORT) {
+						pr_err_ratelimited("%s: too many copps, truncating\n",
+								   __func__);
+						break;
+					}
 					payload.port_id[num_copps] = port_id;
 					payload.copp_idx[num_copps] = j;
 					payload.app_type[num_copps] =
@@ -1581,6 +1586,11 @@ int msm_pcm_routing_reg_phy_compr_stream(int fe_id, int perf_mode,
 				unsigned long copp =
 				session_copp_map[fe_id][session_type][i];
 				if (test_bit(j, &copp)) {
+					if (num_copps >= MAX_COPPS_PER_PORT) {
+						pr_err_ratelimited("%s: too many copps, truncating\n",
+								   __func__);
+						break;
+					}
 					payload.port_id[num_copps] = port_id;
 					payload.copp_idx[num_copps] = j;
 					payload.app_type[num_copps] =
@@ -1933,6 +1943,11 @@ int msm_pcm_routing_reg_phy_stream(int fedai_id, int perf_mode,
 				unsigned long copp =
 				    session_copp_map[fedai_id][session_type][i];
 				if (test_bit(j, &copp)) {
+					if (num_copps >= MAX_COPPS_PER_PORT) {
+						pr_err_ratelimited("%s: too many copps, truncating\n",
+								   __func__);
+						break;
+					}
 					payload.port_id[num_copps] = port_id;
 					payload.copp_idx[num_copps] = j;
 					payload.app_type[num_copps] =
