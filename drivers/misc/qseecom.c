@@ -2236,6 +2236,7 @@ static int __qseecom_process_incomplete_cmd(struct qseecom_dev_handle *data,
 	struct qseecom_client_listener_data_64bit_irsp send_data_rsp_64bit
 									= {0};
 	struct qseecom_registered_listener_list *ptr_svc = NULL;
+	struct qseecom_registered_listener_list *list_ptr;
 	sigset_t new_sigset;
 	sigset_t old_sigset;
 	uint32_t status;
@@ -2250,9 +2251,16 @@ static int __qseecom_process_incomplete_cmd(struct qseecom_dev_handle *data,
 		 * Wake up blocking lsitener service with the lstnr id
 		 */
 		mutex_lock(&listener_access_lock);
-		list_for_each_entry(ptr_svc,
+		/*
+		 * list_for_each_entry leaves the iterator at the head
+		 * object when there is no match; a NULL check alone is
+		 * not a "not found" test.  Track the match explicitly.
+		 */
+		ptr_svc = NULL;
+		list_for_each_entry(list_ptr,
 				&qseecom.registered_listener_list_head, list) {
-			if (ptr_svc->svc.listener_id == lstnr) {
+			if (list_ptr->svc.listener_id == lstnr) {
+				ptr_svc = list_ptr;
 				ptr_svc->listener_in_use = true;
 				ptr_svc->rcv_req_flag = 1;
 				ret = qseecom_dmabuf_cache_operations(
@@ -2330,6 +2338,32 @@ static int __qseecom_process_incomplete_cmd(struct qseecom_dev_handle *data,
 		mutex_lock(&listener_access_lock);
 		/* restore signal mask */
 		sigprocmask(SIG_SETMASK, &old_sigset, NULL);
+		/*
+		 * Unregister can free ptr_svc while we slept: the waiter
+		 * is the client fd, and the unregister gate is on the
+		 * listener's ioctl_count.  Re-resolve the object before
+		 * touching it.
+		 */
+		if (ptr_svc) {
+			struct qseecom_registered_listener_list *cur, *alive = NULL;
+
+			list_for_each_entry(cur,
+					&qseecom.registered_listener_list_head,
+					list) {
+				if (cur == ptr_svc) {
+					alive = cur;
+					break;
+				}
+			}
+			if (!alive) {
+				pr_err("Listener Svc %d unregistered while waiting\n",
+				       lstnr);
+				ptr_svc = NULL;
+				rc = -ENODEV;
+				status = QSEOS_RESULT_FAILURE;
+				goto err_resp;
+			}
+		}
 		if (data->abort || ptr_svc->abort) {
 			pr_err("Abort clnt %d waiting on lstnr svc %d, ret %d\n",
 				data->client.app_id, lstnr, ret);
