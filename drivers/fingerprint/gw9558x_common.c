@@ -164,7 +164,7 @@ static long gw9558_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		break;
 
 	case GF_IOC_RESET:
-		pr_info("GF_IOC_RESET\n");
+		pr_debug("GF_IOC_RESET\n");
 		gw9558_hw_reset(gf_dev, 0);
 		break;
 
@@ -172,24 +172,26 @@ static long gw9558_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		if (copy_from_user(&onoff, (void __user *)arg,
 					sizeof(onoff))) {
 			pr_err("Failed to copy spi_speed value from user to kernel\n");
+			retval = -EFAULT;
+			break;
 		}
-		pr_info("GF_IOC_ENABLE_SPI_CLK : %d, fromUser : %d\n",
+		pr_debug("GF_IOC_ENABLE_SPI_CLK : %d, fromUser : %d\n",
 				gf_dev->clk_setting->spi_speed, onoff);
 		spi_clk_enable(gf_dev->clk_setting);
 		break;
 
 	case GF_IOC_DISABLE_SPI_CLK:
-		pr_info("GF_IOC_DISABLE_SPI_CLK\n");
+		pr_debug("GF_IOC_DISABLE_SPI_CLK\n");
 		spi_clk_disable(gf_dev->clk_setting);
 		break;
 
 	case GF_IOC_ENABLE_POWER:
-		pr_info("GF_IOC_ENABLE_POWER\n");
+		pr_debug("GF_IOC_ENABLE_POWER\n");
 		gw9558_hw_power_enable(gf_dev, 1);
 		break;
 
 	case GF_IOC_DISABLE_POWER:
-		pr_info("GF_IOC_DISABLE_POWER\n");
+		pr_debug("GF_IOC_DISABLE_POWER\n");
 		gw9558_hw_power_enable(gf_dev, 0);
 		break;
 
@@ -200,7 +202,7 @@ static long gw9558_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			retval = -EFAULT;
 			break;
 		}
-		pr_info("GF_IOC_POWER_CONTROL %d\n", onoff);
+		pr_debug("GF_IOC_POWER_CONTROL %d\n", onoff);
 		gw9558_hw_power_enable(gf_dev, onoff);
 		break;
 
@@ -216,9 +218,7 @@ static long gw9558_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 #ifndef ENABLE_SENSORS_FPRINT_SECURE
 	case GF_IOC_TRANSFER_RAW_CMD:
-		mutex_lock(&gf_dev->buf_lock);
 		retval = gw9558_ioctl_transfer_raw_cmd(gf_dev, arg, (unsigned int)TANSFER_MAX_LEN);
-		mutex_unlock(&gf_dev->buf_lock);
 		break;
 #endif /* !ENABLE_SENSORS_FPRINT_SECURE */
 #ifdef ENABLE_SENSORS_FPRINT_SECURE
@@ -244,7 +244,7 @@ static long gw9558_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		break;
 
 	case GF_MODEL_INFO:
-		pr_info("GF_MODEL_INFO : %s\n", gf_dev->model_info);
+		pr_debug("GF_MODEL_INFO : %s\n", gf_dev->model_info);
 		if (copy_to_user((void __user *)arg, gf_dev->model_info, 10)) {
 			pr_err("Failed to copy data to user\n");
 			retval = -EFAULT;
@@ -285,11 +285,11 @@ static int gw9558_open(struct inode *inode, struct file *filp)
 	struct gf_device *gf_dev = NULL;
 	int retval = -ENXIO;
 
-	pr_info("Entry\n");
+	pr_debug("Entry\n");
 	mutex_lock(&device_list_lock);
 	list_for_each_entry(gf_dev, &device_list, device_entry) {
 		if (gf_dev->devno == inode->i_rdev) {
-			pr_info("Found\n");
+			pr_debug("Found\n");
 			retval = 0;
 			break;
 		}
@@ -299,7 +299,7 @@ static int gw9558_open(struct inode *inode, struct file *filp)
 	if (retval == 0) {
 		filp->private_data = gf_dev;
 		nonseekable_open(inode, filp);
-		pr_info("Success to open device\n");
+		pr_debug("Success to open device\n");
 	} else {
 		pr_err("No device for minor %d\n", iminor(inode));
 	}
@@ -310,7 +310,7 @@ static int gw9558_release(struct inode *inode, struct file *filp)
 {
 	struct gf_device *gf_dev = NULL;
 
-	pr_info("Entry\n");
+	pr_debug("Entry\n");
 	gf_dev = filp->private_data;
 	return 0;
 }

@@ -177,81 +177,91 @@ int gw9558_ioctl_transfer_raw_cmd(struct gf_device *gf_dev,
 		unsigned long arg, unsigned int bufsiz)
 {
 	struct gf_ioc_transfer_raw ioc_xraw;
+	u8 *tx_buf = NULL;
+	u8 *rx_buf = NULL;
 	int retval = 0;
-	uint32_t len;
 
-	do {
-		if (copy_from_user(&ioc_xraw, (void __user *)arg,
-				sizeof(struct gf_ioc_transfer_raw))) {
-			pr_err("Failed to copy gf_ioc_transfer_raw from user to kernel\n");
-			retval = -EFAULT;
-			break;
-		}
+	if (copy_from_user(&ioc_xraw, (void __user *)arg,
+			sizeof(struct gf_ioc_transfer_raw))) {
+		pr_err("Failed to copy gf_ioc_transfer_raw from user to kernel\n");
+		return -EFAULT;
+	}
 
-		if ((ioc_xraw.len > bufsiz) || (ioc_xraw.len == 0)) {
-			pr_err("request transfer length larger than maximum buffer\n");
-			retval = -EINVAL;
-			break;
-		}
+	if ((ioc_xraw.len > bufsiz) || (ioc_xraw.len == 0)) {
+		pr_err("request transfer length larger than maximum buffer\n");
+		return -EINVAL;
+	}
 
-		if (ioc_xraw.read_buf == NULL || ioc_xraw.write_buf == NULL) {
-			pr_err("read buf and write buf can not equal to NULL simultaneously.\n");
-			retval = -EINVAL;
-			break;
-		}
+	if (ioc_xraw.read_buf == NULL || ioc_xraw.write_buf == NULL) {
+		pr_err("read buf and write buf can not equal to NULL simultaneously.\n");
+		return -EINVAL;
+	}
 
-		/* change speed and set transfer mode */
-		gw9558_spi_setup_conf(gf_dev, ioc_xraw.bits_per_word);
+	/*
+	 * Stage the payload into private buffers first so that no userspace
+	 * access is performed while holding buf_lock. Holding a sleeping lock
+	 * across copy_{to,from}_user() allows a fault on the userspace buffer
+	 * to stall the lock and, with it, the serialized SPI transfer path.
+	 */
+	tx_buf = memdup_user((void __user *)ioc_xraw.write_buf, ioc_xraw.len);
+	if (IS_ERR(tx_buf))
+		return PTR_ERR(tx_buf);
 
-		len = ioc_xraw.len;
+	rx_buf = kzalloc(ioc_xraw.len, GFP_KERNEL);
+	if (!rx_buf) {
+		kfree(tx_buf);
+		return -ENOMEM;
+	}
 
-		if (copy_from_user(gf_dev->tx_buf, (void __user *)ioc_xraw.write_buf,
-					ioc_xraw.len)) {
-			pr_err("Failed to copy gf_ioc_transfer from user to kernel\n");
-			retval = -EFAULT;
-			break;
-		}
+	/* change speed and set transfer mode */
+	gw9558_spi_setup_conf(gf_dev, ioc_xraw.bits_per_word);
 
-		gw9558_spi_transfer_raw(gf_dev, gf_dev->tx_buf, gf_dev->rx_buf, len);
+	mutex_lock(&gf_dev->buf_lock);
+	memcpy(gf_dev->tx_buf, tx_buf, ioc_xraw.len);
+	gw9558_spi_transfer_raw(gf_dev, gf_dev->tx_buf, gf_dev->rx_buf,
+			ioc_xraw.len);
+	memcpy(rx_buf, gf_dev->rx_buf, ioc_xraw.len);
+	mutex_unlock(&gf_dev->buf_lock);
 
-		if (copy_to_user((void __user *)ioc_xraw.read_buf,
-					gf_dev->rx_buf, ioc_xraw.len)) {
-			pr_err("Failed to copy gf_ioc_transfer_raw from kernel to user\n");
-			retval = -EFAULT;
-		}
+	if (copy_to_user((void __user *)ioc_xraw.read_buf, rx_buf,
+			ioc_xraw.len)) {
+		pr_err("Failed to copy gf_ioc_transfer_raw from kernel to user\n");
+		retval = -EFAULT;
+	}
 
-	} while (0);
+	kfree(tx_buf);
+	kfree(rx_buf);
 
 	return retval;
 }
 
 int gw9558_init_buffer(struct gf_device *gf_dev)
 {
-	int retval = 0;
 	int len = TANSFER_MAX_LEN;
 
 	gf_dev->spi_buffer = kzalloc(len, GFP_KERNEL);
-	if (!gf_dev->spi_buffer) {
-		pr_err("failed to allocate spi buffer\n");
-		retval = -ENOMEM;
-		goto alloc_failed;
-	}
+	if (!gf_dev->spi_buffer)
+		goto err_spi_buffer;
 
 	gf_dev->tx_buf = kzalloc(len, GFP_KERNEL);
-	if (!gf_dev->tx_buf) {
-		pr_err("failed to allocate raw tx buffer\n");
-		retval = -ENOMEM;
-		goto alloc_failed;
-	}
+	if (!gf_dev->tx_buf)
+		goto err_tx_buffer;
 
 	gf_dev->rx_buf = kzalloc(len, GFP_KERNEL);
-	if (!gf_dev->rx_buf) {
-		kfree(gf_dev->tx_buf);
-		pr_err("failed to allocate raw rx buffer\n");
-		retval = -ENOMEM;
-	}
-alloc_failed:
-	return retval;
+	if (!gf_dev->rx_buf)
+		goto err_rx_buffer;
+
+	return 0;
+
+err_rx_buffer:
+	kfree(gf_dev->tx_buf);
+	gf_dev->tx_buf = NULL;
+err_tx_buffer:
+	kfree(gf_dev->spi_buffer);
+	gf_dev->spi_buffer = NULL;
+err_spi_buffer:
+	pr_err("failed to allocate fingerprint transfer buffers\n");
+	return -ENOMEM;
 }
 
 int gw9558_free_buffer(struct gf_device *gf_dev)
