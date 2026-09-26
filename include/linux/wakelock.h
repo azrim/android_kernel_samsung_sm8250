@@ -48,28 +48,38 @@ static inline void wake_lock_destroy(struct wake_lock *lock)
 	 * wakeup_source_register(), so it must be released with
 	 * wakeup_source_unregister() (which also frees the struct and
 	 * removes the sysfs entry) rather than wakeup_source_remove().
+	 *
+	 * unregister() frees the wakeup source.  Poison ws so a late
+	 * IRQ/timer caller and a double destroy cannot touch freed
+	 * memory; callers must still quiesce those users first.
 	 */
+	if (!lock->ws)
+		return;
 	wakeup_source_unregister(lock->ws);
+	lock->ws = NULL;
 }
 
 static inline void wake_lock(struct wake_lock *lock)
 {
-	__pm_stay_awake(lock->ws);
+	if (lock->ws)
+		__pm_stay_awake(lock->ws);
 }
 
 static inline void wake_lock_timeout(struct wake_lock *lock, long timeout)
 {
-	__pm_wakeup_event(lock->ws, jiffies_to_msecs(timeout));
+	if (lock->ws)
+		__pm_wakeup_event(lock->ws, jiffies_to_msecs(timeout));
 }
 
 static inline void wake_unlock(struct wake_lock *lock)
 {
-	__pm_relax(lock->ws);
+	if (lock->ws)
+		__pm_relax(lock->ws);
 }
 
 static inline int wake_lock_active(struct wake_lock *lock)
 {
-	return lock->ws->active;
+	return lock->ws && lock->ws->active;
 }
 
 #endif
