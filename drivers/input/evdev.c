@@ -227,6 +227,10 @@ static int evdev_set_clk_type(struct evdev_client *client, unsigned int clkid)
 		if (client->head != client->tail) {
 			client->packet_head = client->head = client->tail;
 			__evdev_queue_syn_dropped(client);
+#ifdef CONFIG_SEC_INPUT_BOOSTER
+			/* Buffer contents were discarded; don't replay them. */
+			client->ev_cnt = 1;
+#endif
 		}
 
 		spin_unlock_irqrestore(&client->buffer_lock, flags);
@@ -269,6 +273,14 @@ static void __pass_event(struct evdev_client *client,
 		client->tail = (client->head - 2) & (client->bufsize - 1);
 		client->buffer[client->tail] = ev;
 		client->packet_head = client->tail;
+#ifdef CONFIG_SEC_INPUT_BOOSTER
+		/*
+		 * The ring now holds SYN_DROPPED plus the newest event.
+		 * ev_cnt still counted every event we tried to queue, so
+		 * input_booster() would walk stale slots.  Recount.
+		 */
+		client->ev_cnt = 2;
+#endif
 	}
 
 	if (event->type == EV_SYN && event->code == SYN_REPORT) {
