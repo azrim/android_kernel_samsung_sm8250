@@ -72,8 +72,19 @@ int get_device_type(struct evdev_client *dev, unsigned int *keyId, int *cur_idx,
 	int next_idx = 0 ;
 	int target_idx = 0;
 
-	if (dev == NULL || dev->ev_cnt > MAX_EVENTS) {
+	if (dev == NULL) {
+		pr_debug("evdev client is null");
+		return ret_val;
+	}
+	/*
+	 * Must advance *cur_idx toward head even on this bail-out.
+	 * input_booster() treats a negative return as "skip this slot"
+	 * and continues the loop; without an index move that spins
+	 * forever under ib_type_lock with IRQs off.
+	 */
+	if (dev->ev_cnt > MAX_EVENTS) {
 		pr_debug("evdev client is null and exceed max event number");
+		*cur_idx = head;
 		return ret_val;
 	}
 
