@@ -576,12 +576,15 @@ int susfs_add_try_umount(struct st_susfs_try_umount* __user user_info) {
 	}
 	info.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
 
+	spin_lock(&susfs_spin_lock);
 	list_for_each_entry_safe(cursor, temp, &LH_TRY_UMOUNT_PATH, list) {
 		if (unlikely(!strcmp(info.target_pathname, cursor->info.target_pathname))) {
+			spin_unlock(&susfs_spin_lock);
 			SUSFS_LOGE("target_pathname: '%s' is already created in LH_TRY_UMOUNT_PATH\n", info.target_pathname);
 			return 1;
 		}
 	}
+	spin_unlock(&susfs_spin_lock);
 
 	new_list = kmalloc(sizeof(struct st_susfs_try_umount_list), GFP_KERNEL);
 	if (!new_list) {
@@ -602,8 +605,17 @@ int susfs_add_try_umount(struct st_susfs_try_umount* __user user_info) {
 void susfs_try_umount(uid_t target_uid) {
 	struct st_susfs_try_umount_list *cursor = NULL;
 
+	/*
+	 * LH_TRY_UMOUNT_PATH is only ever appended to (entries are never
+	 * removed), so once a node is linked it stays valid.  Hold
+	 * susfs_spin_lock while advancing the traversal so a concurrent
+	 * list_add_tail() cannot expose a half-linked node, but drop it around
+	 * ksu_try_umount(), which may sleep (kern_path()/path_umount()).
+	 */
+	spin_lock(&susfs_spin_lock);
 	// We should umount in reversed order
 	list_for_each_entry_reverse(cursor, &LH_TRY_UMOUNT_PATH, list) {
+		spin_unlock(&susfs_spin_lock);
 		if (cursor->info.mnt_mode == TRY_UMOUNT_DEFAULT) {
 			ksu_try_umount(cursor->info.target_pathname, false, 0, target_uid);
 		} else if (cursor->info.mnt_mode == TRY_UMOUNT_DETACH) {
@@ -612,7 +624,9 @@ void susfs_try_umount(uid_t target_uid) {
 			SUSFS_LOGE("failed umounting '%s' for uid: %d, mnt_mode '%d' not supported\n",
 							cursor->info.target_pathname, target_uid, cursor->info.mnt_mode);
 		}
+		spin_lock(&susfs_spin_lock);
 	}
+	spin_unlock(&susfs_spin_lock);
 }
 
 #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
@@ -649,18 +663,22 @@ void susfs_auto_add_try_umount_for_bind_mount(struct path *path) {
 	}
 #endif
 
+	spin_lock(&susfs_spin_lock);
 	list_for_each_entry_safe(cursor, temp, &LH_TRY_UMOUNT_PATH, list) {
 #ifdef CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT
 		if (is_magic_mount_path && strstr(dpath, cursor->info.target_pathname)) {
+			spin_unlock(&susfs_spin_lock);
 			goto out_free_pathname;
 		}
 #endif
 		if (unlikely(!strcmp(dpath, cursor->info.target_pathname))) {
+			spin_unlock(&susfs_spin_lock);
 			SUSFS_LOGE("target_pathname: '%s', ino: %lu, is already created in LH_TRY_UMOUNT_PATH\n",
 							dpath, path->dentry->d_inode->i_ino);
 			goto out_free_pathname;
 		}
 	}
+	spin_unlock(&susfs_spin_lock);
 
 	new_list = kmalloc(sizeof(struct st_susfs_try_umount_list), GFP_KERNEL);
 	if (!new_list) {
