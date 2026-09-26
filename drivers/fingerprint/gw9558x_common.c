@@ -862,9 +862,7 @@ static int gw9558_remove(struct platform_device *pdev)
 {
 	struct gf_device *gf_dev = platform_get_drvdata(pdev);
 
-	gw9558_free_buffer(gf_dev);
 	gw9558_remove_common(&pdev->dev);
-	mutex_destroy(&gf_dev->buf_lock);
 	gf_dev = NULL;
 	return 0;
 }
