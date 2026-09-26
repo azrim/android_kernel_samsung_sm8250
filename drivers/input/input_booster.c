@@ -352,8 +352,7 @@ void press_timeout_func(struct work_struct* work)
 			spin_lock(&write_qos_lock);
 			list_del_rcu(&(tv->list));
 			spin_unlock(&write_qos_lock);
-			synchronize_rcu();
-			kfree(tv);
+			kfree_rcu(tv, rcu);
 
 			rcu_read_lock();
 			if (!list_empty(&qos_list[res.res_id])) {
@@ -459,8 +458,7 @@ void release_timeout_func(struct work_struct* work)
 		spin_lock(&write_qos_lock);
 		list_del_rcu(&(tv->list));
 		spin_unlock(&write_qos_lock);
-		synchronize_rcu();
-		kfree(tv);
+		kfree_rcu(tv, rcu);
 
 		rcu_read_lock();
 		if (!list_empty(&qos_list[res.res_id])) {
@@ -534,8 +532,8 @@ void remove_ib_instance(struct t_ib_info *target_ib)
 	 * RCU-protected pointer after rcu_read_unlock(), and
 	 * trigger_input_booster() dereferences it while holding
 	 * trigger_ib_lock; taking the same lock here guarantees the ib cannot
-	 * be freed until that use is complete (synchronize_rcu() alone only
-	 * waits for readers still inside the read-side section).
+	 * be freed until that use is complete (kfree_rcu() alone only defers
+	 * the free for readers still inside the read-side section).
 	 */
 	mutex_lock(&trigger_ib_lock);
 
@@ -554,9 +552,8 @@ void remove_ib_instance(struct t_ib_info *target_ib)
 	} else {
 		list_del_rcu(&(target_ib->list));
 		spin_unlock(&write_ib_lock);
-		synchronize_rcu();
 		pr_booster(ITAG" Del Ib Instance's Id : %d", target_ib->uniq_id);
-		kfree(target_ib);
+		kfree_rcu(target_ib, rcu);
 	}
 
 	mutex_unlock(&trigger_ib_lock);

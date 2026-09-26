@@ -7,6 +7,7 @@
 #include <linux/cpufreq.h>
 #include <linux/kernel.h>
 #include <linux/workqueue.h>
+#include <linux/rcupdate.h>
 #include <linux/input.h>
 
 #pragma GCC diagnostic ignored "-Wunused-variable"
@@ -211,6 +212,9 @@ struct t_ib_info {
 
 	struct list_head list;
 
+	/* Deferred free after list_del_rcu() in remove_ib_instance(). */
+	struct rcu_head rcu;
+
 	struct work_struct ib_state_work[IB_MAX];
 	struct delayed_work ib_timeout_work[IB_MAX];
 
@@ -221,6 +225,9 @@ struct t_ib_target {
 	int uniq_id;
 	int value;
 	struct list_head list;
+
+	/* Deferred free after list_del_rcu() in the press/release timeout paths. */
+	struct rcu_head rcu;
 };
 
 struct t_ib_res_info {
