@@ -36,9 +36,10 @@ int send_ev_enable = 0;
 struct t_ib_info* find_release_ib(int dev_type, int key_id);
 struct t_ib_info* create_ib_instance(struct t_ib_trigger* p_IbTrigger, int uniqId);
 bool is_validate_uniqid(unsigned int uniq_id);
-struct t_ib_target* find_update_target(int uniq_id, int res_id);
 unsigned long get_qos_value(int res_id);
 void remove_ib_instance(struct t_ib_info* ib);
+static bool update_target_value(int uniq_id, int res_id, int value);
+static struct t_ib_target *detach_target(int uniq_id, int res_id);
 
 /*
  * Claim a free trigger slot for the caller, or return -1 when every slot is
@@ -294,17 +295,15 @@ void press_state_func(struct work_struct* work)
 			continue;
 
 		//find already added target value instance and update value as a head.
-		tv = find_update_target(target_ib->uniq_id, res.res_id);
-
-		if (tv == NULL) {
+		if (!update_target_value(target_ib->uniq_id, res.res_id,
+					 res.head_value)) {
 			pr_debug("Press State Func :::: %d's tv(%d) is null T.T",
 				target_ib->uniq_id, res.res_id);
 			continue;
 		}
 
-		tv->value = res.head_value;
 		pr_booster("Press State Func :::: Uniq(%d)'s Update Res(%d) Head Val(%d)",
-			tv->uniq_id, res.res_id, res.head_value);
+			target_ib->uniq_id, res.res_id, res.head_value);
 
 		qos_values[res.res_id] = get_qos_value(res.res_id);
 
@@ -342,16 +341,13 @@ void press_timeout_func(struct work_struct* work)
 		for (res_type = 0; res_type < max_resource_size; res_type++) {
 			res = target_ib->ib_dt->res[res_type];
 
-			tv = find_update_target(target_ib->uniq_id, res.res_id);
+			tv = detach_target(target_ib->uniq_id, res.res_id);
 			if (tv == NULL) {
 				pr_err(ITAG" Press Timeout Func :::: %d's TV No Exist(%d)",
 					target_ib->uniq_id, res.res_id);
 				continue;
 			}
 
-			spin_lock(&write_qos_lock);
-			list_del_rcu(&(tv->list));
-			spin_unlock(&write_qos_lock);
 			kfree_rcu(tv, rcu);
 
 			rcu_read_lock();
@@ -400,17 +396,13 @@ void release_state_func(struct work_struct* work)
 		if (res.tail_value == 0)
 			continue;
 
-		tv = find_update_target(target_ib->uniq_id, res.res_id);
-		if (tv == NULL)
+		if (!update_target_value(target_ib->uniq_id, res.res_id,
+					 res.tail_value))
 			continue;
-
-		spin_lock(&write_qos_lock);
-		tv->value = res.tail_value;
-		spin_unlock(&write_qos_lock);
 
 		qos_values[res.res_id] = get_qos_value(res.res_id);
 		pr_booster("Release State Func :::: Uniq(%d)'s Update Tail Val (%d), Qos_Val(%d)",
-			tv->uniq_id, tv->value, qos_values[res.res_id]);
+			target_ib->uniq_id, res.tail_value, qos_values[res.res_id]);
 	}
 
 	ib_set_booster(qos_values);
@@ -445,7 +437,7 @@ void release_timeout_func(struct work_struct* work)
 	for (res_type = 0; res_type < max_resource_size; res_type++) {
 		res = target_ib->ib_dt->res[res_type];
 
-		tv = find_update_target(target_ib->uniq_id, res.res_id);
+		tv = detach_target(target_ib->uniq_id, res.res_id);
 		if (tv == NULL) {
 			pr_debug(ITAG" Release Timeout Func :::: %d's TV No Exist(%d)",
 				target_ib->uniq_id, res.res_id);
@@ -454,10 +446,6 @@ void release_timeout_func(struct work_struct* work)
 
 		pr_booster("Release Timeout Func :::: Delete Uniq(%d)'s TV Val (%d)",
 			tv->uniq_id, tv->value);
-
-		spin_lock(&write_qos_lock);
-		list_del_rcu(&(tv->list));
-		spin_unlock(&write_qos_lock);
 		kfree_rcu(tv, rcu);
 
 		rcu_read_lock();
@@ -484,19 +472,47 @@ void release_timeout_func(struct work_struct* work)
 
 }
 
-struct t_ib_target* find_update_target(int uniq_id, int res_id)
+/*
+ * Update a target's value under write_qos_lock.  The old find_update_target()
+ * returned a pointer after rcu_read_unlock(), so a concurrent
+ * list_del_rcu()+kfree_rcu() from the timeout works could free the object
+ * before the caller stored to it (PREEMPT_RCU).
+ */
+static bool update_target_value(int uniq_id, int res_id, int value)
 {
-	struct t_ib_target* tv;
+	struct t_ib_target *tv;
+	bool found = false;
 
-	rcu_read_lock();
-	list_for_each_entry_rcu(tv, &qos_list[res_id], list) {
+	spin_lock(&write_qos_lock);
+	list_for_each_entry(tv, &qos_list[res_id], list) {
 		if (tv->uniq_id == uniq_id) {
-			rcu_read_unlock();
+			tv->value = value;
+			found = true;
+			break;
+		}
+	}
+	spin_unlock(&write_qos_lock);
+	return found;
+}
+
+/*
+ * Unlink a target and return it for kfree_rcu().  Serialized with
+ * update_target_value() by write_qos_lock so the slot cannot be
+ * resurrected or double-freed.
+ */
+static struct t_ib_target *detach_target(int uniq_id, int res_id)
+{
+	struct t_ib_target *tv;
+
+	spin_lock(&write_qos_lock);
+	list_for_each_entry(tv, &qos_list[res_id], list) {
+		if (tv->uniq_id == uniq_id) {
+			list_del_rcu(&tv->list);
+			spin_unlock(&write_qos_lock);
 			return tv;
 		}
 	}
-	rcu_read_unlock();
-
+	spin_unlock(&write_qos_lock);
 	return NULL;
 }
 
