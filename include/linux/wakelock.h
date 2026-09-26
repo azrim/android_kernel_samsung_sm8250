@@ -43,7 +43,13 @@ static inline void wake_lock_init(struct wake_lock *lock, int type,
 
 static inline void wake_lock_destroy(struct wake_lock *lock)
 {
-	wakeup_source_remove(lock->ws);
+	/*
+	 * wake_lock_init() allocates the wakeup source via
+	 * wakeup_source_register(), so it must be released with
+	 * wakeup_source_unregister() (which also frees the struct and
+	 * removes the sysfs entry) rather than wakeup_source_remove().
+	 */
+	wakeup_source_unregister(lock->ws);
 }
 
 static inline void wake_lock(struct wake_lock *lock)
