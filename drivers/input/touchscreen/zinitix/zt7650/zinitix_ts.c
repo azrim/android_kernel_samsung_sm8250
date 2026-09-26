@@ -8929,6 +8929,7 @@ static long ts_misc_fops_ioctl(struct file *filp,
 			input_info(true, &misc_info->client->dev, "[zinitix_touch]: other process occupied.. (%d)\r\n",
 					misc_info->work_state);
 			mutex_unlock(&misc_info->work_lock);
+			enable_irq(misc_info->irq);
 			return -1;
 		}
 		misc_info->work_state = HW_CALIBRAION;
@@ -10248,12 +10249,18 @@ static int zt_ts_remove(struct i2c_client *client)
 	struct zt_ts_platform_data *pdata = info->pdata;
 
 	disable_irq(info->irq);
+
+	/*
+	 * zt_read_info_work() takes work_lock (via ts_set_touchmode).
+	 * cancel_delayed_work_sync() while holding work_lock would
+	 * deadlock if that work is already running.
+	 */
+	cancel_delayed_work_sync(&info->work_read_info);
+	cancel_delayed_work_sync(&info->work_print_info);
+
 	mutex_lock(&info->work_lock);
 
 	info->work_state = REMOVE;
-
-	cancel_delayed_work_sync(&info->work_read_info);
-	cancel_delayed_work_sync(&info->work_print_info);
 
 	sec_cmd_exit(&info->sec, SEC_CLASS_DEVT_TSP);
 	kfree(info->raw_data);
@@ -10297,6 +10304,13 @@ static int zt_ts_remove(struct i2c_client *client)
 	 * frees it; a following input_free_device() would be a double put.
 	 */
 	mutex_unlock(&info->work_lock);
+
+	/*
+	 * Open fds can still call into the ioctl/open/close paths.
+	 * Drop the global before the struct goes away so they see NULL
+	 * instead of freed memory.
+	 */
+	misc_info = NULL;
 	kfree(info);
 
 	return 0;
