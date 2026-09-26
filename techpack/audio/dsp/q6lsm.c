@@ -244,6 +244,16 @@ done:
 		return ret;
 	} else if (data->opcode == APR_BASIC_RSP_RESULT) {
 		token = data->token;
+		/*
+		 * payload is NULL when payload_size is 0 (see apr_cb_func()),
+		 * so the switch below must not run on an empty payload.
+		 */
+		if (!payload || data->payload_size < sizeof(payload[0])) {
+			pr_err("%s: basic rsp payload has invalid size[%d]\n",
+				__func__, data->payload_size);
+			spin_unlock_irqrestore(&lsm_session_lock, flags);
+			return -EINVAL;
+		}
 		switch (payload[0]) {
 		case LSM_SESSION_CMD_START:
 		case LSM_SESSION_CMD_STOP:
