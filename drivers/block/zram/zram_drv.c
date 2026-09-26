@@ -2011,6 +2011,15 @@ static void zram_handle_comp_page(struct work_struct *work)
 		return;
 	}
 
+	if (!zram->comp || !zram->table) {
+		kunmap_atomic(src);
+		page_endio(dst_page, op_is_write(bio_op(bio)), -EIO);
+		bio_put(bio);
+		kfree(zw);
+		__free_page(src_page);
+		return;
+	}
+
 	dst = kmap_atomic(dst_page);
 	zstrm = zcomp_stream_get(zram->comp);
 	ret = zcomp_decompress(zstrm,
@@ -2340,16 +2349,17 @@ static ssize_t compact_store(struct device *dev,
 	}
 
 	zs_compact(zram->mem_pool);
-	up_read(&zram->init_lock);
-
 	/*
 	 * Best-effort only: re-arm the backoff timer so the next
 	 * background pass stays distant. mod_delayed_work() also
 	 * collapses a race with the worker's own reschedule into a
-	 * single timer instead of stacking two.
+	 * single timer instead of stacking two.  Arm under init_lock so
+	 * a concurrent reset/remove cannot cancel and free zram while
+	 * this is still going to queue work on it.
 	 */
 	mod_delayed_work(system_wq, &zram->compact_work,
 			 msecs_to_jiffies(300000));
+	up_read(&zram->init_lock);
 
 	return len;
 }
@@ -2716,8 +2726,28 @@ static void zram_free_page(struct zram *zram, size_t index)
 	}
 
 	entry = zram_get_entry(zram, index);
-	if (!entry)
+	if (!entry) {
+#ifdef CONFIG_ZRAM_LRU_WRITEBACK
+		/*
+		 * No compressed object, but a failed packed restore can
+		 * leave READ_BDEV/LRU state behind.  Fall through to the
+		 * flag cleanup without touching pages_stored.
+		 */
+		zram_clear_flag(zram, index, ZRAM_UNDER_PPR);
+		if (zram_test_flag(zram, index, ZRAM_READ_BDEV))
+			zram_clear_flag(zram, index, ZRAM_READ_BDEV);
+		spin_lock_irqsave(&zram->list_lock, flags);
+		if (!list_empty(&zram->table[index].lru_list)) {
+			list_del_init(&zram->table[index].lru_list);
+			if (zram_test_flag(zram, index, ZRAM_LRU)) {
+				zram_clear_flag(zram, index, ZRAM_LRU);
+				atomic64_dec(&zram->stats.lru_pages);
+			}
+		}
+		spin_unlock_irqrestore(&zram->list_lock, flags);
+#endif
 		return;
+	}
 
 	zram_entry_free(zram, entry);
 
@@ -3326,9 +3356,18 @@ static void zram_reset_device(struct zram *zram)
 	struct zcomp *comp;
 	u64 disksize;
 
+	/*
+	 * compact_work and the packed-read works take init_lock (or touch
+	 * table/comp).  cancel/flush them before down_write(): the worker
+	 * can block on the read side of init_lock, so cancel_*_sync under
+	 * the write lock would deadlock, and flushing under the lock would
+	 * stall any reader that just wants to finish I/O.
+	 */
+	cancel_delayed_work_sync(&zram->compact_work);
+	flush_scheduled_work();
+
 	down_write(&zram->init_lock);
 
-	cancel_delayed_work_sync(&zram->compact_work);
 	zram->limit_pages = 0;
 
 	comp = zram->comp;
@@ -3339,9 +3378,14 @@ static void zram_reset_device(struct zram *zram)
 	set_capacity(zram->disk, 0);
 	part_stat_set_all(&zram->disk->part0, 0);
 
-	up_write(&zram->init_lock);
-	/* I/O operation under all of CPU are done so let's free */
+	/*
+	 * Free the table/pool under the write lock.  disksize_store()
+	 * reallocates them under the same lock, so doing this after
+	 * up_write() would let a concurrent store install a fresh table
+	 * that this path then frees.
+	 */
 	zram_meta_free(zram, disksize);
+	up_write(&zram->init_lock);
 	memset(&zram->stats, 0, sizeof(zram->stats));
 	/*
 	 * comp is NULL for a device that was never initialized; our
@@ -3391,10 +3435,9 @@ static ssize_t disksize_store(struct device *dev,
 	set_capacity(zram->disk, zram->disksize >> SECTOR_SHIFT);
 
 	revalidate_disk(zram->disk);
-	up_write(&zram->init_lock);
-
 	/* compact_work was initialised in zram_add() */
 	schedule_delayed_work(&zram->compact_work, msecs_to_jiffies(60000));
+	up_write(&zram->init_lock);
 
 	return len;
 
