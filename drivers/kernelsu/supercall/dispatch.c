@@ -604,20 +604,28 @@ static int add_try_umount(void __user *arg)
 		// this also avoids us needing to kmalloc
 		// userspace have to send pointer to memory (malloc/alloca) or pointer to a VLA.
 		case KSU_UMOUNT_GETLIST: {
+			/* cap the copy so GETSIZE/GETLIST cannot overrun */
+			size_t remaining = 4096;
+			char *user_buf;
+
 			if (!cmd.arg)
 				return -EFAULT;
-			
-			char *user_buf = (char *)cmd.arg;
+
+			user_buf = (char *)cmd.arg;
 
 			down_read(&mount_list_lock);
 			list_for_each_entry(entry, &mount_list, list) {
 				pr_info("cmd_add_try_umount: entry: %s\n", entry->umountable);
 			
+				if (strlen(entry->umountable) + 1 > remaining) {
+					up_read(&mount_list_lock);
+					return -ENOSPC;
+				}
 				if (copy_to_user((char __user *)user_buf, entry->umountable, strlen(entry->umountable) + 1 )) {
 					up_read(&mount_list_lock);
 					return -EFAULT;
 				}
-				
+				remaining -= strlen(entry->umountable) + 1;
 				// walk it! +1 for null terminator
 				user_buf = user_buf + strlen(entry->umountable) + 1;
 			}
