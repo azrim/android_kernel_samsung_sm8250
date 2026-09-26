@@ -73,8 +73,7 @@ static int do_report_event(void __user *arg)
 	switch (cmd.event) {
 	case EVENT_POST_FS_DATA: {
 		static bool post_fs_data_lock = false;
-		if (!post_fs_data_lock) {
-			post_fs_data_lock = true;
+		if (!cmpxchg(&post_fs_data_lock, false, true)) {
 			pr_info("post-fs-data triggered\n");
 			on_post_fs_data();
 		}
@@ -82,8 +81,7 @@ static int do_report_event(void __user *arg)
 	}
 	case EVENT_BOOT_COMPLETED: {
 		static bool boot_complete_lock = false;
-		if (!boot_complete_lock) {
-			boot_complete_lock = true;
+		if (!cmpxchg(&boot_complete_lock, false, true)) {
 			pr_info("boot_complete triggered\n");
 			on_boot_completed();
 		}
