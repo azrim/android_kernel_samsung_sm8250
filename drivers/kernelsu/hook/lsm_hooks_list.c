@@ -93,18 +93,27 @@ static __nocfi int ksu_setprocattr_old(struct task_struct *p, char *name, void *
 #define SETPROCATTR_TYPE_new2	const char *lsm, const char *, void *, size_t
 
 /**
- * workaround for GCC 4.9's broken designated initializer.
+ * the pragma is to workaround GCC 4.9's broken designated initializer.
  * - avoid initializing it casted.
  * e.g. (void *)ksu_setprocattr_old, (void *)ksu_setprocattr_new
  */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wincompatible-pointer-types"
+
+#if 0 // small demo of __builtin_choose_expr vs C11 _Generic
+#define OVERLOAD_SETPROCATTR(fn) __builtin_choose_expr(					\
+        __builtin_types_compatible_p(typeof(fn), int (*)(SETPROCATTR_TYPE_old)),	\
+        ksu_setprocattr_old,								\
+        ksu_setprocattr_new								\
+)
+#else
 #define OVERLOAD_SETPROCATTR(fn) _Generic(			\
 (fn),								\
 	int (*)(SETPROCATTR_TYPE_old)	:ksu_setprocattr_old,	\
 	int (*)(SETPROCATTR_TYPE_new1)	:ksu_setprocattr_new, 	\
 	int (*)(SETPROCATTR_TYPE_new2)	:ksu_setprocattr_new 	\
 )
+#endif
 
 // now choose what we have
 static typeof(security_setprocattr) *ksu_setprocattr __read_mostly = OVERLOAD_SETPROCATTR(security_setprocattr);

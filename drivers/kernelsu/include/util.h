@@ -6,6 +6,8 @@
 #define KSU_SYS_PREFIX(name) __arm64_sys_##name
 #elif defined(__x86_64__)
 #define KSU_SYS_PREFIX(name) __x64_sys_##name
+#elif defined(__riscv)
+#define KSU_SYS_PREFIX(name) __riscv_sys_##name
 #elif defined(__arm__)
 #define KSU_SYS_PREFIX(name) sys_##name
 #else // wire up your arch here.
@@ -22,7 +24,7 @@ static_assert(1 == 0, "Unsupported architecture!");
 #define __ksyscall(name, a, b, c, d, e, f) ({				\
 	extern long KSU_SYS_PREFIX(name)(const struct pt_regs *);	\
 	struct pt_regs __ksu_regs = { 0 };				\
-	PT_REGS_PARM1(&__ksu_regs) = (unsigned long)(a);		\
+	PT_REGS_SYSCALL_PARM1(&__ksu_regs) = (unsigned long)(a);	\
 	PT_REGS_PARM2(&__ksu_regs) = (unsigned long)(b);		\
 	PT_REGS_PARM3(&__ksu_regs) = (unsigned long)(c);		\
 	PT_REGS_SYSCALL_PARM4(&__ksu_regs) = (unsigned long)(d);	\
@@ -89,13 +91,6 @@ static_assert(1 == 0, "Unsupported architecture!");
 
 #define ksu_close_fd(fd) ({ ksyscall(close, fd); })
 #define ksu_sys_setns(fd, flags) ({ ksyscall(setns, fd, flags); })
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
-static __always_inline int ksu_sys_umount(char __user *name, int flags)
-{ 
-	return (int)ksyscall(umount, name, flags);
-}
-#endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 #define ksys_unshare(flags) ({ ksyscall(unshare, flags); })
