@@ -10292,7 +10292,10 @@ static int zt_ts_remove(struct i2c_client *client)
 	}
 
 	input_unregister_device(info->input_dev);
-	input_free_device(info->input_dev);
+	/*
+	 * input_unregister_device() drops the device's last reference and
+	 * frees it; a following input_free_device() would be a double put.
+	 */
 	mutex_unlock(&info->work_lock);
 	kfree(info);
 
