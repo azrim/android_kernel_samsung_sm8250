@@ -467,6 +467,12 @@ static int sysboot_i2c_get_info(struct cam_ois_ctrl_t *o_ctrl,
 		}
 
 		if(cmd[0] == BOOT_I2C_CMD_GET_ID){
+			if ((recv[0] + 1) > sizeof(recv) - 1 ||
+					(recv[0] + 1) > sizeof(o_ctrl->info.id)) {
+				CAM_ERR(CAM_OIS, "invalid id len %d",
+					recv[0] + 1);
+				return -EINVAL;
+			}
 			memcpy((void *)&(o_ctrl->info.id), &recv[1], recv[0] + 1);
 			o_ctrl->info.id = NTOHS(o_ctrl->info.id);
 			CAM_INFO(CAM_OIS, "success get info id %d", o_ctrl->info.id);
