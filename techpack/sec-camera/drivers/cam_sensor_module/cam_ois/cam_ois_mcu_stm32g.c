@@ -2533,7 +2533,7 @@ int32_t cam_ois_fw_update(struct cam_ois_ctrl_t *o_ctrl,
 	sendData[2] = 0;
 	sendData[3] = 0x80;
 	ret = cam_ois_i2c_write_continous(o_ctrl, 0x0008, sendData,
-		CAMERA_SENSOR_I2C_TYPE_WORD, CAMERA_SENSOR_I2C_TYPE_BYTE, (int)sizeof(sendData));
+		CAMERA_SENSOR_I2C_TYPE_WORD, CAMERA_SENSOR_I2C_TYPE_BYTE, 4); // FWUP_CHKSUM REG(0x0008)
 
 	msleep(190); // RUMBA Self Reset
 
