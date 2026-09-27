@@ -105,11 +105,11 @@ enum sched_tunable_scaling sysctl_sched_tunable_scaling = SCHED_TUNABLESCALING_L
  *
  * (default: 0.75 msec * (1 + ilog(ncpus)), units: nanoseconds)
  */
-unsigned int sysctl_sched_min_granularity		= 750000ULL;
-unsigned int normalized_sysctl_sched_min_granularity	= 750000ULL;
+unsigned int sysctl_sched_base_slice			= 750000ULL;
+unsigned int normalized_sysctl_sched_base_slice		= 750000ULL;
 
 /*
- * This value is kept at sysctl_sched_latency/sysctl_sched_min_granularity
+ * This value is kept at sysctl_sched_latency/sysctl_sched_base_slice
  */
 static unsigned int sched_nr_latency = 8;
 
@@ -236,7 +236,7 @@ static void update_sysctl(void)
 
 #define SET_SYSCTL(name) \
 	(sysctl_##name = (factor) * normalized_sysctl_##name)
-	SET_SYSCTL(sched_min_granularity);
+	SET_SYSCTL(sched_base_slice);
 	SET_SYSCTL(sched_latency);
 	SET_SYSCTL(sched_wakeup_granularity);
 #undef SET_SYSCTL
@@ -484,6 +484,13 @@ find_matching_se(struct sched_entity **se, struct sched_entity **pse)
 	}
 }
 
+static inline int se_is_idle(struct sched_entity *se)
+{
+	if (entity_is_task(se))
+		return task_has_idle_policy(task_of(se));
+	return 0;
+}
+
 #else	/* !CONFIG_FAIR_GROUP_SCHED */
 
 static inline struct task_struct *task_of(struct sched_entity *se)
@@ -537,6 +544,11 @@ static inline struct sched_entity *parent_entity(struct sched_entity *se)
 static inline void
 find_matching_se(struct sched_entity **se, struct sched_entity **pse)
 {
+}
+
+static inline int se_is_idle(struct sched_entity *se)
+{
+	return task_has_idle_policy(task_of(se));
 }
 
 #endif	/* CONFIG_FAIR_GROUP_SCHED */
@@ -687,11 +699,11 @@ int sched_proc_update_handler(struct ctl_table *table, int write,
 		return ret;
 
 	sched_nr_latency = DIV_ROUND_UP(sysctl_sched_latency,
-					sysctl_sched_min_granularity);
+					sysctl_sched_base_slice);
 
 #define WRT_SYSCTL(name) \
 	(normalized_sysctl_##name = sysctl_##name / (factor))
-	WRT_SYSCTL(sched_min_granularity);
+	WRT_SYSCTL(sched_base_slice);
 	WRT_SYSCTL(sched_latency);
 	WRT_SYSCTL(sched_wakeup_granularity);
 #undef WRT_SYSCTL
@@ -722,7 +734,7 @@ static inline u64 calc_delta_fair(u64 delta, struct sched_entity *se)
 static u64 __sched_period(unsigned long nr_running)
 {
 	if (unlikely(nr_running > sched_nr_latency))
-		return nr_running * sysctl_sched_min_granularity;
+		return nr_running * sysctl_sched_base_slice;
 	else
 		return sysctl_sched_latency;
 }
@@ -4430,7 +4442,7 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 	 * narrow margin doesn't have to wait for a full slice.
 	 * This also mitigates buddy induced latencies under load.
 	 */
-	if (delta_exec < sysctl_sched_min_granularity)
+	if (delta_exec < sysctl_sched_base_slice)
 		return;
 
 	se = __pick_first_entity(cfs_rq);
