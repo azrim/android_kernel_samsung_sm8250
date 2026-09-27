@@ -1079,7 +1079,12 @@ exit:
 	return size;
 }
 
-static CLASS_ATTR_RO(test);
+/*
+ * test_show() forces the chip into bootloader mode and performs I2C
+ * transfers, so keep the node root-only instead of world-readable.
+ */
+static struct class_attribute class_attr_test =
+	__ATTR(test, 0400, test_show, NULL);
 #endif
 
 static ssize_t nfc_support_show(struct class *class,
