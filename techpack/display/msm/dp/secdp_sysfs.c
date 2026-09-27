@@ -637,13 +637,14 @@ static ssize_t dp_edid_store(struct class *dev,
 
 	get_options(temp, ARRAY_SIZE(val), val);
 
-	if (val[0] % 128) {
+	if (val[0] % 128 || val[0] > ST_EDID_SIZE) {
 		DP_ERR("invalid EDID(%d)\n", val[0]);
 		dp_self_test_clear_func(ST_EDID);
 		goto end;
 	}
 
-	memset(sysfs->sec->self_test_edid, 0, sizeof(ST_EDID_SIZE));
+	memset(sysfs->sec->self_test_edid, 0,
+		sizeof(sysfs->sec->self_test_edid));
 
 	for (i = 0; i < val[0]; i++)
 		sysfs->sec->self_test_edid[i] = (u8)val[i+1];
