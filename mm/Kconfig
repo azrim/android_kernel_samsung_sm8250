@@ -581,6 +581,18 @@ config ZSWAP
 	  they have not be fully explored on the large set of potential
 	  configurations and workloads that exist.
 
+config KCOMPRESSD_MM
+	bool "Kcompressd: async compression daemon (mm/swap)"
+	depends on SWAP
+	default n
+	help
+	  Kcompressd offloads page compression (zram/zswap) from kswapd to a
+	  per-node kernel daemon, so that kswapd only scans the LRU and the
+	  time-consuming compression runs in a separate thread. Based on the
+	  out-of-tree MediaTek "kcompressd" RFC.
+
+	  If unsure, say N.
+
 config ZPOOL
 	tristate "Common API for compressed memory storage"
 	default n

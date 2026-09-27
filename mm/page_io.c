@@ -26,6 +26,11 @@
 #include <linux/uio.h>
 #include <linux/sched/task.h>
 #include <linux/pgtable.h>
+#include <linux/kfifo.h>
+#include <linux/kthread.h>
+#include <linux/freezer.h>
+
+#include "internal.h"
 
 static struct bio *get_swap_bio(gfp_t gfp_flags,
 				struct page *page, bio_end_io_t end_io)
@@ -195,6 +200,78 @@ bad_bmap:
 	goto out;
 }
 
+#ifdef CONFIG_KCOMPRESSD_MM
+/*
+ * Try to offload the compression of a reclaim page to kcompressd. Returns
+ * true if the page was queued, in which case the caller must not unlock or
+ * write the page: kcompressd owns it from here on.
+ */
+static bool swap_sched_async_compress(struct page *page)
+{
+	struct swap_info_struct *sis = page_swap_info(page);
+	pg_data_t *pgdat = NODE_DATA(page_to_nid(page));
+
+	if (unlikely(!pgdat->kcompressd))
+		return false;
+
+	if (!current_is_kswapd())
+		return false;
+
+	if (!PageAnon(page))
+		return false;
+
+	if (frontswap_enabled() || (sis->flags & SWP_READ_SYNCHRONOUS_IO)) {
+		if (kfifo_avail(pgdat->kcompress_fifo) >= sizeof(page) &&
+		    kfifo_in(pgdat->kcompress_fifo, &page, sizeof(page))) {
+			wake_up_interruptible(&pgdat->kcompressd_wait);
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/*
+ * Per-node daemon that performs the actual compression/store of reclaim
+ * pages queued by swap_sched_async_compress(), off the kswapd/direct reclaim
+ * path.
+ */
+int kcompressd(void *p)
+{
+	pg_data_t *pgdat = (pg_data_t *)p;
+	struct page *page;
+	struct writeback_control wbc = {
+		.sync_mode = WB_SYNC_NONE,
+		.nr_to_write = SWAP_CLUSTER_MAX,
+		.range_start = 0,
+		.range_end = LLONG_MAX,
+		.for_reclaim = 1,
+	};
+
+	set_freezable();
+
+	while (!kthread_should_stop()) {
+		wait_event_interruptible(pgdat->kcompressd_wait,
+				!kfifo_is_empty(pgdat->kcompress_fifo));
+
+		while (!kfifo_is_empty(pgdat->kcompress_fifo)) {
+			if (kfifo_out(pgdat->kcompress_fifo, &page,
+				      sizeof(page))) {
+				if (frontswap_store(page) == 0) {
+					set_page_writeback(page);
+					unlock_page(page);
+					end_page_writeback(page);
+					continue;
+				}
+				__swap_writepage(page, &wbc, end_swap_bio_write);
+			}
+		}
+	}
+
+	return 0;
+}
+#endif /* CONFIG_KCOMPRESSD_MM */
+
 /*
  * We may have stale swap cache pages in memory: notice
  * them here and get rid of the unnecessary final write.
@@ -207,6 +284,15 @@ int swap_writepage(struct page *page, struct writeback_control *wbc)
 		unlock_page(page);
 		goto out;
 	}
+#ifdef CONFIG_KCOMPRESSD_MM
+	/*
+	 * Compression within zswap and zram might block rmap and unmap of
+	 * both file and anon pages; do the compression asynchronously if
+	 * possible. The page stays locked and is completed by kcompressd.
+	 */
+	if (swap_sched_async_compress(page))
+		goto out;
+#endif
 	if (frontswap_store(page) == 0) {
 		set_page_writeback(page);
 		unlock_page(page);

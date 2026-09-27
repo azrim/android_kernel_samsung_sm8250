@@ -6907,6 +6907,9 @@ static void __meminit pgdat_init_internals(struct pglist_data *pgdat)
 
 	init_waitqueue_head(&pgdat->kswapd_wait);
 	init_waitqueue_head(&pgdat->pfmemalloc_wait);
+#ifdef CONFIG_KCOMPRESSD_MM
+	init_waitqueue_head(&pgdat->kcompressd_wait);
+#endif
 
 	pgdat_page_ext_init(pgdat);
 	spin_lock_init(&pgdat->lru_lock);
