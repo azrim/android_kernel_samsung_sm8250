@@ -55,6 +55,9 @@
 
 #define MAX_BUFFER_SIZE	1024
 
+/* size of the temporary buffer used to move data out of the pmsg zone */
+#define SS_LOGGER_BUFFER_SIZE	(PAGE_SIZE * 3)
+
 struct ss_pmsg_log_header_t {
 	uint8_t magic;
 	uint16_t len;
@@ -516,13 +519,16 @@ static const char *find_tag_name_from_id(int id)
 	return NULL;
 }
 
-static off_t parse_buffer(char *buffer, unsigned char type, off_t pos)
+static off_t parse_buffer(char *buffer, unsigned char type, off_t pos,
+		size_t count)
 {
 	int buf_len;
 	char *buf = NULL;
 	off_t next = pos;
 
 	buf = kzalloc(MAX_BUFFER_SIZE, GFP_KERNEL);
+	if (!buf)
+		return pos;
 	switch (type) {
 	case EVENT_TYPE_INT:
 	{
@@ -549,11 +555,24 @@ static off_t parse_buffer(char *buffer, unsigned char type, off_t pos)
 	break;
 	case EVENT_TYPE_STRING:
 	{
-		unsigned int len = get_unaligned((unsigned int *)&buffer[pos]);
-		unsigned int len_to_copy =
-			min(len, (unsigned int)(MAX_BUFFER_SIZE - 1));
+		unsigned int len;
+		unsigned int len_to_copy;
 
+		/* the length field itself must fit in the source buffer */
+		if (pos + sizeof(unsigned int) > count) {
+			pr_warn("out-of-bound error %lld / %zu",
+					(long long)pos, count);
+			break;
+		}
+
+		len = get_unaligned((unsigned int *)&buffer[pos]);
 		pos += sizeof(unsigned int);
+
+		/* never read past the end of the source buffer */
+		if (len > count - pos)
+			len = count - pos;
+
+		len_to_copy = min(len, (unsigned int)(MAX_BUFFER_SIZE - 1));
 		next += sizeof(unsigned int) + len;
 
 		memcpy(buf, &buffer[pos], len_to_copy);
@@ -634,7 +653,7 @@ static inline void __ss_logger_level_text_event_log(char *buffer, size_t count)
 		    *buffer == EVENT_TYPE_INT ||
 		    *buffer == EVENT_TYPE_FLOAT ||
 		    *buffer == EVENT_TYPE_STRING)
-			parse_buffer(buffer, *buffer, 1);
+			parse_buffer(buffer, *buffer, 1, count);
 		else if (*buffer == EVENT_TYPE_LIST) {
 			size_t items = (size_t)buffer[1];
 			size_t i;
@@ -653,7 +672,7 @@ static inline void __ss_logger_level_text_event_log(char *buffer, size_t count)
 
 				type = buffer[pos++];
 
-				pos = parse_buffer(buffer, type, pos);
+				pos = parse_buffer(buffer, type, pos, count);
 				if (i < items -1)
 					logger.func_hook_logger(",", 1);
 			}
@@ -668,6 +687,8 @@ static inline void __ss_logger_level_text_event_log(char *buffer, size_t count)
 static inline void __ss_logger_level_text(char *buffer, size_t count)
 {
 	//move to local buffer from pmsg buffer
+	if (count > SS_LOGGER_BUFFER_SIZE)
+		count = SS_LOGGER_BUFFER_SIZE;
 	memcpy(logger.buffer, buffer, count);
 
 	if (logger.id == SS_LOG_ID_EVENTS)
@@ -886,7 +907,7 @@ static int ss_plog_probe(struct platform_device *pdev)
 	platform_log_idx = 0;
 
 	logger.func_hook_logger = ss_hook_logger;
-	logger.buffer = vmalloc(PAGE_SIZE * 3);
+	logger.buffer = vmalloc(SS_LOGGER_BUFFER_SIZE);
 	if (unlikely(!logger.buffer)) {
 		pr_err("Failed to alloc memory for buffer\n");
 		err = -ENOMEM;
