@@ -6,6 +6,20 @@ static __always_inline void ksu_handle_setresuid_cred(struct cred *new, const st
 	uid_t new_uid = ksu_get_uid_t(new->uid);
 	uid_t old_uid = ksu_get_uid_t(old->uid);
 
+#ifdef CONFIG_KSU_SUSFS
+	/*
+	 * Scope the SUS hiding latch to a non-root app identity.  Drop it as
+	 * soon as the task leaves that state (returns to root or moves to a
+	 * system uid) so SUS_PATH/SUS_KSTAT/SUS_MOUNT hiding never lingers on
+	 * a root or system task after a uid transition.
+	 */
+	if (!is_appuid(new_uid)) {
+		task_lock(current);
+		current->susfs_task_state &= ~TASK_STRUCT_NON_ROOT_USER_APP_PROC;
+		task_unlock(current);
+	}
+#endif
+
 	// old process is not root, ignore it.
 	if (unlikely(!!old_uid))
 		return;
@@ -24,9 +38,11 @@ static __always_inline void ksu_handle_setresuid_cred(struct cred *new, const st
 #ifdef CONFIG_KSU_SUSFS
 	// only mark non-root user app processes, so susfs hides its paths from
 	// them and not from root / the manager
-	task_lock(current);
-	current->susfs_task_state |= TASK_STRUCT_NON_ROOT_USER_APP_PROC;
-	task_unlock(current);
+	if (is_appuid(new_uid)) {
+		task_lock(current);
+		current->susfs_task_state |= TASK_STRUCT_NON_ROOT_USER_APP_PROC;
+		task_unlock(current);
+	}
 #endif
 
 	// Handle kernel umount
