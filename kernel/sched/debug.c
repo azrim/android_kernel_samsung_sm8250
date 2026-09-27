@@ -401,6 +401,9 @@ static void print_cfs_group_stats(struct seq_file *m, int cpu, struct task_group
 
 	PN(se->exec_start);
 	PN(se->vruntime);
+	PN(se->deadline);
+	PN(se->slice);
+	P(se->vlag);
 	PN(se->sum_exec_runtime);
 
 	if (schedstat_enabled()) {
@@ -555,8 +558,9 @@ void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
 	spread0 = min_vruntime - rq0_min_vruntime;
 	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", "spread0",
 			SPLIT_NS(spread0));
-	SEQ_printf(m, "  .%-30s: %d\n", "nr_spread_over",
-			cfs_rq->nr_spread_over);
+	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", "avg_vruntime",
+			SPLIT_NS(avg_vruntime(cfs_rq)));
+	SEQ_printf(m, "  .%-30s: %ld\n", "avg_load", cfs_rq->avg_load);
 	SEQ_printf(m, "  .%-30s: %d\n", "nr_running", cfs_rq->nr_running);
 	SEQ_printf(m, "  .%-30s: %ld\n", "load", cfs_rq->load.weight);
 #ifdef CONFIG_SMP
