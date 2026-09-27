@@ -265,6 +265,7 @@ LIST_HEAD(systemserver_init_time_list);
 
 LIST_HEAD(enhanced_boot_time_list);
 static DEFINE_SPINLOCK(enhanced_boot_time_list_lock);
+static DEFINE_MUTEX(systemserver_init_time_list_lock);
 
 static int __init boot_recovery(char *str)
 {
@@ -345,9 +346,11 @@ static int sec_boot_stat_proc_show(struct seq_file *m, void *v)
 	seq_puts(m, "------------------------------------------");
 	seq_puts(m, "-----------------------------------------\n");
 	seq_puts(m, "SystemServer services that took long time\n\n");
+	mutex_lock(&systemserver_init_time_list_lock);
 	list_for_each_entry(systemserver_entry,
 			&systemserver_init_time_list, next)
 		seq_printf(m, "%s\n", systemserver_entry->buf);
+	mutex_unlock(&systemserver_init_time_list_lock);
 
 	return 0;
 }
@@ -392,7 +395,9 @@ void sec_boot_stat_record_systemserver(const char *c)
 
 	entry->buf[MAX_LENGTH_OF_SYSTEMSERVER_LOG - 1] = 0;
 
+	mutex_lock(&systemserver_init_time_list_lock);
 	list_add(&entry->next, &systemserver_init_time_list);
+	mutex_unlock(&systemserver_init_time_list_lock);
 }
 
 void sec_boot_stat_record(int idx, int time)
