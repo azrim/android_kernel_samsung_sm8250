@@ -772,7 +772,7 @@ int secdp_store_hmd_dev(char *str, size_t len, int num_hmd)
 				num_hmd, DEX_HMD_FIELD_MAX);
 			break;
 		}
-		if (j > MAX_NUM_HMD) {
+		if (j >= MAX_NUM_HMD) {
 			DP_ERR("num of HMD cannot exceed %d!\n", MAX_NUM_HMD);
 			break;
 		}
