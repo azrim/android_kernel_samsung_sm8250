@@ -2894,15 +2894,15 @@ vm_fault_t do_swap_page(struct vm_fault *vmf)
 	delayacct_set_flag(DELAYACCT_PF_SWAPIN);
 
 	/*
-	 * lookup_swap_cache below can fail and before the SWP_SYNCHRONOUS_IO
+	 * lookup_swap_cache below can fail and before the SWP_READ_SYNCHRONOUS_IO
 	 * check is made, another process can populate the swapcache, delete
 	 * the swap entry and decrement the swap count. So decide on taking
-	 * the SWP_SYNCHRONOUS_IO path before the lookup. In the event of the
+	 * the SWP_READ_SYNCHRONOUS_IO path before the lookup. In the event of the
 	 * race described, the victim process will find a swap_count > 1
-	 * and can then take the readahead path instead of SWP_SYNCHRONOUS_IO.
+	 * and can then take the readahead path instead of SWP_READ_SYNCHRONOUS_IO.
 	 */
 	si = swp_swap_info(entry);
-	if (si->flags & SWP_SYNCHRONOUS_IO && __swap_count(si, entry) == 1)
+	if (si->flags & SWP_READ_SYNCHRONOUS_IO && __swap_count(si, entry) == 1)
 		skip_swapcache = true;
 
 	page = lookup_swap_cache(entry, vma, vmf->address);

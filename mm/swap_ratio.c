@@ -47,10 +47,10 @@ static int calculate_write_pending(struct swap_info_struct *si,
 	if ((ratio < 0) || (ratio > 100))
 		return -EINVAL;
 
-	if (WARN_ON(!(si->flags & SWP_SYNCHRONOUS_IO)))
+	if (WARN_ON(!(si->flags & SWP_READ_SYNCHRONOUS_IO)))
 		return -ENODEV;
 
-	if ((n->flags & SWP_SYNCHRONOUS_IO) || !is_same_group(si, n))
+	if ((n->flags & SWP_READ_SYNCHRONOUS_IO) || !is_same_group(si, n))
 		return -ENODEV;
 
 	si->max_writes = ratio ? SWAP_FAST_WRITES : 0;
@@ -89,12 +89,12 @@ static int swap_ratio_slow(struct swap_info_struct **si, int node)
 	spin_lock(&n->lock);
 	spin_lock(&swap_avail_lock);
 
-	if ((*si)->flags & SWP_SYNCHRONOUS_IO) {
+	if ((*si)->flags & SWP_READ_SYNCHRONOUS_IO) {
 		if ((*si)->write_pending) {
 			(*si)->write_pending--;
 			goto exit;
 		} else {
-			if ((n->flags & SWP_SYNCHRONOUS_IO) ||
+			if ((n->flags & SWP_READ_SYNCHRONOUS_IO) ||
 			     !is_same_group(*si, n)) {
 				/* Should never happen */
 				ret = -ENODEV;
@@ -119,7 +119,7 @@ static int swap_ratio_slow(struct swap_info_struct **si, int node)
 			}
 		}
 	} else {
-		if (!(n->flags & SWP_SYNCHRONOUS_IO) ||
+		if (!(n->flags & SWP_READ_SYNCHRONOUS_IO) ||
 		      !is_same_group(*si, n)) {
 			/* Should never happen */
 			ret = -ENODEV;
@@ -172,7 +172,7 @@ void setup_swap_ratio(struct swap_info_struct *p, int prio)
 {
 	/* Used only if sysctl_swap_ratio_enable is set */
 	if (is_swap_ratio_group(prio)) {
-		if (p->flags & SWP_SYNCHRONOUS_IO)
+		if (p->flags & SWP_READ_SYNCHRONOUS_IO)
 			p->write_pending = SWAP_FAST_WRITES;
 		else
 			p->write_pending = SWAP_SLOW_WRITES;
