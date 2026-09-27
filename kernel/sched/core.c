@@ -3121,6 +3121,8 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
 	p->se.prev_sum_exec_runtime	= 0;
 	p->se.nr_migrations		= 0;
 	p->se.vruntime			= 0;
+	p->se.vlag			= 0;
+	p->se.slice			= sysctl_sched_base_slice;
 #ifdef CONFIG_SCHED_WALT
 	p->last_sleep_ts		= 0;
 	p->boost			= 0;
@@ -3409,7 +3411,7 @@ void wake_up_new_task(struct task_struct *p)
 	post_init_entity_util_avg(&p->se);
 
 	mark_task_starting(p);
-	activate_task(rq, p, ENQUEUE_NOCLOCK);
+	activate_task(rq, p, ENQUEUE_NOCLOCK | ENQUEUE_INITIAL);
 
 	p->on_rq = TASK_ON_RQ_QUEUED;
 	trace_sched_wakeup_new(p);
