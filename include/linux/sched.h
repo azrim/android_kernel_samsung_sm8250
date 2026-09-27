@@ -1787,8 +1787,8 @@ extern struct pid *cad_pid;
  * Perf critical flags
  */
 #define PC_LITTLE_AFFINE		0x00000001
-#define PC_PERF_AFFINE			0x00000003
-#define PC_PRIME_AFFINE			0x00000005
+#define PC_PERF_AFFINE			0x00000002
+#define PC_PRIME_AFFINE			0x00000004
 
 /*
  * Only the _current_ task can read/write to tsk->flags, but other
