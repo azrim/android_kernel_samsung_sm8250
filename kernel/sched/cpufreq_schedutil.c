@@ -601,6 +601,7 @@ static void sugov_update_single(struct update_util_data *hook, u64 time,
 	struct sugov_policy *sg_policy = sg_cpu->sg_policy;
 	unsigned long max_cap;
 	unsigned int next_f;
+	unsigned long irqflags;
         unsigned long boost;
 
 	max_cap = arch_scale_cpu_capacity(sg_cpu->cpu);
@@ -620,11 +621,15 @@ static void sugov_update_single(struct update_util_data *hook, u64 time,
 
 	/*
 	 * This code runs under rq->lock for the target CPU, so it won't run
-	 * concurrently on two different CPUs for the same target and it is not
-	 * necessary to acquire the lock in the fast switch case.
+	 * concurrently on two different CPUs for the same target.  However,
+	 * sugov_limits() takes update_lock from process context (without
+	 * rq->lock), so the fast-switch path must take the same lock or a
+	 * concurrent limits update can be lost.
 	 */
 	if (sg_policy->policy->fast_switch_enabled) {
+		raw_spin_lock_irqsave(&sg_policy->update_lock, irqflags);
 		sugov_fast_switch(sg_policy, time, next_f);
+		raw_spin_unlock_irqrestore(&sg_policy->update_lock, irqflags);
 	} else {
 		raw_spin_lock(&sg_policy->update_lock);
 		sugov_deferred_update(sg_policy, time, next_f);
