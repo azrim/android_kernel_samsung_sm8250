@@ -17,6 +17,11 @@
 #include <linux/pagemap.h>
 #include <linux/tracepoint-defs.h>
 
+#ifdef CONFIG_KCOMPRESSD_MM
+/* mm/page_io.c */
+int kcompressd(void *p);
+#endif
+
 /*
  * The set of flags that only affect watermark checking and reclaim
  * behaviour. This is used by the MM to obey the caller constraints
