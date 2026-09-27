@@ -539,9 +539,11 @@ static int qcom_cpufreq_hw_read_lut(struct platform_device *pdev,
 				c->skip_data.cc = core_count;
 				c->skip_data.final_index = i + 1;
 				c->skip_data.low_temp_index = i + 1;
-				c->skip_data.prev_freq =
-						c->table[i-1].frequency;
-				c->skip_data.prev_index = i - 1;
+				if (i > 0) {
+					c->skip_data.prev_freq =
+							c->table[i-1].frequency;
+					c->skip_data.prev_index = i - 1;
+				}
 				c->skip_data.prev_cc = prev_cc;
 			} else {
 				cur_freq = CPUFREQ_ENTRY_INVALID;
