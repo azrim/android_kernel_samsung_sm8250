@@ -1360,7 +1360,7 @@ static int wait_for_sess_signal_receipt(struct msm_vidc_inst *inst,
 				SESSION_MSG_INDEX(cmd));
 		rc = call_hfi_op(hdev, core_ping, hdev->hfi_device_data, inst->sid);
 		rc = wait_for_completion_timeout(
-				&inst->completions[SYS_MSG_INDEX(HAL_SYS_PING_ACK)],
+				&inst->core->completions[SYS_MSG_INDEX(HAL_SYS_PING_ACK)],
 				msecs_to_jiffies(
 				inst->core->resources.msm_vidc_hw_rsp_timeout));
 		msm_comm_kill_session(inst);
@@ -2001,7 +2001,7 @@ static void handle_ping_done(enum hal_command_response cmd, void *data)
 	}
 
 	s_vpr_l(inst->sid, "handled: SYS_PING_DONE\n");
-	complete(&inst->completions[SYS_MSG_INDEX(HAL_SYS_PING_ACK)]);
+	complete(&inst->core->completions[SYS_MSG_INDEX(HAL_SYS_PING_ACK)]);
 	put_inst(inst);
 }
 
