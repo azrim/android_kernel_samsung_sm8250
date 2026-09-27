@@ -3397,6 +3397,7 @@ static int32_t cam_eeprom_get_customInfo(struct cam_eeprom_ctrl_t *e_ctrl,
 	uint8_t               *read_buffer;
 
 	uint8_t               *pBuf = NULL;
+	uint8_t               *pEnd = NULL;
 	uint32_t              nConfig = 0;
 	char                  *strConfigName = "CustomInfo";
 
@@ -3443,11 +3444,25 @@ static int32_t cam_eeprom_get_customInfo(struct cam_eeprom_ctrl_t *e_ctrl,
 			memset(&ConfigInfo, 0x00, sizeof(ConfigInfo_t) * MAX_CONFIG_INFO_IDX);
 
 			pBuf = read_buffer;
+			pEnd = read_buffer + remain_len;
 			if(strcmp(pBuf, strConfigName) == 0) {
 				pBuf += strlen(strConfigName)+1+sizeof(uint32_t);
 
+				if (pBuf + sizeof(uint32_t) > pEnd) {
+					CAM_ERR(CAM_EEPROM,
+						"Invalid CustomInfo header");
+					return -EINVAL;
+				}
 				memcpy(&nConfig, pBuf, sizeof(uint32_t));
 				pBuf += sizeof(uint32_t);
+
+				if (nConfig > (pEnd - pBuf) /
+					(MaximumCustomStringLength +
+					 sizeof(uint32_t))) {
+					CAM_ERR(CAM_EEPROM,
+						"Invalid nConfig: %d", nConfig);
+					return -EINVAL;
+				}
 
 				CAM_ERR(CAM_EEPROM, "nConfig: %d", nConfig);
 				for(i = 0; i < nConfig; i ++) {
