@@ -756,7 +756,7 @@ static void swap_ra_info(struct vm_fault *vmf,
 		return;
 	}
 
-	if (swp_swap_info(entry)->flags & SWP_SYNCHRONOUS_IO) {
+	if (swp_swap_info(entry)->flags & SWP_READ_SYNCHRONOUS_IO) {
 		ra_info->win = 1;
 		pte_unmap(orig_pte);
 		return;
