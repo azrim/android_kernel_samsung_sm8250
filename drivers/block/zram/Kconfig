@@ -65,3 +65,18 @@ config ZRAM_LRU_WRITEBACK_LIMIT
 	int "Limit zram lru writeback"
 	default 1024
 	depends on ZRAM_LRU_WRITEBACK
+
+config KCOMPRESSD_ZRAM
+	bool "Kcompressd: async compression daemon (zram driver)"
+	depends on ZRAM
+	default n
+	help
+	  Kcompressd offloads zram page compression from kswapd to a set of
+	  kernel daemons, hooked into the zram driver's rw_page() path. Based
+	  on the out-of-tree MediaTek "kcompressd" RFC.
+
+	  Note: if CONFIG_KCOMPRESSD_MM is also enabled, the mm/swap daemon
+	  intercepts kswapd-originated writes first and this driver-level path
+	  is effectively unused.
+
+	  If unsure, say N.

@@ -50,6 +50,21 @@
 
 #define NON_LRU_SWAPPINESS 99
 
+#ifdef CONFIG_KCOMPRESSD_ZRAM
+#include "kcompressd.h"
+#endif
+
+/*
+ * When kcompressd offloads page compression, zram writes complete
+ * asynchronously, so only reads are advertised as synchronous. Otherwise the
+ * device is fully synchronous.
+ */
+#if IS_ENABLED(CONFIG_KCOMPRESSD_ZRAM) || IS_ENABLED(CONFIG_KCOMPRESSD_MM)
+#define ZRAM_SYNC_IO_CAPS	BDI_CAP_READ_SYNCHRONOUS_IO
+#else
+#define ZRAM_SYNC_IO_CAPS	BDI_CAP_SYNCHRONOUS_IO
+#endif
+
 static DEFINE_IDR(zram_index_idr);
 /* idr index must be protected */
 static DEFINE_MUTEX(zram_index_mutex);
@@ -591,7 +606,7 @@ static void reset_bdev(struct zram *zram)
 	zram->old_block_size = 0;
 	zram->bdev = NULL;
 	zram->disk->queue->backing_dev_info->capabilities |=
-				BDI_CAP_SYNCHRONOUS_IO;
+				ZRAM_SYNC_IO_CAPS;
 	kvfree(zram->bitmap);
 	zram->bitmap = NULL;
 #ifdef CONFIG_ZRAM_LRU_WRITEBACK
@@ -3322,6 +3337,22 @@ static void zram_slot_free_notify(struct block_device *bdev,
 	zram_slot_unlock(zram, index);
 }
 
+#ifdef CONFIG_KCOMPRESSD_ZRAM
+static void zram_compress_callback(void *mem, struct page *page, u32 index,
+				   int offset)
+{
+	struct zram *zram = (struct zram *)mem;
+	struct bio_vec bv = {
+		.bv_page = page,
+		.bv_len = PAGE_SIZE,
+		.bv_offset = 0,
+	};
+	int ret = zram_bvec_rw(zram, &bv, index, offset, REQ_OP_WRITE, NULL);
+
+	page_endio(page, true, ret < 0 ? ret : 0);
+}
+#endif
+
 static int zram_rw_page(struct block_device *bdev, sector_t sector,
 		       struct page *page, unsigned int op)
 {
@@ -3342,6 +3373,18 @@ static int zram_rw_page(struct block_device *bdev, sector_t sector,
 
 	index = sector >> SECTORS_PER_PAGE_SHIFT;
 	offset = (sector & (SECTORS_PER_PAGE - 1)) << SECTOR_SHIFT;
+
+#ifdef CONFIG_KCOMPRESSD_ZRAM
+	/*
+	 * Offload kswapd's zram writes to kcompressd. The page is already
+	 * under writeback (set by bdev_write_page()) and is completed later by
+	 * the daemon via page_endio(); bdev_write_page() still unlocks it.
+	 */
+	if (op == REQ_OP_WRITE && kcompressd_enabled() &&
+	    !schedule_bio_write(zram, page, index, offset,
+				zram_compress_callback))
+		return 0;
+#endif
 
 	bv.bv_page = page;
 	bv.bv_len = PAGE_SIZE;
@@ -3691,7 +3734,7 @@ static int zram_add(void)
 		blk_queue_max_write_zeroes_sectors(zram->disk->queue, UINT_MAX);
 
 	zram->disk->queue->backing_dev_info->capabilities |=
-			(BDI_CAP_STABLE_WRITES | BDI_CAP_SYNCHRONOUS_IO);
+			(BDI_CAP_STABLE_WRITES | ZRAM_SYNC_IO_CAPS);
 	disk_to_dev(zram->disk)->groups = zram_disk_attr_groups;
 	add_disk(zram->disk);
 
@@ -3868,15 +3911,29 @@ static int __init zram_init(void)
 #ifdef CONFIG_ZRAM_LRU_WRITEBACK
 	am_app_launch_notifier_register(&zram_app_launch_nb);
 #endif
+#ifdef CONFIG_KCOMPRESSD_ZRAM
+	ret = kcompressd_init();
+	if (ret) {
+		pr_err("Unable to initialize kcompressd\n");
+		goto out_error;
+	}
+#endif
+
 	return 0;
 
 out_error:
+#ifdef CONFIG_KCOMPRESSD_ZRAM
+	kcompressd_exit();
+#endif
 	destroy_devices();
 	return ret;
 }
 
 static void __exit zram_exit(void)
 {
+#ifdef CONFIG_KCOMPRESSD_ZRAM
+	kcompressd_exit();
+#endif
 	destroy_devices();
 #ifdef CONFIG_ZRAM_LRU_WRITEBACK
 	am_app_launch_notifier_unregister(&zram_app_launch_nb);
