@@ -187,7 +187,13 @@ static bool is_sid_match(const struct cred *cred, u32 cached_sid, const char *fa
 	if (__security_secid_to_secctx(tsec->sid, &ctx)) {
 		return false;
 	}
-	result = strncmp(fallback_context, ctx.context, ctx.len) == 0;
+	/*
+	 * ctx.len is the length of ctx.context, so a plain strncmp() would
+	 * accept any context that has the fallback string as a prefix (e.g.
+	 * "u:r:su" matching "u:r:sudaemon").  Require equal length too.
+	 */
+	result = (strlen(fallback_context) == ctx.len) &&
+		 (memcmp(fallback_context, ctx.context, ctx.len) == 0);
 	__security_release_secctx(&ctx);
 	return result;
 }
