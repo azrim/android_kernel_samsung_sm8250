@@ -605,7 +605,21 @@ static void exit_mm(void)
 	mm_update_next_owner(mm);
 	mmput(mm);
 #ifdef CONFIG_ANDROID_SIMPLE_LMK
-	clear_thread_flag(TIF_MEMDIE);
+	/*
+	 * Simple LMK stamps TIF_MEMDIE directly on its victims without going
+	 * through mark_oom_victim(), so those tasks never incremented
+	 * oom_victims and must not decrement it here. mark_oom_victim() is the
+	 * only path that both sets TIF_MEMDIE and binds signal->oom_mm (via
+	 * __mark_oom_victim) while bumping oom_victims, so a task carrying
+	 * oom_mm owes a matching exit_oom_victim(). A Simple LMK-only victim
+	 * (oom_mm NULL) just drops TIF_MEMDIE to stay balanced.
+	 */
+	if (test_thread_flag(TIF_MEMDIE)) {
+		if (current->signal->oom_mm)
+			exit_oom_victim();
+		else
+			clear_thread_flag(TIF_MEMDIE);
+	}
 #else
 	if (test_thread_flag(TIF_MEMDIE))
 		exit_oom_victim();
