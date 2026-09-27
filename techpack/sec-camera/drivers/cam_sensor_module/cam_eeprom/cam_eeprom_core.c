@@ -3393,6 +3393,7 @@ static int32_t cam_eeprom_get_customInfo(struct cam_eeprom_ctrl_t *e_ctrl,
 	int                   rc = 0;
 	uintptr_t             buf_addr;
 	size_t                buf_size = 0;
+	size_t                remain_len = 0;
 	uint8_t               *read_buffer;
 
 	uint8_t               *pBuf = NULL;
@@ -3423,9 +3424,14 @@ static int32_t cam_eeprom_get_customInfo(struct cam_eeprom_ctrl_t *e_ctrl,
 					"invalid buffer to copy data");
 				return -EINVAL;
 			}
+			if (buf_size <= io_cfg->offsets[0]) {
+				CAM_ERR(CAM_EEPROM, "Not enough buffer");
+				return -EINVAL;
+			}
+			remain_len = buf_size - io_cfg->offsets[0];
 			read_buffer += io_cfg->offsets[0];
 
-			if (buf_size < e_ctrl->cal_data.num_data) {
+			if (remain_len < e_ctrl->cal_data.num_data) {
 				CAM_ERR(CAM_EEPROM,
 					"failed to copy, Invalid size");
 				return -EINVAL;
