@@ -818,17 +818,42 @@ void susfs_set_log(bool enabled) {
 /* spoof_cmdline_or_bootconfig */
 #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
 static char *fake_cmdline_or_bootconfig = NULL;
+static DEFINE_MUTEX(susfs_fake_cmdline_mutex);
 int susfs_set_cmdline_or_bootconfig(char* __user user_fake_cmdline_or_bootconfig) {
 	int res;
-	/* Acquire: pairs with the smp_store_release() in the writer path. */
-	char *buf = smp_load_acquire(&fake_cmdline_or_bootconfig);
+	char *buf, *scratch;
 
+	scratch = kmalloc(SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE, GFP_KERNEL);
+	if (!scratch) {
+		SUSFS_LOGE("no enough memory\n");
+		return -ENOMEM;
+	}
+	/*
+	 * Copy into a scratch buffer first so a bad userspace pointer cannot
+	 * blank the published /proc/cmdline: nothing is published and the old
+	 * content is only replaced once the copy is known good.  On failure
+	 * below the published buffer is left untouched (or never created), so
+	 * /proc/cmdline keeps whatever it showed before.  strncpy_from_user()
+	 * can fault and sleep, so it runs outside the lock.
+	 */
+	res = strncpy_from_user(scratch, user_fake_cmdline_or_bootconfig,
+				SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE - 1);
+	if (res <= 0) {
+		kfree(scratch);
+		SUSFS_LOGI("failed setting fake_cmdline_or_bootconfig\n");
+		return res;
+	}
+	scratch[res] = '\0';
+
+	/* Acquire: pairs with the smp_store_release() in the writer path. */
+	buf = smp_load_acquire(&fake_cmdline_or_bootconfig);
 	if (!buf) {
 		// 4096 is enough I guess
 		char *fresh = kmalloc(SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE, GFP_KERNEL);
 		char *old;
 
 		if (!fresh) {
+			kfree(scratch);
 			SUSFS_LOGE("no enough memory\n");
 			return -ENOMEM;
 		}
@@ -848,23 +873,14 @@ int susfs_set_cmdline_or_bootconfig(char* __user user_fake_cmdline_or_bootconfig
 		}
 	}
 
-	spin_lock(&susfs_spin_lock);
+	mutex_lock(&susfs_fake_cmdline_mutex);
 	memset(buf, 0, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE);
-	spin_unlock(&susfs_spin_lock);
-	// strncpy_from_user() can fault and sleep, so it must not run under the spinlock
-	res = strncpy_from_user(buf, user_fake_cmdline_or_bootconfig,
-				SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE - 1);
+	memcpy(buf, scratch, res + 1);
+	mutex_unlock(&susfs_fake_cmdline_mutex);
+	kfree(scratch);
 
-	if (res > 0) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,0)
-		SUSFS_LOGI("fake_cmdline_or_bootconfig is set, length of string: %lu\n", strlen(buf));
-#else
-		SUSFS_LOGI("fake_cmdline_or_bootconfig is set, length of string: %u\n", strlen(buf));
-#endif
-		return 0;
-	}
-	SUSFS_LOGI("failed setting fake_cmdline_or_bootconfig\n");
-	return res;
+	SUSFS_LOGI("fake_cmdline_or_bootconfig is set, length of string: %d\n", res);
+	return 0;
 }
 
 int susfs_spoof_cmdline_or_bootconfig(struct seq_file *m) {
@@ -872,7 +888,9 @@ int susfs_spoof_cmdline_or_bootconfig(struct seq_file *m) {
 	char *buf = smp_load_acquire(&fake_cmdline_or_bootconfig);
 
 	if (buf != NULL) {
+		mutex_lock(&susfs_fake_cmdline_mutex);
 		seq_puts(m, buf);
+		mutex_unlock(&susfs_fake_cmdline_mutex);
 		return 0;
 	}
 	return 1;
