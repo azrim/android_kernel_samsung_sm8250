@@ -1109,7 +1109,7 @@ static int hfi_process_sys_ping_ack(u32 device_id,
 		void *_pkt,
 		struct msm_vidc_cb_info *info)
 {
-	struct hfi_msg_sys_ping_ack_pkt *pkt = pkt;
+	struct hfi_msg_sys_ping_ack_pkt *pkt = _pkt;
 	struct msm_vidc_cb_cmd_done cmd_done = {0};
 	if (!pkt || pkt->size !=
 		sizeof(struct hfi_msg_sys_ping_ack_pkt)) {
