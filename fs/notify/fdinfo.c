@@ -74,7 +74,7 @@ static void show_mark_fhandle(struct seq_file *m, struct inode *inode)
 #endif
 
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-extern void susfs_sus_ino_for_show_map_vma(unsigned long ino, dev_t *out_dev, unsigned long *out_ino);
+extern void susfs_sus_ino_for_show_map_vma(dev_t dev, unsigned long ino, dev_t *out_dev, unsigned long *out_ino);
 #endif
 
 #ifdef CONFIG_INOTIFY_USER
@@ -95,7 +95,7 @@ static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 		if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&
 				unlikely(inode->i_state & INODE_STATE_SUS_KSTAT))
-			susfs_sus_ino_for_show_map_vma(inode->i_ino, &disp_sdev, &disp_ino);
+			susfs_sus_ino_for_show_map_vma(inode->i_sb->s_dev, inode->i_ino, &disp_sdev, &disp_ino);
 #endif
 		seq_printf(m, "inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:0 ",
 			   inode_mark->wd, disp_ino, disp_sdev,
@@ -135,7 +135,7 @@ static void fanotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 		if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&
 				unlikely(inode->i_state & INODE_STATE_SUS_KSTAT))
-			susfs_sus_ino_for_show_map_vma(inode->i_ino, &disp_sdev, &disp_ino);
+			susfs_sus_ino_for_show_map_vma(inode->i_sb->s_dev, inode->i_ino, &disp_sdev, &disp_ino);
 #endif
 		seq_printf(m, "fanotify ino:%lx sdev:%x mflags:%x mask:%x ignored_mask:%x ",
 			   disp_ino, disp_sdev,

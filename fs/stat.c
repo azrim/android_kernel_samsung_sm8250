@@ -25,7 +25,7 @@
 #include <asm/unistd.h>
 
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-extern void susfs_sus_ino_for_generic_fillattr(unsigned long ino, struct kstat *stat);
+extern void susfs_sus_ino_for_generic_fillattr(dev_t dev, unsigned long ino, struct kstat *stat);
 #endif
 
 /**
@@ -42,7 +42,7 @@ void generic_fillattr(struct inode *inode, struct kstat *stat)
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 	if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&
 			unlikely(inode->i_state & INODE_STATE_SUS_KSTAT)) {
-		susfs_sus_ino_for_generic_fillattr(inode->i_ino, stat);
+		susfs_sus_ino_for_generic_fillattr(inode->i_sb->s_dev, inode->i_ino, stat);
 		stat->mode = inode->i_mode;
 		stat->rdev = inode->i_rdev;
 		stat->uid = inode->i_uid;

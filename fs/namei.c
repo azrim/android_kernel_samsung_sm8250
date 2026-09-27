@@ -3824,7 +3824,7 @@ static struct file *path_openat(struct nameidata *nd,
 }
 
 #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-extern struct filename* susfs_get_redirected_path(unsigned long ino);
+extern struct filename* susfs_get_redirected_path(dev_t dev, unsigned long ino);
 #endif
 
 struct file *do_filp_open(int dfd, struct filename *pathname,
@@ -3851,7 +3851,7 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
 		rinode = rpath.dentry->d_inode;
 		if (rinode &&
 		    unlikely(rinode->i_state & INODE_STATE_OPEN_REDIRECT)) {
-			fake_pathname = susfs_get_redirected_path(rinode->i_ino);
+			fake_pathname = susfs_get_redirected_path(rinode->i_sb->s_dev, rinode->i_ino);
 			path_put(&rpath);
 			if (!IS_ERR(fake_pathname)) {
 				set_nameidata(&nd, dfd, fake_pathname);

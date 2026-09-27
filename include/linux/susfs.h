@@ -32,6 +32,7 @@ struct st_susfs_sus_path {
 };
 
 struct st_susfs_sus_path_hlist {
+	unsigned long                    target_dev;
 	unsigned long                    target_ino;
 	char                             target_pathname[SUSFS_MAX_LEN_PATHNAME];
 	struct hlist_node                node;
@@ -73,6 +74,7 @@ struct st_susfs_sus_kstat {
 };
 
 struct st_susfs_sus_kstat_hlist {
+	unsigned long                           target_dev;
 	unsigned long                           target_ino;
 	struct st_susfs_sus_kstat               info;
 	struct hlist_node                       node;
@@ -110,6 +112,7 @@ struct st_susfs_open_redirect {
 };
 
 struct st_susfs_open_redirect_hlist {
+	unsigned long                    target_dev;
 	unsigned long                    target_ino;
 	char                             target_pathname[SUSFS_MAX_LEN_PATHNAME];
 	char                             redirected_pathname[SUSFS_MAX_LEN_PATHNAME];
@@ -131,7 +134,7 @@ struct st_sus_su {
 /* sus_path */
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 int susfs_add_sus_path(struct st_susfs_sus_path* __user user_info);
-int susfs_sus_ino_for_filldir64(unsigned long ino);
+int susfs_sus_ino_for_filldir64(dev_t dev, unsigned long ino);
 #endif
 /* sus_mount */
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
@@ -148,8 +151,8 @@ void susfs_auto_add_sus_ksu_default_mount(const char __user *to_pathname);
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 int susfs_add_sus_kstat(struct st_susfs_sus_kstat* __user user_info);
 int susfs_update_sus_kstat(struct st_susfs_sus_kstat* __user user_info);
-void susfs_sus_ino_for_generic_fillattr(unsigned long ino, struct kstat *stat);
-void susfs_sus_ino_for_show_map_vma(unsigned long ino, dev_t *out_dev, unsigned long *out_ino);
+void susfs_sus_ino_for_generic_fillattr(dev_t dev, unsigned long ino, struct kstat *stat);
+void susfs_sus_ino_for_show_map_vma(dev_t dev, unsigned long ino, dev_t *out_dev, unsigned long *out_ino);
 #endif
 /* try_umount */
 #ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
@@ -176,7 +179,7 @@ int susfs_spoof_cmdline_or_bootconfig(struct seq_file *m);
 /* open_redirect */
 #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
 int susfs_add_open_redirect(struct st_susfs_open_redirect* __user user_info);
-struct filename* susfs_get_redirected_path(unsigned long ino);
+struct filename* susfs_get_redirected_path(dev_t dev, unsigned long ino);
 #endif
 /* sus_su */
 #ifdef CONFIG_KSU_SUSFS_SUS_SU
