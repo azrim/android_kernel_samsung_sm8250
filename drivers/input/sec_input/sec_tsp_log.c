@@ -248,8 +248,8 @@ void sec_debug_tsp_log_msg(char *msg, char *fmt, ...)
 
 	/* Overflow buffer size */
 	if (idx + size + size_dev_name + 3 + 1 > sec_tsp_log_size) {
-		if (sec_tsp_log_index_fix + size + size_dev_name
-				> sec_tsp_log_size - 1)
+		if (sec_tsp_log_index_fix + size + size_dev_name + 3 + 1
+				> sec_tsp_log_size)
 			return;
 		len = scnprintf(&sec_tsp_log_buf[sec_tsp_log_index_fix],
 			size + size_dev_name + 3 + 1, "%s : %s", msg, buf);
