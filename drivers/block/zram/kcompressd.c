@@ -30,6 +30,8 @@
 static atomic_t enable_kcompressd;
 static unsigned int nr_kcompressd = DEFAULT_NR_KCOMPRESSD;
 static unsigned int queue_size_per_kcompressd = INIT_QUEUE_SIZE;
+/* Round-robin cursor: each write starts scanning at a different daemon. */
+static atomic_t kcompressd_next;
 
 module_param(nr_kcompressd, uint, 0644);
 MODULE_PARM_DESC(nr_kcompressd, "Number of daemons for page compression");
@@ -183,7 +185,7 @@ static void stop_all_kcompressd_thread(void)
 int schedule_bio_write(void *mem, struct page *page, u32 index, int offset,
 		       compress_callback cb)
 {
-	int i;
+	unsigned int i, idx, start;
 	size_t sz_work = sizeof(struct write_work);
 	struct write_work entry = {
 		.mem = mem,
@@ -199,27 +201,37 @@ int schedule_bio_write(void *mem, struct page *page, u32 index, int offset,
 	if (!nr_kcompressd || !current_is_kswapd())
 		return -EBUSY;
 
+	/*
+	 * Round-robin over the daemons rather than always filling the lowest
+	 * index first. Starting each write at a different daemon spreads
+	 * steady-state load across all of them instead of pinning it on
+	 * kcompressd:0; a full queue just moves on to the next one.
+	 */
+	start = (unsigned int)atomic_inc_return(&kcompressd_next) % nr_kcompressd;
+
 	for (i = 0; i < nr_kcompressd; i++) {
-		if (kfifo_avail(&kcompress[i].write_fifo) < sz_work)
+		idx = (start + i) % nr_kcompressd;
+
+		if (kfifo_avail(&kcompress[idx].write_fifo) < sz_work)
 			continue;
-		if (kfifo_in(&kcompress[i].write_fifo, &entry, sz_work) != sz_work)
+		if (kfifo_in(&kcompress[idx].write_fifo, &entry, sz_work) != sz_work)
 			continue;
 
-		switch (atomic_read(&kcompress[i].running)) {
+		switch (atomic_read(&kcompress[idx].running)) {
 		case KCOMPRESSD_NOT_STARTED:
-			atomic_set(&kcompress[i].running, KCOMPRESSD_RUNNING);
-			kcompress[i].kcompressd = kthread_run(kcompressd_worker,
-					&kcompressd_para[i], "kcompressd:%d", i);
-			if (IS_ERR(kcompress[i].kcompressd)) {
-				kcompress[i].kcompressd = NULL;
-				atomic_set(&kcompress[i].running,
+			atomic_set(&kcompress[idx].running, KCOMPRESSD_RUNNING);
+			kcompress[idx].kcompressd = kthread_run(kcompressd_worker,
+					&kcompressd_para[idx], "kcompressd:%d", idx);
+			if (IS_ERR(kcompress[idx].kcompressd)) {
+				kcompress[idx].kcompressd = NULL;
+				atomic_set(&kcompress[idx].running,
 					   KCOMPRESSD_NOT_STARTED);
-				pr_warn("Failed to start kcompressd:%d\n", i);
+				pr_warn("Failed to start kcompressd:%d\n", idx);
 				/*
 				 * Drop the entry we just queued; the caller
 				 * falls back to the synchronous path.
 				 */
-				kfifo_out(&kcompress[i].write_fifo, &entry,
+				kfifo_out(&kcompress[idx].write_fifo, &entry,
 					  sz_work);
 				return -EBUSY;
 			}
@@ -227,7 +239,7 @@ int schedule_bio_write(void *mem, struct page *page, u32 index, int offset,
 		case KCOMPRESSD_RUNNING:
 			break;
 		case KCOMPRESSD_SLEEPING:
-			wake_up_interruptible(&kcompress[i].kcompressd_wait);
+			wake_up_interruptible(&kcompress[idx].kcompressd_wait);
 			break;
 		}
 		return 0;
@@ -269,6 +281,7 @@ int kcompressd_init(void)
 		kcompressd_para[i].running = &kcompress[i].running;
 	}
 
+	atomic_set(&kcompressd_next, 0);
 	atomic_set(&enable_kcompressd, true);
 	return 0;
 
