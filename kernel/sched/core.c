@@ -7731,6 +7731,7 @@ void __init sched_init(void)
 	BUG_ON(alloc_related_thread_groups());
 
 	set_load_weight(&init_task, false);
+	init_task.se.slice = sysctl_sched_base_slice;
 
 	/*
 	 * The boot idle thread does lazy MMU switching as well:
