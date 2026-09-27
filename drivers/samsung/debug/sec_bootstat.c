@@ -410,7 +410,8 @@ void sec_boot_stat_record(int idx, int time)
 		do_div(t, 1000000ULL);
 		boot_events[idx].ktime = (unsigned int)t;
 	}
-	boot_events_seq[num_events++] = idx;
+	if (num_events < NUM_BOOT_EVENTS)
+		boot_events_seq[num_events++] = idx;
 }
 
 void sec_enhanced_boot_stat_record(const char *buf)
