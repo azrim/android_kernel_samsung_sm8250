@@ -61,7 +61,8 @@ void send_uevent_by_num(int num, struct detect_conn_info *pinfo, int level)
 	char uevent_dev_type_str[UEVENT_CONN_MAX_DEV_NAME];
 
 	/*Send Uevent Data*/
-	sprintf(uevent_dev_str, "CONNECTOR_NAME=%s", pinfo->pdata->name[num]);
+	snprintf(uevent_dev_str, sizeof(uevent_dev_str), "CONNECTOR_NAME=%s",
+			pinfo->pdata->name[num]);
 	uevent_conn_str[0] = uevent_dev_str;
 	if (level == 1)
 		sprintf(uevent_dev_type_str, "CONNECTOR_TYPE=HIGH_LEVEL");
@@ -116,7 +117,8 @@ void send_uevent_edge_irq(int irq, struct detect_conn_info *pinfo, int type)
 	/*Send Uevent Data*/
 	for (i = 0; i < pinfo->pdata->gpio_total_cnt; i++) {
 		if (irq == pinfo->pdata->irq_number[i]) {
-			sprintf(uevent_dev_str, "CONNECTOR_NAME=%s", pinfo->pdata->name[i]);
+			snprintf(uevent_dev_str, sizeof(uevent_dev_str),
+					"CONNECTOR_NAME=%s", pinfo->pdata->name[i]);
 			if (type == IRQ_TYPE_EDGE_RISING) {
 				sprintf(uevent_dev_type_str, "CONNECTOR_TYPE=RISING_EDGE");
 				SEC_CONN_PRINT("send uevent irq[%d]:CONNECTOR_NAME=%s,CONNECTOR_TYPE=RISING_EDGE.\n"
@@ -341,11 +343,14 @@ static ssize_t show_detect_conn_available(struct device *dev,
 
 	for (i = 0; i < pdata->gpio_total_cnt; i++) {
 		SEC_CONN_PRINT("pinName = %s\n", pdata->name[i]);
-		strcat(available_pins_string, pdata->name[i]);
-		strcat(available_pins_string, "/");
+		strlcat(available_pins_string, pdata->name[i],
+				sizeof(available_pins_string));
+		strlcat(available_pins_string, "/",
+				sizeof(available_pins_string));
 	}
 
-	available_pins_string[strlen(available_pins_string)-1] = '\0';
+	if (available_pins_string[0] != '\0')
+		available_pins_string[strlen(available_pins_string) - 1] = '\0';
 
 	return sprintf(buf, "%s\n", available_pins_string);
 }
