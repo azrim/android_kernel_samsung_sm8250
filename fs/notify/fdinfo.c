@@ -74,7 +74,7 @@ static void show_mark_fhandle(struct seq_file *m, struct inode *inode)
 #endif
 
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-extern void susfs_sus_ino_for_show_map_vma(dev_t dev, unsigned long ino, dev_t *out_dev, unsigned long *out_ino);
+extern int susfs_sus_ino_for_show_map_vma(dev_t dev, unsigned long ino, dev_t *out_dev, unsigned long *out_ino);
 #endif
 
 #ifdef CONFIG_INOTIFY_USER

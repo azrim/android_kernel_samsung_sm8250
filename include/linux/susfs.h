@@ -151,8 +151,8 @@ void susfs_auto_add_sus_ksu_default_mount(const char __user *to_pathname);
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 int susfs_add_sus_kstat(struct st_susfs_sus_kstat* __user user_info);
 int susfs_update_sus_kstat(struct st_susfs_sus_kstat* __user user_info);
-void susfs_sus_ino_for_generic_fillattr(dev_t dev, unsigned long ino, struct kstat *stat);
-void susfs_sus_ino_for_show_map_vma(dev_t dev, unsigned long ino, dev_t *out_dev, unsigned long *out_ino);
+int susfs_sus_ino_for_generic_fillattr(dev_t dev, unsigned long ino, struct kstat *stat);
+int susfs_sus_ino_for_show_map_vma(dev_t dev, unsigned long ino, dev_t *out_dev, unsigned long *out_ino);
 #endif
 /* try_umount */
 #ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT

@@ -549,8 +549,9 @@ int susfs_update_sus_kstat(struct st_susfs_sus_kstat* __user user_info) {
 	return err;
 }
 
-void susfs_sus_ino_for_generic_fillattr(dev_t dev, unsigned long ino, struct kstat *stat) {
+int susfs_sus_ino_for_generic_fillattr(dev_t dev, unsigned long ino, struct kstat *stat) {
 	struct st_susfs_sus_kstat_hlist *entry;
+	int found = 0;
 
 	rcu_read_lock();
 	hash_for_each_possible_rcu(SUS_KSTAT_HLIST, entry, node, ino) {
@@ -567,24 +568,29 @@ void susfs_sus_ino_for_generic_fillattr(dev_t dev, unsigned long ino, struct kst
 			stat->ctime.tv_nsec = entry->info.spoofed_ctime_tv_nsec;
 			stat->blocks = entry->info.spoofed_blocks;
 			stat->blksize = entry->info.spoofed_blksize;
+			found = 1;
 			break;
 		}
 	}
 	rcu_read_unlock();
+	return found;
 }
 
-void susfs_sus_ino_for_show_map_vma(dev_t dev, unsigned long ino, dev_t *out_dev, unsigned long *out_ino) {
+int susfs_sus_ino_for_show_map_vma(dev_t dev, unsigned long ino, dev_t *out_dev, unsigned long *out_ino) {
 	struct st_susfs_sus_kstat_hlist *entry;
+	int found = 0;
 
 	rcu_read_lock();
 	hash_for_each_possible_rcu(SUS_KSTAT_HLIST, entry, node, ino) {
 		if (entry->target_dev == dev && entry->target_ino == ino) {
 			*out_dev = entry->info.spoofed_dev;
 			*out_ino = entry->info.spoofed_ino;
+			found = 1;
 			break;
 		}
 	}
 	rcu_read_unlock();
+	return found;
 }
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 
