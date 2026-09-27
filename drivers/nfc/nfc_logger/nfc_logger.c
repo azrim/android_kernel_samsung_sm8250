@@ -84,6 +84,12 @@ void nfc_logger_print(const char *fmt, ...)
 	len += vsnprintf(buf + len, MAX_STR_LEN, fmt, args);
 	va_end(args);
 
+	/* vsnprintf() returns the length it would have written, which can be
+	 * larger than the destination buffer; clamp it before the memcpy().
+	 */
+	if (len > MAX_STR_LEN)
+		len = MAX_STR_LEN;
+
 	curpos = g_curpos;
 	if (curpos + len >= BUF_SIZE) {
 		g_curpos = curpos = 0;
