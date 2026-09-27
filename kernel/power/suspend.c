@@ -654,9 +654,11 @@ int pm_suspend(suspend_state_t state)
 		return -EINVAL;
 
 	pm_suspend_marker("entry");
-	qcom_smem_state_update_bits(smem_state, AWAKE_BIT, 0);
+	if (smem_state && !IS_ERR(smem_state))
+		qcom_smem_state_update_bits(smem_state, AWAKE_BIT, 0);
 	error = enter_state(state);
-	qcom_smem_state_update_bits(smem_state, AWAKE_BIT, AWAKE_BIT);
+	if (smem_state && !IS_ERR(smem_state))
+		qcom_smem_state_update_bits(smem_state, AWAKE_BIT, AWAKE_BIT);
 	if (error) {
 		suspend_stats.fail++;
 		dpm_save_failed_errno(error);
