@@ -81,7 +81,10 @@ int vfs_statfs(const struct path *path, struct kstatfs *buf)
 	if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&
 			unlikely(mnt->mnt_id >= DEFAULT_SUS_MNT_ID)) {
 		// Hide the sus mount by reporting the nearest non-sus parent mount.
-		for (; mnt->mnt_id >= DEFAULT_SUS_MNT_ID; mnt = mnt->mnt_parent) {}
+		for (; mnt->mnt_id >= DEFAULT_SUS_MNT_ID; mnt = mnt->mnt_parent) {
+			if (mnt->mnt_parent == mnt)
+				break;
+		}
 		error = statfs_by_dentry(mnt->mnt.mnt_root, buf);
 	} else {
 		error = statfs_by_dentry(path->dentry, buf);
