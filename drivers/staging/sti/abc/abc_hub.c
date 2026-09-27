@@ -299,6 +299,8 @@ static int abc_hub_probe(struct platform_device *pdev)
 		goto out;
 	}
 
+	abc_hub_dev = pinfo->dev;
+
 	ret = device_create_file(pinfo->dev, &dev_attr_enable);
 	if (ret) {
 		pr_err("%s: Failed to create device enabled file\n", __func__);
@@ -315,7 +317,6 @@ static int abc_hub_probe(struct platform_device *pdev)
 	}
 #endif
 
-	abc_hub_dev = pinfo->dev;
 	pinfo->pdata = pdata;
 
 	platform_set_drvdata(pdev, pinfo);
