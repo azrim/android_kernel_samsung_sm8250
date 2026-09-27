@@ -111,11 +111,15 @@ envp_count_done:
 	void __user *kLdLibraryPath_p = (void __user *)(mmap_page + 64);
 	void __user *envp_array_p = (void __user *)(mmap_page + 128);
 
-	if (!!copy_to_user(kLdPreload_p, kLdPreload, sizeof(kLdPreload)))
+	if (!!copy_to_user(kLdPreload_p, kLdPreload, sizeof(kLdPreload))) {
+		vm_munmap(mmap_page, PAGE_SIZE);
 		return -EFAULT;
+	}
 
-	if (!!copy_to_user(kLdLibraryPath_p, kLdLibraryPath, sizeof(kLdLibraryPath)))
+	if (!!copy_to_user(kLdLibraryPath_p, kLdLibraryPath, sizeof(kLdLibraryPath))) {
+		vm_munmap(mmap_page, PAGE_SIZE);
 		return -EFAULT;
+	}
 
 	// prepare uintptr_t array for new char **envp
 	// 2 entries plus a NULL
@@ -123,16 +127,22 @@ envp_count_done:
 	size_t array_bytes = total_ptrs * kPtrSize;
 
 	// well, it will overflow.
-	if (128 + array_bytes > PAGE_SIZE)
+	if (128 + array_bytes > PAGE_SIZE) {
+		vm_munmap(mmap_page, PAGE_SIZE);
 		return -E2BIG;
+	}
 
 	void *buf __offstack_flags(array_bytes, GFP_KERNEL | __GFP_ZERO);
-	if (!buf)
+	if (!buf) {
+		vm_munmap(mmap_page, PAGE_SIZE);
 		return -ENOMEM;
+	}
 
 	// copy original envp array addresses
-	if (copy_from_user(buf, envp, env_count * kPtrSize))
+	if (copy_from_user(buf, envp, env_count * kPtrSize)) {
+		vm_munmap(mmap_page, PAGE_SIZE);
 		return -EFAULT;
+	}
 
 	// 32-on-64 assumes LE.
 	if (kPtrSize == sizeof(uint32_t)) {
@@ -149,8 +159,10 @@ envp_count_done:
 	}
 
 	// blast new envp array to userspace
-	if (!!copy_to_user(envp_array_p, buf, array_bytes))
+	if (!!copy_to_user(envp_array_p, buf, array_bytes)) {
+		vm_munmap(mmap_page, PAGE_SIZE);
 		return -EFAULT;
+	}
 
 	*(void ***)envp_arg = (void **)envp_array_p;
 	pr_info("new envp array blasted to userspace\n");
