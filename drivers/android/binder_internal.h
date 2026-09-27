@@ -75,6 +75,9 @@ extern const struct file_operations binder_fops;
 
 extern char *binder_devices_param;
 
+void binder_add_device(struct binder_device *device);
+void binder_remove_device(struct binder_device *device);
+
 #ifdef CONFIG_ANDROID_BINDERFS
 extern bool is_binderfs_device(const struct inode *inode);
 extern struct dentry *binderfs_create_file(struct dentry *dir, const char *name,
