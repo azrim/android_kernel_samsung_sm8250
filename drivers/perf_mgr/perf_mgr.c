@@ -139,11 +139,12 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 			}
 			rcu_read_unlock();
 
-			fi = get_target_task(target_tid);
-			if (fi == NULL)
-				break;
-
 			spin_lock(&write_slock);
+			fi = get_target_task(target_tid);
+			if (fi == NULL) {
+				spin_unlock(&write_slock);
+				break;
+			}
 			list_del_rcu(&(fi->list));
 			spin_unlock(&write_slock);
 			fps_task_count--;
@@ -165,20 +166,30 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 			return -EFAULT;
 		}
 
+		rcu_read_lock();
 		task = find_task_by_vpid(fps_info_val.tid);
-		if (task == NULL)
+		if (task == NULL) {
+			rcu_read_unlock();
 			break;
+		}
+		get_task_struct(task);
+		rcu_read_unlock();
 
 		fi = get_target_task(fps_info_val.tid);
 		/* task already exist on drawing task list */
-		if (fi != NULL)
+		if (fi != NULL) {
+			put_task_struct(task);
 			break;
+		}
 
 		fi = kmalloc(sizeof(struct task_fps_util_info), GFP_KERNEL);
-		if (!fi)
+		if (!fi) {
+			put_task_struct(task);
 			return -EAGAIN;
+		}
 
 		task->drawing_flag = fps_info_val.group_id;
+		put_task_struct(task);
 
 		fi->orig_fps_info.tid = fps_info_val.tid;
 		fi->orig_fps_info.group_id = fps_info_val.group_id;
@@ -207,10 +218,17 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 			pr_err("[GPIS] : FrameEnd: fail to copy from user");
 			return -EFAULT;
 		}
+		rcu_read_lock();
 		task = find_task_by_vpid(fps_info_val.tid);
+		if (task)
+			get_task_struct(task);
+		rcu_read_unlock();
 
-		if (list_empty(&gpis_hlist) || !task || !task->drawing_flag)
+		if (list_empty(&gpis_hlist) || !task || !task->drawing_flag) {
+			if (task)
+				put_task_struct(task);
 			break;
+		}
 
 		rcu_read_lock();
 		list_for_each_entry_rcu(fi, &gpis_hlist, list) {
@@ -251,6 +269,7 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 		if (target_fi == NULL) {
 			pr_err("[GPIS] PID %d not found. skip cal util\n",
 				fps_info_val.tid);
+			put_task_struct(task);
 			break;
 		}
 
@@ -294,6 +313,7 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 			g_fps, target_fi->orig_fps_info.tid,
 			task->drawing_mig_boost, new_fps_util);
 
+		put_task_struct(task);
 		break;
 	default:
 		break;
