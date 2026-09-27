@@ -4903,10 +4903,9 @@ void venus_hfi_delete_device(void *device)
 			hal_ctxt.dev_count--;
 			list_del(&close->list);
 			mutex_destroy(&close->lock);
+			free_irq(dev->hal_data->irq, close);
 			destroy_workqueue(close->vidc_workq);
 			destroy_workqueue(close->venus_pm_workq);
-			free_irq(dev->hal_data->irq, close);
-			iounmap(dev->hal_data->register_base);
 			kfree(close->hal_data);
 			kfree(close->response_pkt);
 			kfree(close->raw_packet);
