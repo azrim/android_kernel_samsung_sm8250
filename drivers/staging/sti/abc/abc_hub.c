@@ -198,7 +198,8 @@ static ssize_t show_abc_hub_bootc_offset(struct device *dev,
 	int i;
 
 	for (i = 0; i < BOOTC_OFFSET_DATA_CNT; i++) {
-		res += sprintf(buf, "%s,%d\n", pinfo->pdata->bootc_pdata.offset_data[i].module,
+		res += scnprintf(buf + res, PAGE_SIZE - res, "%s,%d\n",
+				pinfo->pdata->bootc_pdata.offset_data[i].module,
 				pinfo->pdata->bootc_pdata.offset_data[i].offset);
 	}
 
