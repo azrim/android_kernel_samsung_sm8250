@@ -380,17 +380,6 @@ int susfs_add_sus_kstat(struct st_susfs_sus_kstat* __user user_info) {
 		return 1;
 	}
 
-	spin_lock(&susfs_spin_lock);
-	hash_for_each_safe(SUS_KSTAT_HLIST, bkt, tmp_node, tmp_entry, node) {
-		if (!strcmp(tmp_entry->info.target_pathname, info.target_pathname)) {
-			hash_del_rcu(&tmp_entry->node);
-			kfree_rcu(tmp_entry, rcu_head);
-			update_hlist = true;
-			break;
-		}
-	}
-	spin_unlock(&susfs_spin_lock);
-
 	new_entry = kmalloc(sizeof(struct st_susfs_sus_kstat_hlist), GFP_KERNEL);
 	if (!new_entry) {
 		SUSFS_LOGE("no enough memory\n");
@@ -415,7 +404,20 @@ int susfs_add_sus_kstat(struct st_susfs_sus_kstat* __user user_info) {
 		return 1;
 	}
 
+	/*
+	 * Replace only after the new entry is fully valid.  Deleting the
+	 * old entry before the kmalloc()/kern_path() above dropped the
+	 * working rule when either failed.
+	 */
 	spin_lock(&susfs_spin_lock);
+	hash_for_each_safe(SUS_KSTAT_HLIST, bkt, tmp_node, tmp_entry, node) {
+		if (!strcmp(tmp_entry->info.target_pathname, info.target_pathname)) {
+			hash_del_rcu(&tmp_entry->node);
+			kfree_rcu(tmp_entry, rcu_head);
+			update_hlist = true;
+			break;
+		}
+	}
 	hash_add_rcu(SUS_KSTAT_HLIST, &new_entry->node, info.target_ino);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 	if (update_hlist) {
@@ -903,17 +905,6 @@ int susfs_add_open_redirect(struct st_susfs_open_redirect* __user user_info) {
 	info.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
 	info.redirected_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '\0';
 
-	spin_lock(&susfs_spin_lock);
-	hash_for_each_safe(OPEN_REDIRECT_HLIST, bkt, tmp_node, tmp_entry, node) {
-		if (!strcmp(tmp_entry->target_pathname, info.target_pathname)) {
-			hash_del_rcu(&tmp_entry->node);
-			kfree_rcu(tmp_entry, rcu_head);
-			update_hlist = true;
-			break;
-		}
-	}
-	spin_unlock(&susfs_spin_lock);
-
 	new_entry = kmalloc(sizeof(struct st_susfs_open_redirect_hlist), GFP_KERNEL);
 	if (!new_entry) {
 		SUSFS_LOGE("no enough memory\n");
@@ -931,7 +922,20 @@ int susfs_add_open_redirect(struct st_susfs_open_redirect* __user user_info) {
 		return 1;
 	}
 
+	/*
+	 * Replace only after the new entry is fully valid.  Deleting the
+	 * old entry before the kmalloc()/kern_path() above dropped the
+	 * working rule when either failed.
+	 */
 	spin_lock(&susfs_spin_lock);
+	hash_for_each_safe(OPEN_REDIRECT_HLIST, bkt, tmp_node, tmp_entry, node) {
+		if (!strcmp(tmp_entry->target_pathname, info.target_pathname)) {
+			hash_del_rcu(&tmp_entry->node);
+			kfree_rcu(tmp_entry, rcu_head);
+			update_hlist = true;
+			break;
+		}
+	}
 	hash_add_rcu(OPEN_REDIRECT_HLIST, &new_entry->node, info.target_ino);
 	if (update_hlist) {
 		SUSFS_LOGI("target_ino: '%lu', target_pathname: '%s', redirected_pathname: '%s', is successfully updated to OPEN_REDIRECT_HLIST\n",
