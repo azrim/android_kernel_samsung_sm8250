@@ -73,7 +73,7 @@ static int smp2p_sleepstate_probe(struct platform_device *pdev)
 
 	notify_ws = wakeup_source_register(&pdev->dev, "smp2p-sleepstate");
 	if (!notify_ws) {
-		return -ENOMEM;
+		ret = -ENOMEM;
 		goto err_ws;
 	}
 
