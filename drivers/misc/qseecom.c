@@ -4716,6 +4716,17 @@ static int qseecom_receive_req(struct qseecom_dev_handle *data)
 			return -ENODEV;
 		}
 		mutex_lock(&listener_access_lock);
+		/*
+		 * Unregister can free this_lstnr while we slept: re-resolve
+		 * the object under listener_access_lock before touching it.
+		 */
+		this_lstnr = __qseecom_find_svc(data->listener.id);
+		if (!this_lstnr) {
+			pr_err("Listener %d unregistered while waiting\n",
+				(uint32_t)data->listener.id);
+			mutex_unlock(&listener_access_lock);
+			return -ENODATA;
+		}
 		this_lstnr->rcv_req_flag = 0;
 		mutex_unlock(&listener_access_lock);
 		break;
