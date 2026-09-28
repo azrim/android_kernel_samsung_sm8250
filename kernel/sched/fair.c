@@ -4799,7 +4799,6 @@ enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	update_load_avg(cfs_rq, se, UPDATE_TG | DO_ATTACH);
 	se_update_runnable(se);
 	update_cfs_group(se);
-	account_entity_enqueue(cfs_rq, se);
 
 	/*
 	 * XXX now that the entity has been re-weighted, and it's lag adjusted,
@@ -4807,6 +4806,8 @@ enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	 */
 	if (!curr)
 		place_entity(cfs_rq, se, flags);
+
+	account_entity_enqueue(cfs_rq, se);
 
 	/* Entity has migrated, no longer consider this task hot */
 	if (flags & ENQUEUE_MIGRATED)
