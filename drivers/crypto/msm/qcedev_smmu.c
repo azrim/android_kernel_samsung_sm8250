@@ -174,6 +174,20 @@ static int ion_map_buffer(struct qcedev_handle *qce_hndl,
 		}
 
 		if (table->sgl) {
+			/*
+			 * qcedev_check_and_map_buffer() returns a single
+			 * iova + offset to userspace, which is only
+			 * meaningful when the mapping is one contiguous
+			 * range.  Refuse a split sg table rather than hand
+			 * back an address derived from only the first entry.
+			 */
+			if (table->nents > 1) {
+				pr_err("%s: err: sg table has %u entries, expected 1\n",
+						__func__, table->nents);
+				rc = -EINVAL;
+				goto map_sg_err;
+			}
+
 			binfo->ion_buf.iova = sg_dma_address(table->sgl);
 			binfo->ion_buf.mapped_buf_size = sg_dma_len(table->sgl);
 			if (binfo->ion_buf.mapped_buf_size < fd_size) {
@@ -293,7 +307,14 @@ int qcedev_check_and_map_buffer(void *handle,
 	if (mem_client->mtype != MEM_ION)
 		return -EPERM;
 
-	/* Check if the buffer fd is already mapped */
+	/*
+	 * Hold registeredbufs.lock across the whole check-then-map-then-insert
+	 * sequence: two threads mapping the same fd concurrently would both
+	 * miss the list entry, both map the buffer and both insert, leaving two
+	 * entries for one fd (double refcount, double unmap later).  The map
+	 * helpers only take dma-buf internal locks, never registeredbufs.lock,
+	 * so this is deadlock-free.
+	 */
 	mutex_lock(&qce_hndl->registeredbufs.lock);
 	list_for_each_entry(temp, &qce_hndl->registeredbufs.list, list) {
 		if (temp->ion_buf.ion_fd == fd) {
@@ -304,7 +325,6 @@ int qcedev_check_and_map_buffer(void *handle,
 			break;
 		}
 	}
-	mutex_unlock(&qce_hndl->registeredbufs.lock);
 
 	/* If buffer fd is not mapped then create a fresh mapping */
 	if (!found) {
@@ -315,14 +335,14 @@ int qcedev_check_and_map_buffer(void *handle,
 			pr_err("%s: err: failed to allocate binfo\n",
 				__func__);
 			rc = -ENOMEM;
-			goto error;
+			goto error_locked;
 		}
 		rc = qcedev_map_buffer(qce_hndl, mem_client, fd,
 							fd_size, binfo);
 		if (rc) {
 			pr_err("%s: err: failed to map fd (%d) error = %d\n",
 				__func__, fd, rc);
-			goto error;
+			goto error_locked;
 		}
 
 		*vaddr = binfo->ion_buf.iova;
@@ -330,10 +350,9 @@ int qcedev_check_and_map_buffer(void *handle,
 		atomic_inc(&binfo->ref_count);
 
 		/* Add buffer mapping information to regd buffer list */
-		mutex_lock(&qce_hndl->registeredbufs.lock);
 		list_add_tail(&binfo->list, &qce_hndl->registeredbufs.list);
-		mutex_unlock(&qce_hndl->registeredbufs.lock);
 	}
+	mutex_unlock(&qce_hndl->registeredbufs.lock);
 
 	/* Make sure the offset is within the mapped range */
 	if (offset >= mapped_size) {
@@ -349,12 +368,13 @@ int qcedev_check_and_map_buffer(void *handle,
 
 	return 0;
 
+/* lock released */
 unmap:
 	if (!found) {
-		qcedev_unmap_buffer(handle, mem_client, binfo);
 		mutex_lock(&qce_hndl->registeredbufs.lock);
 		list_del(&binfo->list);
 		mutex_unlock(&qce_hndl->registeredbufs.lock);
+		qcedev_unmap_buffer(handle, mem_client, binfo);
 	} else {
 		/*
 		 * The buffer was already mapped, so we took an extra
@@ -364,7 +384,12 @@ unmap:
 		qcedev_check_and_unmap_buffer(handle, fd);
 	}
 
-error:
+	kfree(binfo);
+	return rc;
+
+/* lock still held */
+error_locked:
+	mutex_unlock(&qce_hndl->registeredbufs.lock);
 	kfree(binfo);
 	return rc;
 }
