@@ -3071,8 +3071,6 @@ static int max77705_charger_remove(struct platform_device *pdev)
 
 	pr_info("%s: ++\n", __func__);
 
-	destroy_workqueue(charger->wqueue);
-
 	if (charger->i2c) {
 		u8 reg_data;
 
@@ -3088,6 +3086,13 @@ static int max77705_charger_remove(struct platform_device *pdev)
 		pr_err("%s: no max77705 i2c client\n", __func__);
 	}
 
+	/*
+	 * Free the IRQs before tearing down the workqueues: the handlers
+	 * queue work on charger->wqueue (chgin_work/aicl_work) and arm
+	 * isr_work on system_wq, so an IRQ landing after destroy_workqueue()
+	 * would queue onto a destroyed queue, and isr_work could run after
+	 * charger is freed.
+	 */
 	if (charger->irq_sysovlo)
 		free_irq(charger->irq_sysovlo, charger);
 #if defined(CONFIG_USE_POGO)
@@ -3096,6 +3101,14 @@ static int max77705_charger_remove(struct platform_device *pdev)
 #endif
 	if (charger->pdata->chg_irq)
 		free_irq(charger->pdata->chg_irq, charger);
+
+	if (charger->pdata->chg_irq)
+		cancel_delayed_work_sync(&charger->isr_work);
+	cancel_work_sync(&charger->chgin_work);
+	cancel_delayed_work_sync(&charger->aicl_work);
+
+	destroy_workqueue(charger->wqueue);
+
 	if (charger->psy_chg)
 		power_supply_unregister(charger->psy_chg);
 	if (charger->psy_otg)
