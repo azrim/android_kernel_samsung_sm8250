@@ -3387,7 +3387,13 @@ pwr_dwn:
 	msleep(20);
 #endif
 
-	cam_ois_power_down(o_ctrl);
+	/*
+	 * A configured session owns the rails: a cap query must not cut
+	 * power mid-stream. Only tear down when no session is active,
+	 * mirroring the state guard around the RELEASE-path power down.
+	 */
+	if (o_ctrl->cam_ois_state < CAM_OIS_CONFIG)
+		cam_ois_power_down(o_ctrl);
 
 	if (is_need_retry)
 		goto FW_UPDATE_RETRY;
