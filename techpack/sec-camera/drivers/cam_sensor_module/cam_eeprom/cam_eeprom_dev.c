@@ -232,17 +232,18 @@ probe_failure:
 static int cam_eeprom_i2c_driver_remove(struct i2c_client *client)
 {
 	int                             i;
-	struct v4l2_subdev             *sd = i2c_get_clientdata(client);
 	struct cam_eeprom_ctrl_t       *e_ctrl;
 	struct cam_eeprom_soc_private  *soc_private;
 	struct cam_hw_soc_info         *soc_info;
 
-	if (!sd) {
-		CAM_ERR(CAM_EEPROM, "Subdevice is NULL");
-		return -EINVAL;
-	}
-
-	e_ctrl = (struct cam_eeprom_ctrl_t *)v4l2_get_subdevdata(sd);
+	/*
+	 * probe() stored e_ctrl itself via i2c_set_clientdata(), so it must be
+	 * fetched as such.  The old code treated the clientdata as a
+	 * struct v4l2_subdev * and then read ->dev_priv out of it, which is a
+	 * different offset in cam_eeprom_ctrl_t -- yielding a garbage e_ctrl
+	 * and a fault on the first dereference.
+	 */
+	e_ctrl = i2c_get_clientdata(client);
 	if (!e_ctrl) {
 		CAM_ERR(CAM_EEPROM, "eeprom device is NULL");
 		return -EINVAL;
@@ -342,6 +343,8 @@ static int cam_eeprom_spi_setup(struct spi_device *spi)
 	e_ctrl->bridge_intf.ops.apply_req = NULL;
 
 	v4l2_set_subdevdata(&e_ctrl->v4l2_dev_str.sd, e_ctrl);
+	/* cam_eeprom_spi_driver_remove() fetches e_ctrl via spi_get_drvdata(). */
+	spi_set_drvdata(spi, e_ctrl);
 	return rc;
 
 board_free:
@@ -370,17 +373,17 @@ static int cam_eeprom_spi_driver_probe(struct spi_device *spi)
 static int cam_eeprom_spi_driver_remove(struct spi_device *sdev)
 {
 	int                             i;
-	struct v4l2_subdev             *sd = spi_get_drvdata(sdev);
 	struct cam_eeprom_ctrl_t       *e_ctrl;
 	struct cam_eeprom_soc_private  *soc_private;
 	struct cam_hw_soc_info         *soc_info;
 
-	if (!sd) {
-		CAM_ERR(CAM_EEPROM, "Subdevice is NULL");
-		return -EINVAL;
-	}
-
-	e_ctrl = (struct cam_eeprom_ctrl_t *)v4l2_get_subdevdata(sd);
+	/*
+	 * cam_eeprom_spi_setup() stores e_ctrl via spi_set_drvdata(), so fetch
+	 * it as such.  Treating the drvdata as a struct v4l2_subdev * (as the
+	 * old code did) read ->dev_priv at the wrong offset and returned
+	 * -EINVAL, so the remove path always leaked.
+	 */
+	e_ctrl = spi_get_drvdata(sdev);
 	if (!e_ctrl) {
 		CAM_ERR(CAM_EEPROM, "eeprom device is NULL");
 		return -EINVAL;
