@@ -950,6 +950,9 @@ int subsystem_set_fwname(const char *name, const char *fw_name)
 	strlcpy(subsys->desc->fw_name, fw_name,
 		sizeof(subsys->desc->fw_name));
 
+	/* find_subsys_device() took a reference; this caller only borrows. */
+	put_device(&subsys->dev);
+
 	return 0;
 }
 EXPORT_SYMBOL(subsystem_set_fwname);
@@ -968,6 +971,8 @@ int wait_for_shutdown_ack(struct subsys_desc *desc)
 
 	ret = wait_for_completion_timeout(&dev->shutdown_ack,
 						msecs_to_jiffies(10000));
+	/* find_subsys_device() took a reference; this caller only borrows. */
+	put_device(&dev->dev);
 	if (!ret) {
 		pr_err("[%s]: Timed out waiting for shutdown ack\n",
 				desc->name);
@@ -1379,9 +1384,6 @@ int subsystem_crashed(const char *name)
 	if (!dev)
 		return -ENODEV;
 
-	if (!get_device(&dev->dev))
-		return -ENODEV;
-
 	track = subsys_get_track(dev);
 
 	mutex_lock(&track->lock);
@@ -1393,6 +1395,7 @@ int subsystem_crashed(const char *name)
 	 */
 	mutex_unlock(&track->lock);
 
+	/* find_subsys_device() took a reference; this caller only borrows. */
 	put_device(&dev->dev);
 	return 0;
 }
@@ -1402,22 +1405,30 @@ EXPORT_SYMBOL(subsystem_crashed);
 bool is_subsystem_crash(const char *name)
 {
         struct subsys_device *dev = find_subsys_device(name);
+        bool crashed;
 
         if (!dev)
                 return false;
 
-        return subsys_get_crash_status(dev) ? true : false;
+        crashed = subsys_get_crash_status(dev) ? true : false;
+        /* find_subsys_device() took a reference; this caller only borrows. */
+        put_device(&dev->dev);
+        return crashed;
 }
 EXPORT_SYMBOL(is_subsystem_crash);
 
 int is_subsystem_online(const char *name)
 {
         struct subsys_device *dev = find_subsys_device(name);
+        int online;
 
         if (!dev)
                 return false;
 
-        return dev->count;
+        online = dev->count;
+        /* find_subsys_device() took a reference; this caller only borrows. */
+        put_device(&dev->dev);
+        return online;
 }
 EXPORT_SYMBOL(is_subsystem_online);
 #endif
