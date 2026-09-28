@@ -28,9 +28,44 @@ u64 zram_dedup_meta_size(struct zram *zram)
 	return (u64)atomic64_read(&zram->stats.meta_data_size);
 }
 
-static u32 zram_dedup_checksum(unsigned char *mem)
+/*
+ * The dedup index is keyed on the checksum of the *uncompressed* page.
+ * Callers that only have the compressed object must decompress first;
+ * hashing the compressed bytes would put the entry in a domain that
+ * zram_dedup_find() never queries.
+ */
+u32 zram_dedup_checksum(unsigned char *mem)
 {
 	return jhash(mem, PAGE_SIZE, 0);
+}
+
+/*
+ * Page-domain checksum of an object stored in the pool.  Callers that
+ * hold only the compressed object (the packed-writeback restore path)
+ * must decompress first: indexing the compressed bytes would place the
+ * entry in a checksum domain that zram_dedup_find() never queries.
+ * Returns false when the object cannot be decompressed, in which case
+ * the caller must not index it.
+ */
+bool zram_dedup_page_checksum(struct zram *zram, unsigned char *cmem,
+				unsigned int len, u32 *checksum)
+{
+	struct zcomp_strm *zstrm;
+
+	if (len == PAGE_SIZE) {
+		*checksum = zram_dedup_checksum(cmem);
+		return true;
+	}
+
+	zstrm = zcomp_stream_get(zram->comp);
+	if (zcomp_decompress(zstrm, cmem, len, zstrm->buffer)) {
+		zcomp_stream_put(zram->comp);
+		return false;
+	}
+	*checksum = zram_dedup_checksum(zstrm->buffer);
+	zcomp_stream_put(zram->comp);
+
+	return true;
 }
 
 void zram_dedup_insert(struct zram *zram, struct zram_entry *new,

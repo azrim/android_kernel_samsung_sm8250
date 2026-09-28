@@ -13,6 +13,9 @@ void zram_dedup_insert(struct zram *zram, struct zram_entry *new,
 				u32 checksum);
 struct zram_entry *zram_dedup_find(struct zram *zram, struct page *page,
 				u32 *checksum);
+u32 zram_dedup_checksum(unsigned char *mem);
+bool zram_dedup_page_checksum(struct zram *zram, unsigned char *cmem,
+				unsigned int len, u32 *checksum);
 
 void zram_dedup_init_entry(struct zram *zram, struct zram_entry *entry,
 				unsigned long handle, unsigned int len);
@@ -29,6 +32,10 @@ static inline void zram_dedup_insert(struct zram *zram, struct zram_entry *new,
 			u32 checksum) { }
 static inline struct zram_entry *zram_dedup_find(struct zram *zram,
 			struct page *page, u32 *checksum) { return NULL; }
+static inline u32 zram_dedup_checksum(unsigned char *mem) { return 0; }
+static inline bool zram_dedup_page_checksum(struct zram *zram,
+			unsigned char *cmem, unsigned int len,
+			u32 *checksum) { return false; }
 
 static inline void zram_dedup_init_entry(struct zram *zram,
 			struct zram_entry *entry, unsigned long handle,

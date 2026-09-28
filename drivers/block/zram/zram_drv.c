@@ -1955,6 +1955,7 @@ static void zram_handle_remain(struct zram *zram, struct page *page,
 	unsigned int offset = 0;
 	unsigned int size;
 	u32 index;
+	u32 checksum;
 	u8 *mem, *src, *dst;
 
 	mem = kmap_atomic(page);
@@ -2011,7 +2012,15 @@ static void zram_handle_remain(struct zram *zram, struct page *page,
 		zs_unmap_object(zram->mem_pool, zram_entry_handle(zram, entry));
 
 		atomic64_add(size, &zram->stats.compr_data_size);
-		zram_dedup_insert(zram, entry, jhash(src, size, 0));
+		/*
+		 * Register the restored entry with the same page-domain
+		 * checksum the write path uses.  Hashing the compressed
+		 * bytes (jhash(src, size, 0)) put the entry in a domain
+		 * zram_dedup_find() never queries, so restored pages could
+		 * never dedup-hit.
+		 */
+		if (zram_dedup_page_checksum(zram, src, size, &checksum))
+			zram_dedup_insert(zram, entry, checksum);
 		zram_free_page(zram, index);
 		zram_set_entry(zram, index, entry);
 		zram_set_obj_size(zram, index, size);
