@@ -98,8 +98,16 @@ static __always_inline bool is_su_allowed(const void **ptr_to_check)
 		return false;
 
 	// pass through tagged task from setuid hook
-	if (test_thread_flag(TIF_KSU_MANAGED))
+	if (test_thread_flag(TIF_KSU_MANAGED)) {
+		/*
+		 * The latch shortcuts which uid to inspect, but authorization
+		 * must still reflect CURRENT allowlist membership at grant time
+		 * so a revoked app stops working immediately.
+		 */
+		if (!__ksu_is_allow_uid_for_current(current_uid().val))
+			return false;
 		goto check_ptr;
+	}
 
 	// see seccomp check above
 	// so if its root but not ksu domain, deny, see __ksu_is_allow_uid_for_current
@@ -125,20 +133,14 @@ uid_check:
 	 __builtin_unreachable();
 #else /* default behavior */
 	/**
-	 * NOTE: shell has its seccomp disabled, so we only need
-	 * to check for this thing. short-circuit if not shell! 
-	 * as we allow apps on setuid lsm by disabling seccomp
-	 *
-	 */
-	if (likely(uid != 2000))
-		goto check_ptr;
-
-	/**
-	 * use our noinline copy. only shell falls through this. nbd that
-	 * it opens up a stack frame .having small code around here is worth
+	 * Both shell and non-shell must currently be on the allowlist.  A
+	 * seccomp-less non-root non-shell process (e.g. a native daemon) must
+	 * not reach root just by execve'ing su.  Use our noinline copy; nbd
+	 * that it opens up a stack frame, small code around here is worth it.
 	 */
 	if (!__ksu_is_allow_uid_copy(uid))
 		return false;
+	goto check_ptr;
 #endif /* default behavior */
 check_ptr:
 	// first check the pointer-to-pointer
