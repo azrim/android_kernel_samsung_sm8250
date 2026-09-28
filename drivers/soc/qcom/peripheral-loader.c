@@ -635,8 +635,18 @@ static int pil_proxy_vote(struct pil_desc *desc)
 	if (desc->ops->proxy_vote) {
 		__pm_stay_awake(priv->ws);
 		ret = desc->ops->proxy_vote(desc);
-		if (ret)
+		if (ret) {
 			__pm_relax(priv->ws);
+			/*
+			 * The vote did not take: do not arm the proxy-unvote
+			 * IRQ and do not announce a vote.  Otherwise the IRQ
+			 * can fire and run proxy_unvote() on a subsystem that
+			 * was never voted (tearing down clocks/regulators that
+			 * were never enabled), and pil_boot()'s error path
+			 * leaves the IRQ enabled.
+			 */
+			return ret;
+		}
 	}
 
 	if (desc->proxy_unvote_irq)
