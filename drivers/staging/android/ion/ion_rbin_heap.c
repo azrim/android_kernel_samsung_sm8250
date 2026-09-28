@@ -122,6 +122,12 @@ static inline void do_expand(struct ion_rbin_heap *rbin_heap,
 		set_page_private(free_page, free_nr_page << PAGE_SHIFT);
 		pool = rbin_heap->pools[order_to_index(order)];
 		ion_page_pool_free(pool, free_page);
+		/*
+		 * These tail pages go back into the pools; account them so
+		 * rbin_pool_pages stays consistent with what the pools hold
+		 * (otherwise it drifts below zero as expansions recur).
+		 */
+		atomic_add(free_nr_page, &rbin_pool_pages);
 		rem_nr_pages -= free_nr_page;
 	}
 	set_page_private(page, nr_pages << PAGE_SHIFT);
@@ -420,20 +426,41 @@ struct ion_heap *ion_rbin_heap_create(struct ion_platform_heap *data)
 	rbin_heap->heap.ops = &rbin_heap_ops;
 	rbin_heap->heap.type = (enum ion_heap_type)ION_HEAP_TYPE_RBIN;
 	rbin_heap->heap.name = kstrndup(data->name, MAX_HEAP_NAME - 1, GFP_KERNEL);
+	if (!rbin_heap->heap.name) {
+		kfree(rbin_heap);
+		return ERR_PTR(-ENOMEM);
+	}
 	rbin_heap->count = data->size >> PAGE_SHIFT;
 	if (ion_rbin_heap_create_pools(rbin_heap->pools)) {
+		kfree(rbin_heap->heap.name);
 		kfree(rbin_heap);
 		return ERR_PTR(-ENOMEM);
 	}
 	if (init_rbinregion(data->base, data->size)) {
 		ion_rbin_heap_destroy_pools(rbin_heap->pools);
+		kfree(rbin_heap->heap.name);
 		kfree(rbin_heap);
 		return ERR_PTR(-ENOMEM);
 	}
 	init_rbin_cpumask();
 	init_waitqueue_head(&rbin_heap->waitqueue);
 	rbin_heap->task = kthread_run(ion_rbin_heap_prereclaim, rbin_heap, "rbin");
+	if (IS_ERR(rbin_heap->task)) {
+		pr_err("rbin: failed to start prereclaim kthread\n");
+		ion_rbin_heap_destroy_pools(rbin_heap->pools);
+		kfree(rbin_heap->heap.name);
+		kfree(rbin_heap);
+		return ERR_PTR(-ENOMEM);
+	}
 	rbin_heap->task_shrink = kthread_run(ion_rbin_heap_shrink, rbin_heap, "rbin_shrink");
+	if (IS_ERR(rbin_heap->task_shrink)) {
+		pr_err("rbin: failed to start shrink kthread\n");
+		kthread_stop(rbin_heap->task);
+		ion_rbin_heap_destroy_pools(rbin_heap->pools);
+		kfree(rbin_heap->heap.name);
+		kfree(rbin_heap);
+		return ERR_PTR(-ENOMEM);
+	}
 	g_rbin_heap = rbin_heap;
 
 	ret = cpuhp_setup_state_nocalls(CPUHP_AP_ONLINE_DYN,
