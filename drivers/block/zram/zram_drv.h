@@ -253,5 +253,5 @@ static inline bool zram_dedup_enabled(struct zram *zram)
 #endif
 }
 
-void zram_entry_free(struct zram *zram, struct zram_entry *entry);
+bool zram_entry_free(struct zram *zram, struct zram_entry *entry);
 #endif

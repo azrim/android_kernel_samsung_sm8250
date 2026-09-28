@@ -2724,19 +2724,27 @@ static struct zram_entry *zram_entry_alloc(struct zram *zram,
 	return entry;
 }
 
-void zram_entry_free(struct zram *zram, struct zram_entry *entry)
+/*
+ * Drop a reference to @entry.  Returns true when this was the last
+ * reference and the pool object was actually released (so the caller may
+ * account the object's compressed size against compr_data_size), false
+ * when the object is still shared by other slots.
+ */
+bool zram_entry_free(struct zram *zram, struct zram_entry *entry)
 {
 	if (!zram_dedup_put_entry(zram, entry))
-		return;
+		return false;
 
 	zs_free(zram->mem_pool, zram_entry_handle(zram, entry));
 
 	if (!zram_dedup_enabled(zram))
-		return;
+		return true;
 
 	kfree(entry);
 
 	atomic64_sub(sizeof(*entry), &zram->stats.meta_data_size);
+
+	return true;
 }
 
 static void zram_meta_free(struct zram *zram, u64 disksize)
@@ -2877,10 +2885,16 @@ static void zram_free_page(struct zram *zram, size_t index)
 		return;
 	}
 
-	zram_entry_free(zram, entry);
-
-	atomic64_sub(zram_get_obj_size(zram, index),
-			&zram->stats.compr_data_size);
+	/*
+	 * compr_data_size is charged once per pool object (at the write
+	 * that allocated it).  Only subtract when this free actually
+	 * released the object: a dedup-shared slot that reused an existing
+	 * object never charged it, and subtracting its length here would
+	 * underflow the counter as shared pages are dropped.
+	 */
+	if (zram_entry_free(zram, entry))
+		atomic64_sub(zram_get_obj_size(zram, index),
+				&zram->stats.compr_data_size);
 out:
 	atomic64_dec(&zram->stats.pages_stored);
 	zram_set_entry(zram, index, NULL);
