@@ -704,6 +704,13 @@ static int32_t q6usm_callback_inner(struct apr_client_data *data, void *priv)
 	} /* case USM_DATA_EVENT_WRITE_DONE */
 
 	case USM_SESSION_EVENT_SIGNAL_DETECT_RESULT: {
+		/*
+		 * usf_tx_cb() dereferences payload[0]; with payload_size 0
+		 * the payload pointer is NULL.  The caller releases
+		 * session_lock on every return path.
+		 */
+		if (data->payload_size < sizeof(uint32_t))
+			return -EINVAL;
 		pr_debug("%s: US detect result: result=%d",
 			 __func__,
 			 payload[0]);
