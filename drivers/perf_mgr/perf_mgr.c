@@ -264,9 +264,9 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 			rn_sum += get_task_util(tmp_task);
 #endif
 		}
-		rcu_read_unlock();
 
 		if (target_fi == NULL) {
+			rcu_read_unlock();
 			pr_err("[GPIS] PID %d not found. skip cal util\n",
 				fps_info_val.tid);
 			put_task_struct(task);
@@ -275,6 +275,12 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 
 		/* We can choose the maximum value
 		 * between current calculated value and previous saved value.
+		 *
+		 * Keep the RCU read section open across every use of target_fi:
+		 * PERF_MGR_PROCESS_KILL removes entries with list_del_rcu() +
+		 * synchronize_rcu() + kfree(), so a pointer observed under RCU
+		 * is only guaranteed to stay valid until the matching
+		 * rcu_read_unlock().
 		 */
 		prev_fps_util = target_fi->updated_fps_util;
 		duration = (fps_info_val.boosting_lvl > BOOST_OFF) ?
@@ -283,7 +289,6 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 
 		if (new_fps_util > 0 &&
 			fps_info_val.boosting_lvl != BOOST_LOW) {
-			rcu_read_lock();
 			list_for_each_entry_rcu(fi, &gpis_hlist, list) {
 				ofi = fi->orig_fps_info;
 				if (ofi.group_id == task->drawing_flag) {
@@ -292,7 +297,6 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 						tmp_task->drawing_mig_boost = 1;
 				}
 			}
-			rcu_read_unlock();
 		}
 
 		/* Once we can choose boosted values between new and prev,
@@ -312,6 +316,7 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 		trace_printk("[GPIS] FPS, Tid, Mig, CalUtil = %d, %d, %d, %lu\n",
 			g_fps, target_fi->orig_fps_info.tid,
 			task->drawing_mig_boost, new_fps_util);
+		rcu_read_unlock();
 
 		put_task_struct(task);
 		break;
