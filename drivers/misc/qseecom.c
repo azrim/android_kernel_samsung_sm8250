@@ -1308,16 +1308,22 @@ static struct qseecom_registered_listener_list *__qseecom_find_svc(
 						int32_t listener_id)
 {
 	struct qseecom_registered_listener_list *entry = NULL;
+	struct qseecom_registered_listener_list *list_ptr;
 
-	list_for_each_entry(entry,
+	/*
+	 * Use an explicit match: list_for_each_entry() leaves the iterator
+	 * at container_of(head) when the list is empty or no entry matches,
+	 * so the iterator must not be used as the result.
+	 */
+	list_for_each_entry(list_ptr,
 			&qseecom.registered_listener_list_head, list) {
-		if (entry->svc.listener_id == listener_id)
+		if (list_ptr->svc.listener_id == listener_id) {
+			entry = list_ptr;
 			break;
+		}
 	}
-	if ((entry != NULL) && (entry->svc.listener_id != listener_id)) {
+	if (!entry)
 		pr_debug("Service id: %u is not found\n", listener_id);
-		return NULL;
-	}
 
 	return entry;
 }
