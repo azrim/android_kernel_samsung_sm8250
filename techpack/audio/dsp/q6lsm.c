@@ -2003,22 +2003,6 @@ int q6lsm_snd_model_buf_free(struct lsm_client *client,
 }
 EXPORT_SYMBOL(q6lsm_snd_model_buf_free);
 
-static struct lsm_client *q6lsm_get_lsm_client(int session_id)
-{
-	unsigned long flags;
-	struct lsm_client *client = NULL;
-
-	spin_lock_irqsave(&lsm_session_lock, flags);
-	if (session_id < LSM_MIN_SESSION_ID || session_id > LSM_MAX_SESSION_ID)
-		pr_err("%s: Invalid session %d\n", __func__, session_id);
-	else if (!lsm_session[session_id])
-		pr_err("%s: Not an active session %d\n", __func__, session_id);
-	else
-		client = lsm_session[session_id];
-	spin_unlock_irqrestore(&lsm_session_lock, flags);
-	return client;
-}
-
 /*
  * q6lsm_mmapcallback : atomic context
  */
@@ -2058,20 +2042,30 @@ static int q6lsm_mmapcallback(struct apr_client_data *data, void *priv)
 	sid = (data->token >> 8) & 0x0F;
 	pr_debug("%s: opcode 0x%x command 0x%x return code 0x%x SID 0x%x\n",
 		 __func__, data->opcode, command, retcode, sid);
-	client = q6lsm_get_lsm_client(sid);
-	if (!client) {
+
+	/*
+	 * Hold lsm_session_lock across the whole body, as q6lsm_callback()
+	 * does.  q6lsm_get_lsm_client() drops the lock before returning, so
+	 * q6lsm_client_free() could free the client between the lookup and
+	 * the dereferences below (cmd_state/cmd_wait/cb/priv).
+	 */
+	spin_lock_irqsave(&lsm_session_lock, flags);
+	if (sid < LSM_MIN_SESSION_ID || sid > LSM_MAX_SESSION_ID ||
+	    !lsm_session[sid] || !q6lsm_is_valid_lsm_client(lsm_session[sid])) {
 		pr_debug("%s: Session %d already freed\n", __func__, sid);
+		spin_unlock_irqrestore(&lsm_session_lock, flags);
 		return 0;
 	}
+	client = lsm_session[sid];
 
 	switch (data->opcode) {
 	case LSM_SESSION_CMDRSP_SHARED_MEM_MAP_REGIONS:
 		if (atomic_read(&client->cmd_state) == CMD_STATE_WAIT_RESP) {
-			spin_lock_irqsave(&mmap_lock, flags);
+			spin_lock(&mmap_lock);
 			if (mmap_handle_p)
 				*mmap_handle_p = command;
-			/* spin_unlock_irqrestore implies barrier */
-			spin_unlock_irqrestore(&mmap_lock, flags);
+			/* spin_unlock implies barrier */
+			spin_unlock(&mmap_lock);
 			atomic_set(&client->cmd_state, CMD_STATE_CLEARED);
 			wake_up(&client->cmd_wait);
 		}
@@ -2087,10 +2081,9 @@ static int q6lsm_mmapcallback(struct apr_client_data *data, void *priv)
 				/* error state, signal to stop waiting */
 				if (atomic_read(&client->cmd_state) ==
 					CMD_STATE_WAIT_RESP) {
-					spin_lock_irqsave(&mmap_lock, flags);
+					spin_lock(&mmap_lock);
 					/* implies barrier */
-					spin_unlock_irqrestore(&mmap_lock,
-						flags);
+					spin_unlock(&mmap_lock);
 					atomic_set(&client->cmd_state,
 						CMD_STATE_CLEARED);
 					wake_up(&client->cmd_wait);
@@ -2111,6 +2104,7 @@ static int q6lsm_mmapcallback(struct apr_client_data *data, void *priv)
 		client->cb(data->opcode, data->token,
 			   data->payload, data->payload_size,
 			   client->priv);
+	spin_unlock_irqrestore(&lsm_session_lock, flags);
 	return 0;
 }
 
