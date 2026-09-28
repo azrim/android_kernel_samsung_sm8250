@@ -2616,6 +2616,7 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 	struct qseecom_client_listener_data_64bit_irsp send_data_rsp_64bit
 									= {0};
 	struct qseecom_registered_listener_list *ptr_svc = NULL;
+	struct qseecom_registered_listener_list *list_ptr;
 	sigset_t new_sigset;
 	sigset_t old_sigset;
 	uint32_t status;
@@ -2629,9 +2630,11 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 		 * Wake up blocking lsitener service with the lstnr id
 		 */
 		mutex_lock(&listener_access_lock);
-		list_for_each_entry(ptr_svc,
+		ptr_svc = NULL;
+		list_for_each_entry(list_ptr,
 				&qseecom.registered_listener_list_head, list) {
-			if (ptr_svc->svc.listener_id == lstnr) {
+			if (list_ptr->svc.listener_id == lstnr) {
+				ptr_svc = list_ptr;
 				ptr_svc->listener_in_use = true;
 				ptr_svc->rcv_req_flag = 1;
 				ret = qseecom_dmabuf_cache_operations(
@@ -2657,15 +2660,6 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 		if (!ptr_svc->dmabuf) {
 			pr_err("Client dmabuf is not initialized\n");
 			rc = -EINVAL;
-			status = QSEOS_RESULT_FAILURE;
-			goto err_resp;
-		}
-
-		if (ptr_svc->svc.listener_id != lstnr) {
-			pr_err("Service %d does not exist\n",
-						lstnr);
-			rc = -ERESTARTSYS;
-			ptr_svc = NULL;
 			status = QSEOS_RESULT_FAILURE;
 			goto err_resp;
 		}
