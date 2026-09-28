@@ -717,19 +717,33 @@ void input_booster_init(void)
 	ndevice_in_dt = of_get_child_count(np);
 	pr_info(ITAG" %s   ndevice_in_dt : %d\n", __func__, ndevice_in_dt);
 
+	/*
+	 * ib_device_trees[]/ib_list[] are indexed by the DT "input_booster,type"
+	 * value (dev_type), which evdev_booster.c only bounds by
+	 * MAX_DEVICE_TYPE_NUM, not by the child count.  Size and initialise
+	 * them by MAX_DEVICE_TYPE_NUM so a type value cannot index past the
+	 * allocation.
+	 */
+	if (ndevice_in_dt > MAX_DEVICE_TYPE_NUM) {
+		pr_err(ITAG" too many booster devices in DT: %d", ndevice_in_dt);
+		goto err_free;
+	}
 
-	ib_device_trees = kcalloc(ABS_CNT, ib_dt_size * ndevice_in_dt, GFP_KERNEL);
+	ib_device_trees = kcalloc(ABS_CNT, ib_dt_size * MAX_DEVICE_TYPE_NUM, GFP_KERNEL);
 	if (ib_device_trees == NULL) {
 		pr_err(ITAG" dt_infor mem alloc fail");
 		goto err_free;
 	}
 
 	// ib list mem alloc
-	ib_list = kcalloc(ABS_CNT, list_head_size * ndevice_in_dt, GFP_KERNEL);
+	ib_list = kcalloc(ABS_CNT, list_head_size * MAX_DEVICE_TYPE_NUM, GFP_KERNEL);
 	if (ib_list == NULL) {
 		pr_err(ITAG" ib list mem alloc fail");
 		goto err_free;
 	}
+
+	for (i = 0; i < MAX_DEVICE_TYPE_NUM; i++)
+		INIT_LIST_HEAD(&ib_list[i]);
 
 	{
 		const void *max_res_prop =
@@ -794,15 +808,44 @@ void input_booster_init(void)
 	for_each_child_of_node(np, cnp) {
 		/************************************************/
 		// fill all needed data into res_info instance that is in dt instance.
-		struct t_ib_device_tree* ib_dt = (ib_device_trees + device_count);
+		struct t_ib_device_tree* ib_dt;
 		struct device_node* child_resource_node;
-		struct device_node* resource_node = of_find_compatible_node(cnp, NULL, "resource");
+		struct device_node* resource_node;
+
+		if (device_count >= MAX_DEVICE_TYPE_NUM) {
+			pr_err(ITAG" more DT devices than MAX_DEVICE_TYPE_NUM");
+			of_node_put(cnp);
+			break;
+		}
+		ib_dt = (ib_device_trees + device_count);
+		resource_node = of_find_compatible_node(cnp, NULL, "resource");
+
+		if (resource_node == NULL) {
+			pr_err(ITAG" no resource subnode for device %d\n",
+				device_count);
+			of_node_put(cnp);
+			break;
+		}
 
 		ib_dt->res = kcalloc(ABS_CNT, ib_res_size * max_resource_size, GFP_KERNEL);
+		if (ib_dt->res == NULL) {
+			pr_err(ITAG" res mem alloc fail");
+			of_node_put(resource_node);
+			of_node_put(cnp);
+			goto err_free;
+		}
 
 		int resource_node_index = 0;
 		int res_type = 0;
 		for_each_child_of_node(resource_node, child_resource_node) {
+			if (resource_node_index >= ABS_CNT) {
+				pr_err(ITAG" too many resource subnodes");
+				of_node_put(child_resource_node);
+				of_node_put(resource_node);
+				of_node_put(cnp);
+				of_node_put(np);
+				return;
+			}
 			// resource_node_index is same as Resource's ID.
 			ib_dt->res[resource_node_index].res_id = resource_node_index;
 			ib_dt->res[resource_node_index].label = of_get_property(child_resource_node, "resource,label", NULL);
@@ -895,7 +938,7 @@ out:
 			INIT_SYSFS_CLASS(debug_level)
 			INIT_SYSFS_CLASS(sendevent)
 
-			for (ib_type = 0; ib_type < MAX_DEVICE_TYPE_NUM; ib_type++) {
+			for (ib_type = 0; ib_type < device_count; ib_type++) {
 				init_sysfs_device(sysfs_class, &ib_device_trees[ib_type]);
 			}
 		}
