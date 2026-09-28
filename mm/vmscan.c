@@ -187,8 +187,13 @@ int kswapd_threads_current = DEF_KSWAPD_THREADS_PER_NODE;
 
 /*
  * From 0 .. 100.  Higher means more swappy.
+ *
+ * 100 rather than the historical 60, matching what the r8q-tunables module
+ * enforces on kona.  Note the vendor ramdisk rewrites this to 160 on r8q
+ * (init.r8q.rc, "on boot"), so on those devices only userspace running after
+ * init can hold it down.
  */
-int vm_swappiness = 60;
+int vm_swappiness = 100;
 /*
  * The total number of pages which are beyond the high watermark within all
  * zones.
