@@ -10305,6 +10305,16 @@ static int zt_ts_remove(struct i2c_client *client)
 	 */
 	mutex_unlock(&info->work_lock);
 
+#ifdef CONFIG_TOUCHSCREEN_DUMP_MODE
+	/*
+	 * dump_tsp_log() (reachable via dump_callbacks.inform_dump) can have
+	 * armed info->ghost_check before we cleared p_ghost_check above; if
+	 * that work is still pending it would run zt_check_rawdata() ->
+	 * container_of(info) after kfree(info).
+	 */
+	cancel_delayed_work_sync(&info->ghost_check);
+#endif
+
 	/*
 	 * Open fds can still call into the ioctl/open/close paths.
 	 * Drop the global before the struct goes away so they see NULL
