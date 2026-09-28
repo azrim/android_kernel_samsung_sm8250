@@ -67,6 +67,17 @@ struct kcompressd_para {
 
 static struct kcompress *kcompress;
 static struct kcompressd_para *kcompressd_para;
+/*
+ * Serialises schedule_bio_write() against kcompressd_exit().  The writer
+ * reads the enable flag once and then touches kcompress[]/kcompressd_para[];
+ * without this lock an exit that interleaves after the flag check can
+ * kvfree() that state and kthread_stop() the workers while the writer is
+ * still starting a new one (whose task pointer is published only after
+ * kthread_run() returns, so it would survive the stop).  All callers run
+ * in sleepable context (the write path calls kthread_run()), so a mutex is
+ * safe here.
+ */
+static DEFINE_MUTEX(kcompressd_lock);
 
 int kcompressd_enabled(void)
 {
@@ -194,12 +205,21 @@ int schedule_bio_write(void *mem, struct page *page, u32 index, int offset,
 		.offset = offset,
 		.cb = cb,
 	};
+	int ret = -EBUSY;
 
+	/*
+	 * Serialise against kcompressd_exit().  enable_kcompressd is read
+	 * once below and the kcompress[]/kcompressd_para[] arrays are then
+	 * used without further checks; holding the lock for the whole
+	 * operation means an exit cannot kvfree() them (or miss a worker we
+	 * are about to start) in the middle.
+	 */
+	mutex_lock(&kcompressd_lock);
 	if (unlikely(!atomic_read(&enable_kcompressd)))
-		return -EBUSY;
+		goto out;
 
 	if (!nr_kcompressd || !current_is_kswapd())
-		return -EBUSY;
+		goto out;
 
 	/*
 	 * Round-robin over the daemons rather than always filling the lowest
@@ -244,7 +264,7 @@ int schedule_bio_write(void *mem, struct page *page, u32 index, int offset,
 					pr_warn("Failed to start kcompressd:%d\n",
 						idx);
 					/* nothing queued: caller falls back */
-					return -EBUSY;
+					goto out;
 				}
 			}
 		}
@@ -260,10 +280,13 @@ int schedule_bio_write(void *mem, struct page *page, u32 index, int offset,
 		if (atomic_read(&kcompress[idx].running) == KCOMPRESSD_SLEEPING)
 			wake_up_interruptible(&kcompress[idx].kcompressd_wait);
 
-		return 0;
+		ret = 0;
+		break;
 	}
 
-	return -EBUSY;
+out:
+	mutex_unlock(&kcompressd_lock);
+	return ret;
 }
 
 int kcompressd_init(void)
@@ -313,7 +336,14 @@ err_free:
 
 void kcompressd_exit(void)
 {
+	/*
+	 * Clear the enable flag, then take the lock so any in-flight
+	 * schedule_bio_write() finishes before we stop the workers and free
+	 * the shared arrays.  A writer that starts after the flag is cleared
+	 * observes it and returns -EBUSY.
+	 */
 	atomic_set(&enable_kcompressd, false);
+	mutex_lock(&kcompressd_lock);
 	if (kcompress)
 		stop_all_kcompressd_thread();
 
@@ -321,4 +351,5 @@ void kcompressd_exit(void)
 	kvfree(kcompressd_para);
 	kcompress = NULL;
 	kcompressd_para = NULL;
+	mutex_unlock(&kcompressd_lock);
 }
