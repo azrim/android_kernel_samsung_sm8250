@@ -1516,6 +1516,17 @@ static void zram_comp_writeback(struct zram *zram)
 		if (zram_comp_writeback_index(zram, index, zwbs, &idx, true, false))
 			break;
 	}
+	/*
+	 * Flush the partially filled tail buffers; otherwise their slots stay
+	 * marked ZRAM_UNDER_WB|ZRAM_IDLE forever (zram_writeback_fill_page()
+	 * skips UNDER_WB slots) and their ZRAM_UNDER_WB flag is never cleared.
+	 */
+	if (idx > 0 || zwbs[idx]->cnt > 0) {
+		mark_end_of_page(zwbs[idx]);
+		if (zwbs[idx]->cnt > 0)
+			idx++;
+		zram_writeback_page(zram, zwbs, idx, true, false);
+	}
 	free_zwbs(zwbs);
 	pr_info("%s done", __func__);
 }
