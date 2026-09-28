@@ -10312,6 +10312,15 @@ static int sec_battery_remove(struct platform_device *pdev)
 	vbus_notifier_unregister(&battery->vbus_nb);
 #endif
 
+	/*
+	 * Drain monitor_wqueue before cancelling polling_work.  A monitor_work
+	 * already executing on monitor_wqueue calls sec_bat_set_polling(),
+	 * which re-arms polling_work on system_wq; if polling_work were
+	 * cancelled first, that re-arm would survive and later queue
+	 * monitor_work onto the destroyed monitor_wqueue.
+	 */
+	flush_workqueue(battery->monitor_wqueue);
+
 	switch (battery->pdata->polling_type) {
 	case SEC_BATTERY_MONITOR_WORKQUEUE:
 		cancel_delayed_work_sync(&battery->polling_work);
@@ -10323,7 +10332,6 @@ static int sec_battery_remove(struct platform_device *pdev)
 		break;
 	}
 
-	flush_workqueue(battery->monitor_wqueue);
 	destroy_workqueue(battery->monitor_wqueue);
 	wakeup_source_unregister(battery->monitor_wake_lock);
 	wakeup_source_unregister(battery->cable_wake_lock);
