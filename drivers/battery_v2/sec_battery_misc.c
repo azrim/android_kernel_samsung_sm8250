@@ -129,6 +129,11 @@ sec_bat_misc_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	int ret = 0;
 	void *buf = NULL;
 
+	if (!c_dev) {
+		pr_err("%s %s - error : c_dev is NULL\n", WC_AUTH_MSG, __func__);
+		return -ENODEV;
+	}
+
 	if (_lock(&c_dev->ioctl_excl)) {
 		pr_err("%s %s - error : ioctl busy - cmd : %d\n", WC_AUTH_MSG, __func__, cmd);
 		return  -EBUSY;
