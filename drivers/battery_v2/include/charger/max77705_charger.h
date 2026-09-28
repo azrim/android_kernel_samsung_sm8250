@@ -403,6 +403,7 @@ struct max77705_charger_data {
 	int		irq_chg;
 	int		irq_wcin;
 	int		irq_chgin;
+	int		irq_chgin_enabled;
 	int		irq_aicl;
 	int		irq_aicl_enabled;
 

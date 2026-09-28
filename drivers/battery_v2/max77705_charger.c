@@ -2606,6 +2606,7 @@ static void max77705_chgin_init_work(struct work_struct *work)
 		pr_err("%s: fail to request chgin IRQ: %d: %d\n",
 		       __func__, charger->irq_chgin, ret);
 	} else {
+		charger->irq_chgin_enabled = 1;
 		max77705_update_reg(charger->i2c,
 				    MAX77705_CHG_REG_INT_MASK, 0,
 				    MAX77705_CHGIN_IM);
@@ -2981,6 +2982,7 @@ static int max77705_charger_probe(struct platform_device *pdev)
 	if (ret < 0) {
 		pr_err("%s: fail to request bypass IRQ: %d: %d\n",
 		       __func__, charger->irq_bypass, ret);
+		charger->irq_bypass = 0;
 	} else {
 		max77705_update_reg(charger->i2c,
 				    MAX77705_CHG_REG_INT_MASK, 0,
@@ -2992,9 +2994,11 @@ static int max77705_charger_probe(struct platform_device *pdev)
 	charger->irq_batp = pdata->irq_base + MAX77705_CHG_IRQ_BATP_I;
 	ret = request_threaded_irq(charger->irq_batp, NULL,
 				   max77705_batp_irq, 0, "batp-irq", charger);
-	if (ret < 0)
+	if (ret < 0) {
 		pr_err("%s: fail to request Battery Presense IRQ: %d: %d\n",
 		       __func__, charger->irq_batp, ret);
+		charger->irq_batp = 0;
+	}
 
 #if defined(CONFIG_MAX77705_CHECK_B2SOVRC)
 	//if ((sec_debug_get_debug_level() & 0x1) == 0x1) {
@@ -3002,9 +3006,11 @@ static int max77705_charger_probe(struct platform_device *pdev)
 		charger->irq_bat = pdata->irq_base + MAX77705_CHG_IRQ_BAT_I;
 		ret = request_threaded_irq(charger->irq_bat, NULL,
 					   max77705_bat_irq, 0, "bat-irq", charger);
-		if (ret < 0)
+		if (ret < 0) {
 			pr_err("%s: fail to request Battery IRQ: %d: %d\n",
 				   __func__, charger->irq_bat, ret);
+			charger->irq_bat = 0;
+		}
 	//}
 #endif
 
@@ -3101,6 +3107,34 @@ static int max77705_charger_remove(struct platform_device *pdev)
 #endif
 	if (charger->pdata->chg_irq)
 		free_irq(charger->pdata->chg_irq, charger);
+
+	/*
+	 * The chgin and aicl IRQs are requested lazily (chgin from
+	 * chgin_init_work, aicl from max77705_enable_aicl_irq), so free them
+	 * only if the matching request actually succeeded.  chgin_init_work
+	 * may still be pending, so cancel it first; otherwise it could
+	 * request the IRQ after the device is gone.
+	 */
+	cancel_delayed_work_sync(&charger->chgin_init_work);
+	if (charger->irq_chgin_enabled)
+		free_irq(charger->irq_chgin, charger);
+	/*
+	 * irq_aicl_enabled is -1 until max77705_enable_aicl_irq() requests the
+	 * IRQ (and stays -1 if that request failed); afterwards it toggles
+	 * 0/1 as the IRQ is disabled/enabled.  So >= 0 means "requested".
+	 */
+	if (charger->irq_aicl_enabled >= 0)
+		free_irq(charger->irq_aicl, charger);
+
+	/* The remaining unconditionally-requested IRQs. */
+	if (charger->irq_bypass)
+		free_irq(charger->irq_bypass, charger);
+	if (charger->irq_batp)
+		free_irq(charger->irq_batp, charger);
+#if defined(CONFIG_MAX77705_CHECK_B2SOVRC)
+	if (charger->irq_bat)
+		free_irq(charger->irq_bat, charger);
+#endif
 
 	if (charger->pdata->chg_irq)
 		cancel_delayed_work_sync(&charger->isr_work);
