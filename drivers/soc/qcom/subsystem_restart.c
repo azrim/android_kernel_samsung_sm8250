@@ -2054,6 +2054,15 @@ struct subsys_device *subsys_register(struct subsys_desc *desc)
 
 	return subsys;
 err_setup_irqs:
+	/*
+	 * subsys was already linked into subsys_list above; device_unregister()
+	 * below runs subsys_device_release(), which kfree()s it.  Leaving it
+	 * on the list would make every later list_for_each_entry(&subsys_list)
+	 * dereference freed memory.
+	 */
+	mutex_lock(&subsys_list_lock);
+	list_del(&subsys->list);
+	mutex_unlock(&subsys_list_lock);
 	if (subsys->desc->edge)
 		sysmon_glink_unregister(desc);
 err_sysmon_glink_register:
