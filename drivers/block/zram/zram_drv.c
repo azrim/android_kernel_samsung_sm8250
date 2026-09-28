@@ -1577,6 +1577,29 @@ static int zram_wbd(void *p)
 			if (!zram_should_writeback(zram, ++nr_pages, false))
 				break;
 		}
+		/*
+		 * Flush the partially filled tail buffers.  Without this the
+		 * slots packed into zwbs[] keep ZRAM_UNDER_WB|ZRAM_IDLE:
+		 * zram_free_page() never clears ZRAM_UNDER_WB and
+		 * zram_writeback_fill_page() skips UNDER_WB slots forever, so
+		 * those pages can never be written back again.
+		 */
+		if (idx > 0 || zwbs[idx]->cnt > 0) {
+			mark_end_of_page(zwbs[idx]);
+			if (zwbs[idx]->cnt > 0)
+				idx++;
+			zram_writeback_page(zram, zwbs, idx, false, false);
+		}
+		/*
+		 * Start the next pass from a clean batch state.  The flush
+		 * above cleared ZRAM_UNDER_WB on every slot it submitted, so
+		 * the buffers must not be re-flushed on the next iteration.
+		 */
+		for (ret = 0; ret < NR_ZWBS; ret++) {
+			zwbs[ret]->cnt = 0;
+			zwbs[ret]->off = 0;
+		}
+		idx = 0;
 		zram->wbd_running = false;
 		pr_info("%s done", __func__);
 	}
