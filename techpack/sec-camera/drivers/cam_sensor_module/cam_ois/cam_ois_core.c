@@ -825,6 +825,7 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		rc = cam_ois_thread_add_msg(o_ctrl, msg);
 		if (rc < 0) {
 			CAM_ERR(CAM_OIS, "Failed add msg to OIS thread");
+			kfree(msg);
 			goto pwr_dwn;
 		}
 		o_ctrl->is_config = true;
@@ -915,8 +916,10 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		msg->i2c_reg_settings = i2c_reg_settings;
 		msg->msg_type = CAM_OIS_THREAD_MSG_APPLY_SETTING;
 		rc = cam_ois_thread_add_msg(o_ctrl, msg);
-		if (rc < 0)
+		if (rc < 0) {
 			CAM_ERR(CAM_OIS, "Failed add msg to OIS thread");
+			kfree(msg);
+		}
 #else
 		rc = cam_ois_apply_settings(o_ctrl, i2c_reg_settings);
 		if (rc < 0) {

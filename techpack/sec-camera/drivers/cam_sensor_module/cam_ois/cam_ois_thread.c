@@ -44,12 +44,17 @@ int cam_ois_thread_add_msg(
 		return -EINVAL;
 	}
 
+	spin_lock_irqsave(&(o_ctrl->thread_spinlock), flags);
+	/*
+	 * Check the started flag under the lock: cam_ois_thread_destroy()
+	 * clears it and drains the list in the same critical section, so a
+	 * message can never be queued behind the drain and leaked.
+	 */
 	if (!o_ctrl->is_thread_started) {
+		spin_unlock_irqrestore(&(o_ctrl->thread_spinlock), flags);
 		CAM_ERR(CAM_OIS, "Thread is not started");
 		return -EINVAL;
 	}
-
-	spin_lock_irqsave(&(o_ctrl->thread_spinlock), flags);
 	list_add_tail(&(msg->list),
 		&(o_ctrl->list_head_thread.list));
 	spin_unlock_irqrestore(&(o_ctrl->thread_spinlock), flags);
@@ -191,8 +196,10 @@ int cam_ois_thread_create(struct cam_ois_ctrl_t *o_ctrl)
 		return -EBUSY;
 	}
 
-	INIT_LIST_HEAD(&o_ctrl->list_head_thread.list);
-	spin_lock_init(&(o_ctrl->thread_spinlock));
+	/*
+	 * The list and its spinlock are initialized once at probe;
+	 * re-initializing them here would race a concurrent SSR add_msg.
+	 */
 	o_ctrl->is_thread_started = false;
 	o_ctrl->ois_thread = kthread_run(cam_ois_thread_func, (void *)o_ctrl, "CAM_OIS");
 	if (IS_ERR(o_ctrl->ois_thread))
@@ -234,16 +241,21 @@ int cam_ois_thread_destroy(struct cam_ois_ctrl_t *o_ctrl)
 		return 0;
 	}
 
+	/*
+	 * Clear the started flag and drain the queue in one critical
+	 * section: add_msg checks the flag under the same lock, so once the
+	 * flag is down nothing can be queued behind the drain.
+	 */
+	spin_lock_irqsave(&(o_ctrl->thread_spinlock), flags);
 	o_ctrl->is_thread_started = false;
-	if (o_ctrl->ois_thread) {
-		spin_lock_irqsave(&(o_ctrl->thread_spinlock), flags);
-		list_for_each_entry_safe(msg_list, msg_next,
-			&o_ctrl->list_head_thread.list, list) {
-			list_del(&(msg_list->list));
-			kfree(msg_list);
-		}
-		spin_unlock_irqrestore(&(o_ctrl->thread_spinlock), flags);
+	list_for_each_entry_safe(msg_list, msg_next,
+		&o_ctrl->list_head_thread.list, list) {
+		list_del(&(msg_list->list));
+		kfree(msg_list);
+	}
+	spin_unlock_irqrestore(&(o_ctrl->thread_spinlock), flags);
 
+	if (o_ctrl->ois_thread) {
 		kthread_stop(o_ctrl->ois_thread);
 		wake_up(&o_ctrl->wait);
 		o_ctrl->ois_thread = NULL;

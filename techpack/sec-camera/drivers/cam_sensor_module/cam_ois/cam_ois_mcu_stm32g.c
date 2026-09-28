@@ -3858,8 +3858,10 @@ void cam_ois_reset(void *ctrl)
 		memset(msg, 0, sizeof(struct cam_ois_thread_msg_t));
 		msg->msg_type = CAM_OIS_THREAD_MSG_RESET;
 		rc = cam_ois_thread_add_msg(o_ctrl, msg);
-		if (rc < 0)
+		if (rc < 0) {
 			CAM_ERR(CAM_OIS, "Failed add msg to OIS thread");
+			kfree(msg);
+		}
 	} else {
 		CAM_INFO(CAM_OIS, "camera is not running");
 	}
