@@ -12,6 +12,7 @@
 #include <linux/platform_device.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/capability.h>
 #include "cam_ois_core.h"
 #include "cam_eeprom_dev.h"
 #include "cam_actuator_core.h"
@@ -2457,8 +2458,16 @@ static ssize_t ois_autotest_show(struct device *dev,
 	int cnt = 0;
 	struct cam_ois_sinewave_t sinewave[1];
 
+	/* the test physically moves the lens: privileged and serialized */
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (g_o_ctrl == NULL)
+		return 0;
+
 	pr_info("%s: E\n", __func__);
 
+	mutex_lock(&(g_o_ctrl->ois_mutex));
 	if (g_a_ctrls[0] != NULL)
 		cam_actuator_power_up(g_a_ctrls[0]);
 	msleep(100);
@@ -2488,6 +2497,7 @@ static ssize_t ois_autotest_show(struct device *dev,
 
 	if (g_a_ctrls[0] != NULL)
 		cam_actuator_power_down(g_a_ctrls[0]);
+	mutex_unlock(&(g_o_ctrl->ois_mutex));
 
 	pr_info("%s: X\n", __func__);
 
@@ -2500,6 +2510,9 @@ static ssize_t ois_autotest_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
 	uint32_t value = 0;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
 
 	if (buf == NULL || kstrtouint(buf, 10, &value))
 		return -1;
@@ -2517,6 +2530,13 @@ static ssize_t ois_autotest_2nd_show(struct device *dev,
 	int cnt = 0, i = 0;
 	struct cam_ois_sinewave_t sinewave[2];
 
+	/* the test physically moves the lens: privileged and serialized */
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (g_o_ctrl == NULL)
+		return 0;
+
 	if (ois_power == 0) {
 		pr_info("%s: [WARNING] ois is off, skip", __func__);
 		return 0;
@@ -2524,6 +2544,7 @@ static ssize_t ois_autotest_2nd_show(struct device *dev,
 
 	pr_info("%s: E\n", __func__);
 
+	mutex_lock(&(g_o_ctrl->ois_mutex));
 	for (i = 0; i < 2; i++) {
 		if (g_a_ctrls[i] != NULL) {
 			cam_actuator_power_up(g_a_ctrls[i]);
@@ -2566,6 +2587,7 @@ static ssize_t ois_autotest_2nd_show(struct device *dev,
 		if (g_a_ctrls[i] != NULL)
 			cam_actuator_power_down(g_a_ctrls[i]);
 	}
+	mutex_unlock(&(g_o_ctrl->ois_mutex));
 	pr_info("%s: X\n", __func__);
 
 	return cnt;
@@ -2575,6 +2597,9 @@ static ssize_t ois_autotest_2nd_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
 	uint32_t value = 0;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
 
 	if (buf == NULL || kstrtouint(buf, 10, &value))
 		return -1;
@@ -2647,7 +2672,16 @@ static ssize_t gyro_calibration_show(struct device *dev,
 	int result = 0;
 	long raw_data_x = 0, raw_data_y = 0;
 
+	/* writes MCU calibration state: privileged and serialized */
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (g_o_ctrl == NULL)
+		return 0;
+
+	mutex_lock(&(g_o_ctrl->ois_mutex));
 	result = cam_ois_gyro_sensor_calibration(g_o_ctrl, &raw_data_x, &raw_data_y);
+	mutex_unlock(&(g_o_ctrl->ois_mutex));
 
 	if (raw_data_x < 0 && raw_data_y < 0) {
 		return scnprintf(buf, PAGE_SIZE, "%d,-%ld.%03ld,-%ld.%03ld\n", result, abs(raw_data_x / 1000),
@@ -2675,6 +2709,14 @@ static ssize_t gyro_selftest_show(struct device *dev, struct device_attribute *a
 	long raw_data_x = 0, raw_data_y = 0;
 	int OIS_GYRO_OFFSET_SPEC = 10000;
 
+	/* runs MCU self-test sequences: privileged and serialized */
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (g_o_ctrl == NULL)
+		return 0;
+
+	mutex_lock(&(g_o_ctrl->ois_mutex));
 #if defined(CONFIG_SAMSUNG_OIS_MCU_STM32)
 	result = cam_ois_offset_test(g_o_ctrl, &raw_data_x, &raw_data_y, 1);
 #else
@@ -2682,6 +2724,7 @@ static ssize_t gyro_selftest_show(struct device *dev, struct device_attribute *a
 #endif
 	msleep(50);
 	selftest_ret = cam_ois_self_test(g_o_ctrl);
+	mutex_unlock(&(g_o_ctrl->ois_mutex));
 
 	if (selftest_ret == 0x0)
 		result_selftest = true;
@@ -2739,10 +2782,15 @@ static ssize_t gyro_rawdata_test_show(struct device *dev,
 	int rc = 0;
 	long raw_data_x = 0, raw_data_y = 0;
 
+	if (g_o_ctrl == NULL)
+		return 0;
+
 	raw_init_x = 0;
 	raw_init_y = 0;
 
+	mutex_lock(&(g_o_ctrl->ois_mutex));
 	cam_ois_get_offset_data(g_o_ctrl, &raw_data_x, &raw_data_y);
+	mutex_unlock(&(g_o_ctrl->ois_mutex));
 
 	raw_init_x = raw_data_x;
 	raw_init_y = raw_data_y;
@@ -2836,10 +2884,15 @@ static ssize_t ois_hall_position_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	int rc = 0;
-    uint32_t targetPosition[4] = { 0, 0, 0, 0};
-    uint32_t hallPosition[4] = { 0, 0, 0, 0};
+	uint32_t targetPosition[4] = { 0, 0, 0, 0};
+	uint32_t hallPosition[4] = { 0, 0, 0, 0};
 
+	if (g_o_ctrl == NULL)
+		return 0;
+
+	mutex_lock(&(g_o_ctrl->ois_mutex));
 	rc = cam_ois_read_hall_position(g_o_ctrl, targetPosition, hallPosition);
+	mutex_unlock(&(g_o_ctrl->ois_mutex));
 
 	rc = scnprintf(buf, PAGE_SIZE, "%u,%u,%u,%u,%u,%u,%u,%u",
 		targetPosition[0], targetPosition[1],
