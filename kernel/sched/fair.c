@@ -39,8 +39,10 @@ static inline unsigned long boosted_task_util(struct task_struct *task);
 #endif /* CONFIG_SMP */
 
 #ifdef CONFIG_SEC_PERF_MANAGER
-extern unsigned long get_max_fps_util(int group_id);
-#endif /* CONFIG_SEC_PERF_MANAGER */
+unsigned long get_task_util(struct task_struct *p);
+unsigned long get_max_capacity(int cpu);
+unsigned long get_max_fps_util(int group_id);
+#endif /* CONFIG_FPS */
 
 #ifdef CONFIG_SCHED_WALT
 static void walt_fixup_sched_stats_fair(struct rq *rq, struct task_struct *p,
@@ -4323,17 +4325,7 @@ unsigned long task_util_est(struct task_struct *p)
 #ifdef CONFIG_UCLAMP_TASK
 static inline unsigned long uclamp_task_util(struct task_struct *p)
 {
-	unsigned long clamp_util = task_util_est(p);
-#ifdef CONFIG_SEC_PERF_MANAGER
-	unsigned long boost_util;
-
-	if (p->drawing_flag) {
-		boost_util = get_max_fps_util(p->drawing_flag);
-		clamp_util = max(clamp_util, boost_util);
-	}
-#endif
-
-	return clamp(clamp_util,
+	return clamp(task_util_est(p),
 		     uclamp_eff_value(p, UCLAMP_MIN),
 		     uclamp_eff_value(p, UCLAMP_MAX));
 }
@@ -6091,6 +6083,27 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 	 */
 	util_est_enqueue(&rq->cfs, p);
 
+	/*
+	 * The code below (indirectly) updates schedutil which looks at
+	 * the cfs_rq utilization to select a frequency.
+	 * Let's update schedtune here to ensure the boost value of the
+	 * current task is accounted for in the selection of the OPP.
+	 *
+	 * We do it also in the case where we enqueue a throttled task;
+	 * we could argue that a throttled task should not boost a CPU,
+	 * however:
+	 * a) properly implementing CPU boosting considering throttled
+	 *    tasks will increase a lot the complexity of the solution
+	 * b) it's not easy to quantify the benefits introduced by
+	 *    such a more complex solution.
+	 * Thus, for the time being we go for the simple solution and boost
+	 * also for throttled RQs.
+	 */
+	schedtune_enqueue_task(p, cpu_of(rq));
+
+#ifdef CONFIG_SCHED_WALT
+	p->misfit = !task_fits_max(p, rq->cpu);
+#endif
 #ifdef CONFIG_SEC_PERF_MANAGER
 
 	if (p->drawing_flag) {
@@ -6120,27 +6133,6 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 	}
 #endif /* CONFIG_SEC_PERF_MANAGER */
 
-	/*
-	 * The code below (indirectly) updates schedutil which looks at
-	 * the cfs_rq utilization to select a frequency.
-	 * Let's update schedtune here to ensure the boost value of the
-	 * current task is accounted for in the selection of the OPP.
-	 *
-	 * We do it also in the case where we enqueue a throttled task;
-	 * we could argue that a throttled task should not boost a CPU,
-	 * however:
-	 * a) properly implementing CPU boosting considering throttled
-	 *    tasks will increase a lot the complexity of the solution
-	 * b) it's not easy to quantify the benefits introduced by
-	 *    such a more complex solution.
-	 * Thus, for the time being we go for the simple solution and boost
-	 * also for throttled RQs.
-	 */
-	schedtune_enqueue_task(p, cpu_of(rq));
-
-#ifdef CONFIG_SCHED_WALT
-	p->misfit = !task_fits_max(p, rq->cpu);
-#endif
 	/*
 	 * If in_iowait is set, the code below may not trigger any cpufreq
 	 * utilization updates, so do it here explicitly with the IOWAIT flag
@@ -6265,7 +6257,17 @@ static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 	int alloc_cpu = -1;
 	int boosted_cnt;
 	struct task_struct *rq_task;
+#endif /* CONFIG_SEC_PERF_MANAGER */
 
+	/*
+	 * The code below (indirectly) updates schedutil which looks at
+	 * the cfs_rq utilization to select a frequency.
+	 * Let's update schedtune here to ensure the boost value of the
+	 * current task is not more accounted for in the selection of the OPP.
+	 */
+	schedtune_dequeue_task(p, cpu_of(rq));
+
+#ifdef CONFIG_SEC_PERF_MANAGER
 	if (p->drawing_flag) {
 		alloc_cpu = cpu_of(rq);
 		boosted_cnt = per_cpu(fps_boosted_task_count, alloc_cpu);
@@ -6299,13 +6301,6 @@ static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 	}
 #endif /* CONFIG_SEC_PERF_MANAGER */
 
-	/*
-	 * The code below (indirectly) updates schedutil which looks at
-	 * the cfs_rq utilization to select a frequency.
-	 * Let's update schedtune here to ensure the boost value of the
-	 * current task is not more accounted for in the selection of the OPP.
-	 */
-	schedtune_dequeue_task(p, cpu_of(rq));
 	util_est_dequeue(&rq->cfs, p);
 
 	for_each_sched_entity(se) {
@@ -6922,8 +6917,8 @@ stune_util(int cpu, unsigned long other_util,
 	unsigned long fps_util = per_cpu(fps_boosted_util, cpu);
 #endif
 	trace_sched_boost_cpu(cpu, util, margin);
-
 	boosted_util = util + margin;
+
 #ifdef CONFIG_SEC_PERF_MANAGER
 	boosted_util = max(fps_util, boosted_util);
 #endif
@@ -13470,22 +13465,6 @@ __init void init_sched_fair_class(void)
 
 }
 
-#ifdef CONFIG_SEC_PERF_MANAGER
-
-unsigned long get_task_util(struct task_struct *p)
-{
-	return task_util_est(p);
-}
-EXPORT_SYMBOL_GPL(get_task_util);
-
-unsigned long get_max_capacity(int cpu)
-{
-	return capacity_orig_of(cpu);
-}
-EXPORT_SYMBOL_GPL(get_max_capacity);
-
-#endif /* CONFIG_SEC_PERF_MANAGER */
-
 /* WALT sched implementation begins here */
 #ifdef CONFIG_SCHED_WALT
 
@@ -13861,5 +13840,19 @@ void check_for_migration(struct rq *rq, struct task_struct *p)
 		raw_spin_unlock(&migration_lock);
 	}
 }
+
+#ifdef CONFIG_SEC_PERF_MANAGER
+
+unsigned long get_task_util(struct task_struct *p){
+	return task_util_est(p);
+}
+EXPORT_SYMBOL_GPL(get_task_util);
+
+unsigned long get_max_capacity(int cpu){
+	return capacity_orig_of(cpu);
+}
+EXPORT_SYMBOL_GPL(get_max_capacity);
+
+#endif /* CONFIG_SEC_PERF_MANAGER */
 
 #endif /* CONFIG_SCHED_WALT */
