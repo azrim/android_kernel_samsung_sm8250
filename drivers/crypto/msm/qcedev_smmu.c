@@ -355,6 +355,13 @@ unmap:
 		mutex_lock(&qce_hndl->registeredbufs.lock);
 		list_del(&binfo->list);
 		mutex_unlock(&qce_hndl->registeredbufs.lock);
+	} else {
+		/*
+		 * The buffer was already mapped, so we took an extra
+		 * reference above; drop it again or the mapping can never
+		 * be released.
+		 */
+		qcedev_check_and_unmap_buffer(handle, fd);
 	}
 
 error:
