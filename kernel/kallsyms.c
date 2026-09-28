@@ -486,6 +486,13 @@ struct kallsym_iter {
 	char module_name[MODULE_NAME_LEN];
 	int exported;
 	int show_value;
+	/*
+	 * Privilege of the task actually reading the file, re-evaluated at
+	 * each read() (s_start).  show_value is cached from the open-time
+	 * cred and can be handed to an unprivileged reader by passing the
+	 * fd; the symbol-hiding decision uses this field instead.
+	 */
+	int show_value_now;
 };
 
 int __weak arch_get_kallsym(unsigned int symnum, unsigned long *value,
@@ -624,6 +631,16 @@ static void *s_next(struct seq_file *m, void *p, loff_t *pos)
 
 static void *s_start(struct seq_file *m, loff_t *pos)
 {
+#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+	/*
+	 * Re-evaluate the reader's privilege at the start of each read():
+	 * file->f_cred is fixed at open time, so an fd opened by a
+	 * privileged task and passed to an unprivileged one would otherwise
+	 * still see the hidden symbols.
+	 */
+	((struct kallsym_iter *)m->private)->show_value_now =
+		kallsyms_show_value(current_cred());
+#endif
 	if (!update_iter(m->private, *pos))
 		return NULL;
 	return m->private;
@@ -653,6 +670,15 @@ static int s_show(struct seq_file *m, void *p)
 		 */
 		type = iter->exported ? toupper(iter->type) :
 					tolower(iter->type);
+#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+		/*
+		 * Apply the same KSU/SUSFS symbol hiding to module symbols;
+		 * the module branch previously bypassed the filter entirely.
+		 */
+		if (!iter->show_value_now &&
+		    (strstr(iter->name, "ksu_") || !strncmp(iter->name, "susfs_", 6) || !strncmp(iter->name, "ksud", 4)))
+			return 0;
+#endif
 		seq_printf(m, "%px %c %s\t[%s]\n", value,
 			   type, iter->name, iter->module_name);
 	} else
@@ -667,7 +693,7 @@ static int s_show(struct seq_file *m, void *p)
 		 * CAP_SYSLOG per kallsyms_show_value) see the full kallsyms so
 		 * root tooling (perf/simpleperf/ftrace) can still symbolize them.
 		 */
-		if (!iter->show_value &&
+		if (!iter->show_value_now &&
 		    (strstr(iter->name, "ksu_") || !strncmp(iter->name, "susfs_", 6) || !strncmp(iter->name, "ksud", 4))) {
 			return 0;
 		}
