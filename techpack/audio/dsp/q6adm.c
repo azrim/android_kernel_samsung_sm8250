@@ -1356,8 +1356,8 @@ static int adm_process_get_param_response(u32 opcode, u32 idx, u32 *payload,
 	struct adm_cmd_rsp_get_pp_params_v5 *v5_rsp = NULL;
 	struct adm_cmd_rsp_get_pp_params_v6 *v6_rsp = NULL;
 	u32 *param_data = NULL;
-	int data_size = 0;
-	int struct_size = 0;
+	u32 data_size = 0;
+	size_t struct_size = 0;
 
 	if (payload == NULL) {
 		pr_err("%s: Payload is NULL\n", __func__);
@@ -1399,7 +1399,8 @@ static int adm_process_get_param_response(u32 opcode, u32 idx, u32 *payload,
 	 */
 	if ((payload_size >= struct_size + data_size) &&
 	    (ARRAY_SIZE(adm_get_parameters) > idx) &&
-	    (ARRAY_SIZE(adm_get_parameters) > idx + 1 + data_size)) {
+	    ((size_t)idx + 1 + (size_t)data_size <=
+			ARRAY_SIZE(adm_get_parameters))) {
 		pr_debug("%s: Received parameter data in band\n",
 					__func__);
 		/*
