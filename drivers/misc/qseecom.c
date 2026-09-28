@@ -19,6 +19,7 @@
 #include <linux/sched.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
+#include <linux/kref.h>
 #include <linux/io.h>
 #include <linux/msm_ion.h>
 #include <linux/types.h>
@@ -225,6 +226,14 @@ struct qseecom_registered_listener_list {
 	uint32_t                   sglist_cnt;
 	int                        abort;
 	bool                       unregister_pending;
+	/*
+	 * Entry lifetime: an app thread blocks in wait_event_interruptible()
+	 * with listener_access_lock dropped, while the listener fd may be
+	 * closed and this entry unregistered+freed.  Callers that keep a
+	 * pointer across such a wait take a reference and drop it when done;
+	 * the entry is freed on the last put.
+	 */
+	struct kref                refcount;
 };
 
 struct qseecom_unregister_pending_list {
@@ -1582,6 +1591,28 @@ static void qseecom_vaddr_unmap(void *vaddr, struct sg_table *sgt,
 	qseecom_dmabuf_unmap(sgt, attach, dmabuf);
 }
 
+/*
+ * Listener entry teardown, run on the last kref_put().  Callers that block
+ * on a listener with listener_access_lock dropped hold a reference, so the
+ * entry (and its waitqueues) stays alive until they finish; the entry is
+ * unlinked from the list immediately on unregister so no new user can find
+ * it, but the memory is only freed here.
+ */
+static void __qseecom_release_listener_entry(struct kref *kref)
+{
+	struct qseecom_registered_listener_list *ptr_svc =
+		container_of(kref, struct qseecom_registered_listener_list,
+			refcount);
+
+	if (ptr_svc->dmabuf) {
+		qseecom_vaddr_unmap(ptr_svc->sb_virt,
+			ptr_svc->sgt, ptr_svc->attach, ptr_svc->dmabuf);
+		MAKE_NULL(ptr_svc->sgt, ptr_svc->attach, ptr_svc->dmabuf);
+	}
+	__qseecom_free_tzbuf(&ptr_svc->sglistinfo_shm);
+	kzfree(ptr_svc);
+}
+
 static int __qseecom_set_sb_memory(struct qseecom_registered_listener_list *svc,
 				struct qseecom_dev_handle *handle,
 				struct qseecom_register_listener_req *listener)
@@ -1738,6 +1769,7 @@ static int qseecom_register_listener(struct qseecom_dev_handle *data,
 	init_waitqueue_head(&new_entry->listener_block_app_wq);
 	new_entry->send_resp_flag = 0;
 	new_entry->listener_in_use = false;
+	kref_init(&new_entry->refcount);
 	list_add_tail(&new_entry->list, &qseecom.registered_listener_list_head);
 
 	data->listener.id = rcvd_lstnr.listener_id;
@@ -1788,14 +1820,15 @@ static int __qseecom_unregister_listener(struct qseecom_dev_handle *data,
 	}
 
 exit:
-	if (ptr_svc->dmabuf) {
-		qseecom_vaddr_unmap(ptr_svc->sb_virt,
-			ptr_svc->sgt, ptr_svc->attach, ptr_svc->dmabuf);
-		MAKE_NULL(ptr_svc->sgt, ptr_svc->attach, ptr_svc->dmabuf);
-	}
-	__qseecom_free_tzbuf(&ptr_svc->sglistinfo_shm);
+	/*
+	 * Unlink the entry so no new user can resolve it, then drop the
+	 * registration reference.  Any thread still blocked on this listener
+	 * holds its own reference (taken before it dropped
+	 * listener_access_lock), so the memory is only freed once they are
+	 * done with it.
+	 */
 	list_del(&ptr_svc->list);
-	kzfree(ptr_svc);
+	kref_put(&ptr_svc->refcount, __qseecom_release_listener_entry);
 
 	data->released = true;
 	pr_debug("Service %d is unregistered\n", data->listener.id);
@@ -2249,6 +2282,7 @@ static int __qseecom_process_incomplete_cmd(struct qseecom_dev_handle *data,
 	void *cmd_buf = NULL;
 	size_t cmd_len;
 	struct sglist_info *table = NULL;
+	struct qseecom_registered_listener_list *svc_ref_ptr = NULL;
 
 	qseecom.app_block_ref_cnt++;
 	while (resp->result == QSEOS_RESULT_INCOMPLETE) {
@@ -2320,6 +2354,15 @@ static int __qseecom_process_incomplete_cmd(struct qseecom_dev_handle *data,
 		/* block all signals */
 		sigprocmask(SIG_SETMASK, &new_sigset, &old_sigset);
 
+		/*
+		 * Take a reference before dropping the lock: the waiter below
+		 * sleeps on ptr_svc->abort / ptr_svc->send_resp_flag, and the
+		 * listener fd may be closed and the entry unregistered while
+		 * we sleep.  Our reference keeps the entry alive until the
+		 * matching kref_put() after the wait.
+		 */
+		kref_get(&ptr_svc->refcount);
+		svc_ref_ptr = ptr_svc;
 		mutex_unlock(&listener_access_lock);
 		do {
 			/*
@@ -2345,25 +2388,32 @@ static int __qseecom_process_incomplete_cmd(struct qseecom_dev_handle *data,
 		/* restore signal mask */
 		sigprocmask(SIG_SETMASK, &old_sigset, NULL);
 		/*
-		 * Unregister can free ptr_svc while we slept: the waiter
-		 * is the client fd, and the unregister gate is on the
-		 * listener's ioctl_count.  Re-resolve the object before
-		 * touching it.
+		 * ptr_svc stayed alive across the wait thanks to the
+		 * reference taken above.  Re-check whether it is still
+		 * registered: unregister unlinks the entry, so a missing
+		 * list node means the listener is gone.
 		 */
 		if (ptr_svc) {
-			struct qseecom_registered_listener_list *cur, *alive = NULL;
+			struct qseecom_registered_listener_list *cur;
+			bool alive = false;
 
 			list_for_each_entry(cur,
 					&qseecom.registered_listener_list_head,
 					list) {
 				if (cur == ptr_svc) {
-					alive = cur;
+					alive = true;
 					break;
 				}
 			}
 			if (!alive) {
 				pr_err("Listener Svc %d unregistered while waiting\n",
 				       lstnr);
+				/*
+				 * Stop using ptr_svc (report failure to TZ
+				 * without touching the entry); svc_ref_ptr
+				 * still holds the reference for the put at
+				 * exit.
+				 */
 				ptr_svc = NULL;
 				rc = -ENODEV;
 				status = QSEOS_RESULT_FAILURE;
@@ -2459,6 +2509,17 @@ err_resp:
 			ret = -EINVAL;
 		}
 exit:
+		/*
+		 * Drop the reference taken before the wait, if any.  This
+		 * may be the last put (the listener was unregistered while
+		 * we slept), so it can free ptr_svc -- do it before
+		 * releasing the lock but after we are done with the entry.
+		 */
+		if (svc_ref_ptr) {
+			kref_put(&svc_ref_ptr->refcount,
+					__qseecom_release_listener_entry);
+			svc_ref_ptr = NULL;
+		}
 		mutex_unlock(&listener_access_lock);
 		if ((lstnr == RPMB_SERVICE) || (lstnr == SSD_SERVICE))
 			__qseecom_disable_clk(CLK_QSEE);
@@ -2487,6 +2548,7 @@ static int __qseecom_process_reentrancy_blocked_on_listener(
 	unsigned long flags;
 	bool found_app = false;
 	struct qseecom_registered_app_list dummy_app_entry = { {NULL} };
+	struct qseecom_registered_listener_list *svc_ref_ptr = NULL;
 
 	if (!resp || !data) {
 		pr_err("invalid resp or data pointer\n");
@@ -2544,6 +2606,15 @@ static int __qseecom_process_reentrancy_blocked_on_listener(
 		sigfillset(&new_sigset);
 		sigprocmask(SIG_SETMASK, &new_sigset, &old_sigset);
 
+		/*
+		 * Hold a reference across the wait below: the condition
+		 * reads list_ptr->listener_in_use and the listener fd may be
+		 * closed and the entry unregistered while we sleep.  The
+		 * reference pins the original entry, so a re-registration
+		 * under the same id cannot be mistaken for it.
+		 */
+		kref_get(&list_ptr->refcount);
+		svc_ref_ptr = list_ptr;
 		do {
 			qseecom.app_block_ref_cnt++;
 			ptr_app->app_blocked = true;
@@ -2557,19 +2628,21 @@ static int __qseecom_process_reentrancy_blocked_on_listener(
 			ptr_app->app_blocked = false;
 			qseecom.app_block_ref_cnt--;
 			/*
-			 * Unregister can free list_ptr while we slept:
-			 * re-resolve it under listener_access_lock before
-			 * dereferencing it again.
+			 * list_ptr stayed alive across the wait thanks to
+			 * the reference above; check it is still the
+			 * registered entry (unregister unlinks it).
 			 */
-			list_ptr = __qseecom_find_svc(resp->data);
-			if (!list_ptr) {
+			if (__qseecom_find_svc(resp->data) != svc_ref_ptr) {
 				pr_err("Listener %d unregistered while waiting\n",
 					resp->data);
 				ret = -ENODATA;
-				mutex_unlock(&listener_access_lock);
-				goto exit;
+				goto exit_locked;
 			}
 		}  while (list_ptr->listener_in_use);
+
+		kref_put(&svc_ref_ptr->refcount,
+				__qseecom_release_listener_entry);
+		svc_ref_ptr = NULL;
 
 		sigprocmask(SIG_SETMASK, &old_sigset, NULL);
 
@@ -2614,6 +2687,16 @@ static int __qseecom_process_reentrancy_blocked_on_listener(
 		pr_err("Unexpected unblock resp %d\n", resp->result);
 		ret = -EINVAL;
 	}
+	return ret;
+
+exit_locked:
+	/* listener_access_lock held here: drop the wait reference first */
+	if (svc_ref_ptr) {
+		kref_put(&svc_ref_ptr->refcount,
+				__qseecom_release_listener_entry);
+		svc_ref_ptr = NULL;
+	}
+	mutex_unlock(&listener_access_lock);
 exit:
 	return ret;
 }
@@ -2636,6 +2719,7 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 	void *cmd_buf = NULL;
 	size_t cmd_len;
 	struct sglist_info *table = NULL;
+	struct qseecom_registered_listener_list *svc_ref_ptr = NULL;
 
 	while (ret == 0 && resp->result == QSEOS_RESULT_INCOMPLETE) {
 		lstnr = resp->data;
@@ -2693,6 +2777,13 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 		/* block all signals */
 		sigprocmask(SIG_SETMASK, &new_sigset, &old_sigset);
 
+		/*
+		 * Take a reference before dropping the locks: the waiter
+		 * below sleeps on ptr_svc->send_resp_flag and the listener
+		 * fd may be closed and the entry unregistered meanwhile.
+		 */
+		kref_get(&ptr_svc->refcount);
+		svc_ref_ptr = ptr_svc;
 		/* unlock mutex btw waking listener and sleep-wait */
 		mutex_unlock(&listener_access_lock);
 		mutex_unlock(&app_access_lock);
@@ -2707,8 +2798,9 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 		mutex_lock(&app_access_lock);
 		mutex_lock(&listener_access_lock);
 		/*
-		 * Unregister can free ptr_svc while we slept: re-resolve the
-		 * object under listener_access_lock before touching it.
+		 * ptr_svc stayed alive across the wait thanks to the
+		 * reference above; re-check that it is still registered
+		 * (unregister unlinks the entry).
 		 */
 		if (ptr_svc) {
 			struct qseecom_registered_listener_list *cur;
@@ -2725,6 +2817,10 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 			if (!alive) {
 				pr_err("Listener Svc %d unregistered while waiting\n",
 				       lstnr);
+				/*
+				 * Stop using ptr_svc; svc_ref_ptr keeps the
+				 * reference for the put at exit.
+				 */
 				ptr_svc = NULL;
 				rc = -ENODEV;
 				status = QSEOS_RESULT_FAILURE;
@@ -2847,6 +2943,12 @@ err_resp:
 			goto exit;
 		}
 exit:
+		/* see __qseecom_process_incomplete_cmd(): drop the wait ref */
+		if (svc_ref_ptr) {
+			kref_put(&svc_ref_ptr->refcount,
+					__qseecom_release_listener_entry);
+			svc_ref_ptr = NULL;
+		}
 		mutex_unlock(&listener_access_lock);
 		if (lstnr == RPMB_SERVICE)
 			__qseecom_disable_clk(CLK_QSEE);
