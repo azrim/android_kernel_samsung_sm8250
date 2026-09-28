@@ -41,6 +41,7 @@
 #include <linux/statfs.h>
 #include <linux/swap.h>
 #include <linux/swapops.h>
+#include <linux/jhash.h>
 #include <linux/compat.h>
 #include <uapi/linux/falloc.h>
 #include <uapi/linux/sched/types.h>
@@ -1991,6 +1992,7 @@ static void zram_handle_remain(struct zram *zram, struct page *page,
 		zs_unmap_object(zram->mem_pool, zram_entry_handle(zram, entry));
 
 		atomic64_add(size, &zram->stats.compr_data_size);
+		zram_dedup_insert(zram, entry, jhash(src, size, 0));
 		zram_free_page(zram, index);
 		zram_set_entry(zram, index, entry);
 		zram_set_obj_size(zram, index, size);
