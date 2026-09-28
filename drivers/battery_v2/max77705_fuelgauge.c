@@ -3009,10 +3009,18 @@ static int max77705_fuelgauge_remove(struct platform_device *pdev)
 
 	pr_info("%s: ++\n", __func__);
 
+	/*
+	 * Stop the IRQ first: its threaded handler arms isr_work, which
+	 * dereferences fuelgauge.  Cancel the work before the struct is freed
+	 * and only then unregister the psy (whose release path may run
+	 * callbacks against fuelgauge).
+	 */
+	free_irq(fuelgauge->fg_irq, fuelgauge);
+	cancel_delayed_work_sync(&fuelgauge->isr_work);
+
 	if (fuelgauge->psy_fg)
 		power_supply_unregister(fuelgauge->psy_fg);
 
-	free_irq(fuelgauge->fg_irq, fuelgauge);
 	wakeup_source_unregister(fuelgauge->fuel_alert_wake_lock);
 #if defined(CONFIG_OF)
 	kfree(fuelgauge->battery_data);
