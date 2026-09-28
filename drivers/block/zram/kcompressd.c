@@ -214,11 +214,16 @@ int schedule_bio_write(void *mem, struct page *page, u32 index, int offset,
 
 		if (kfifo_avail(&kcompress[idx].write_fifo) < sz_work)
 			continue;
-		if (kfifo_in(&kcompress[idx].write_fifo, &entry, sz_work) != sz_work)
-			continue;
 
-		switch (atomic_read(&kcompress[idx].running)) {
-		case KCOMPRESSD_NOT_STARTED:
+		/*
+		 * Start the worker before queueing the entry.  The previous
+		 * order queued first and, on kthread_run() failure, called
+		 * kfifo_out() to "undo" the insert -- but kfifo_out() removes
+		 * the *oldest* entry, so an unrelated page's callback was
+		 * silently dropped and that page never got page_endio().
+		 * Starting first means there is nothing to undo on failure.
+		 */
+		if (atomic_read(&kcompress[idx].running) == KCOMPRESSD_NOT_STARTED) {
 			atomic_set(&kcompress[idx].running, KCOMPRESSD_RUNNING);
 			kcompress[idx].kcompressd = kthread_run(kcompressd_worker,
 					&kcompressd_para[idx], "kcompressd:%d", idx);
@@ -227,21 +232,22 @@ int schedule_bio_write(void *mem, struct page *page, u32 index, int offset,
 				atomic_set(&kcompress[idx].running,
 					   KCOMPRESSD_NOT_STARTED);
 				pr_warn("Failed to start kcompressd:%d\n", idx);
-				/*
-				 * Drop the entry we just queued; the caller
-				 * falls back to the synchronous path.
-				 */
-				kfifo_out(&kcompress[idx].write_fifo, &entry,
-					  sz_work);
+				/* nothing queued: caller falls back */
 				return -EBUSY;
 			}
-			break;
-		case KCOMPRESSD_RUNNING:
-			break;
-		case KCOMPRESSD_SLEEPING:
-			wake_up_interruptible(&kcompress[idx].kcompressd_wait);
-			break;
 		}
+
+		if (kfifo_in(&kcompress[idx].write_fifo, &entry, sz_work) != sz_work)
+			continue;
+
+		/*
+		 * Enqueue *before* waking: if the wake were issued first the
+		 * worker could re-check an empty fifo and go to sleep forever,
+		 * leaving this entry stranded.
+		 */
+		if (atomic_read(&kcompress[idx].running) == KCOMPRESSD_SLEEPING)
+			wake_up_interruptible(&kcompress[idx].kcompressd_wait);
+
 		return 0;
 	}
 
