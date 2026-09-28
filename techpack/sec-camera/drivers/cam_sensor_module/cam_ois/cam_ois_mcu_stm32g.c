@@ -311,33 +311,46 @@ static int sysboot_i2c_wait_ack(struct cam_ois_ctrl_t *o_ctrl, unsigned long tim
 	int ret = 0;
 	uint32_t retry = 3;
 	unsigned char resp = 0;
+	/* timeout is in msec (see the header); compare against jiffies */
+	unsigned long deadline = jiffies + msecs_to_jiffies(timeout);
 
-	while(retry--)
+	while (1)
 	{
 		ret = i2c_master_recv(o_ctrl->io_master_info.client, &resp, 1);
-		if(ret >= 0)
+		if (ret >= 0)
 		{
-			if(resp == BOOT_I2C_RESP_ACK)
+			if (resp == BOOT_I2C_RESP_ACK)
+				return 0;
+
+			if (resp == BOOT_I2C_RESP_NACK)
 			{
-				//CAM_ERR(CAM_OIS, "[mcu] wait ack success 0x%x ",resp);
-			}else{
-				CAM_ERR(CAM_OIS, "[mcu] wait ack failed 0x%x ", resp);
+				CAM_ERR(CAM_OIS, "[mcu] wait ack NACK 0x%x", resp);
+				return BOOT_ERR_I2C_RESP_NACK;
 			}
-			//return resp;
-			return 0;
+
+			if (resp != BOOT_I2C_RESP_BUSY) {
+				CAM_ERR(CAM_OIS, "[mcu] wait ack unknown resp 0x%x", resp);
+				return BOOT_ERR_I2C_RESP_UNKNOWN;
+			}
+
+			/* BUSY: the bootloader is still working, poll again */
+			CAM_INFO(CAM_OIS, "[mcu] wait ack busy, poll again");
 		}
 		else
 		{
 			CAM_ERR(CAM_OIS, "[mcu] failed resp is 0x%x ,ret is %d	", resp, ret);
-			if (time_after(jiffies, timeout))
-			{
-				ret = -ETIMEDOUT;
-				break;
-			}
-			usleep_range(BOOT_I2C_INTER_PKT_BACK_INTVL * 1000, BOOT_I2C_INTER_PKT_BACK_INTVL * 1000 + 1000);
+			if (!retry--)
+				return BOOT_ERR_I2C_RESP_API_FAIL;
 		}
+
+		if (time_after(jiffies, deadline)) {
+			ret = -ETIMEDOUT;
+			break;
+		}
+		usleep_range(BOOT_I2C_INTER_PKT_BACK_INTVL * 1000,
+			BOOT_I2C_INTER_PKT_BACK_INTVL * 1000 + 1000);
 	}
-	return -1;
+	return ret;
 
 }
 
