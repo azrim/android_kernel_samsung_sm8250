@@ -2556,6 +2556,19 @@ static int __qseecom_process_reentrancy_blocked_on_listener(
 			mutex_lock(&listener_access_lock);
 			ptr_app->app_blocked = false;
 			qseecom.app_block_ref_cnt--;
+			/*
+			 * Unregister can free list_ptr while we slept:
+			 * re-resolve it under listener_access_lock before
+			 * dereferencing it again.
+			 */
+			list_ptr = __qseecom_find_svc(resp->data);
+			if (!list_ptr) {
+				pr_err("Listener %d unregistered while waiting\n",
+					resp->data);
+				ret = -ENODATA;
+				mutex_unlock(&listener_access_lock);
+				goto exit;
+			}
 		}  while (list_ptr->listener_in_use);
 
 		sigprocmask(SIG_SETMASK, &old_sigset, NULL);
