@@ -2433,6 +2433,12 @@ static int32_t q6asm_callback(struct apr_client_data *data, void *priv)
 				__func__, data->payload_size);
 		break;
 	case ASM_SESSION_CMDRSP_GET_MTMX_STRTR_PARAMS_V2:
+		if (data->payload_size <
+				sizeof(struct asm_mtmx_strtr_get_params_cmdrsp)) {
+			pr_err("%s: mtmx rsp payload too short %d\n",
+				__func__, data->payload_size);
+			break;
+		}
 		q6asm_process_mtmx_get_param_rsp(ac, (void *) payload);
 		break;
 	case ASM_STREAM_PP_EVENT:
