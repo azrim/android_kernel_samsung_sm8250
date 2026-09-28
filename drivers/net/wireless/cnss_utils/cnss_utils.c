@@ -341,7 +341,7 @@ static ssize_t cnss_utils_mac_write(struct file *fp,
 	mac_address = strsep(&input, delim);
 	if (!mac_address)
 		return -EINVAL;
-	if (strcmp("0x", mac_address)) {
+	if (strncmp(mac_address, "0x", MAC_PREFIX_LEN)) {
 		pr_err("Invalid MAC prefix\n");
 		return -EINVAL;
 	}
