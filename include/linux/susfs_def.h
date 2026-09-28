@@ -35,7 +35,19 @@
 #define SUS_SU_WITH_OVERLAY 1 /* deprecated */
 #define SUS_SU_WITH_HOOKS 2
 
-#define DEFAULT_SUS_MNT_ID 100000 /* used by mount->mnt_id */
+/*
+ * Boundary between ordinary mount ids and susfs-spoofed ones.
+ *
+ * mnt_alloc_id() allocates from 0 and is capped by sysctl_mount_max
+ * (default 100000, user-settable), so the ordinary range is small.  The
+ * threshold must sit far above any reachable ordinary id: at the old
+ * value (100000 == the default sysctl_mount_max) a legitimate id could
+ * reach the boundary, be treated as sus, and be freed from
+ * susfs_mnt_id_ida -- corrupting both ida bitmaps.  INT_MAX/2 leaves the
+ * whole reachable ordinary range below the boundary while still leaving
+ * a large sus range.
+ */
+#define DEFAULT_SUS_MNT_ID 1073741823 /* INT_MAX/2; used by mount->mnt_id */
 #define DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE 1000000 /* used by vfsmount->susfs_mnt_id_backup */
 #define DEFAULT_SUS_MNT_GROUP_ID 1000 /* used by mount->mnt_group_id */
 
