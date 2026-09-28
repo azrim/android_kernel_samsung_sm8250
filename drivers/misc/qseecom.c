@@ -2693,6 +2693,31 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 		/* lock mutex again after resp sent */
 		mutex_lock(&app_access_lock);
 		mutex_lock(&listener_access_lock);
+		/*
+		 * Unregister can free ptr_svc while we slept: re-resolve the
+		 * object under listener_access_lock before touching it.
+		 */
+		if (ptr_svc) {
+			struct qseecom_registered_listener_list *cur;
+			bool alive = false;
+
+			list_for_each_entry(cur,
+					&qseecom.registered_listener_list_head,
+					list) {
+				if (cur == ptr_svc) {
+					alive = true;
+					break;
+				}
+			}
+			if (!alive) {
+				pr_err("Listener Svc %d unregistered while waiting\n",
+				       lstnr);
+				ptr_svc = NULL;
+				rc = -ENODEV;
+				status = QSEOS_RESULT_FAILURE;
+				goto err_resp;
+			}
+		}
 		ptr_svc->send_resp_flag = 0;
 		qseecom.send_resp_flag = 0;
 
