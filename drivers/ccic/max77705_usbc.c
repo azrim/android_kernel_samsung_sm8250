@@ -4010,10 +4010,13 @@ static int max77705_usbc_remove(struct platform_device *pdev)
 	mxim_debug_exit();
 #endif
 	sysfs_remove_group(&max77705->dev->kobj, &max77705_attr_grp);
-	kzfree(usbc_data->hmd_list);
-	usbc_data->hmd_list = NULL;
-	mutex_destroy(&usbc_data->hmd_power_lock);
-	mutex_destroy(&usbc_data->op_lock);
+	/*
+	 * Stop the globals from handing this (about to be freed) state to
+	 * notifiers/IRQ handlers that can still run until the IRQs below are
+	 * freed.  g_usbc_data/g_muic_data are read locklessly by several
+	 * paths (e.g. max77705_usbc_opcode_* and the muic sysfs handlers).
+	 */
+	g_usbc_data = NULL;
 	ccic_core_unregister_chip();
 #if defined(CONFIG_DUAL_ROLE_USB_INTF)
 	devm_dual_role_instance_unregister(usbc_data->dev, usbc_data->dual_role);
@@ -4057,6 +4060,25 @@ static int max77705_usbc_remove(struct platform_device *pdev)
 	free_irq(usbc_data->cc_data->irq_ccvcnstat, usbc_data);
 	free_irq(usbc_data->cc_data->irq_ccstat, usbc_data);
 
+	/*
+	 * Cancel the works that were armed on system_wq (their handlers
+	 * dereference usbc_data), plus the works on the per-device queues
+	 * before those queues are destroyed.  Several of these re-arm
+	 * themselves or are re-armed by IRQ handlers, but the IRQs are
+	 * already freed above, so a single sync cancel is sufficient.
+	 */
+	cancel_delayed_work_sync(&usbc_data->acc_detach_work);
+	cancel_delayed_work_sync(&usbc_data->check_discover_modes_work);
+	cancel_delayed_work_sync(&usbc_data->vbus_hard_reset_work);
+	cancel_delayed_work_sync(&usbc_data->usb_external_notifier_register_work);
+	cancel_work_sync(&usbc_data->cc_open_req_work);
+	cancel_work_sync(&usbc_data->fw_update_work);
+#if defined(CONFIG_USB_AUDIO_ENHANCED_DETECT_TIME)
+	cancel_delayed_work_sync(&usbc_data->acc_booster_off_work);
+#endif
+	cancel_work_sync(&usbc_data->op_wait_work);
+	cancel_work_sync(&usbc_data->op_send_work);
+
 	wake_lock_destroy(&usbc_data->apcmd_wake_lock);
 	wake_lock_destroy(&usbc_data->sysmsg_wake_lock);
 	wake_lock_destroy(&usbc_data->pd_data->pdmsg_wake_lock);
@@ -4079,6 +4101,15 @@ static int max77705_usbc_remove(struct platform_device *pdev)
 #endif
 	if (usbc_data->pd_data->wqueue)
 		destroy_workqueue(usbc_data->pd_data->wqueue);
+
+	/*
+	 * Shared HMD state is now safe to free: all IRQs and works that read
+	 * hmd_list/hmd_power_lock have been stopped above.
+	 */
+	kzfree(usbc_data->hmd_list);
+	usbc_data->hmd_list = NULL;
+	mutex_destroy(&usbc_data->hmd_power_lock);
+	mutex_destroy(&usbc_data->op_lock);
 
 	kfree(usbc_data->cc_data);
 	kfree(usbc_data->pd_data);
