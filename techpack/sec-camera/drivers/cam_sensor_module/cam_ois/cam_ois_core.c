@@ -1128,7 +1128,14 @@ int cam_ois_driver_cmd(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		o_ctrl->ois_mode = 0;
 		mutex_unlock(&(o_ctrl->ois_mode_mutex));
 
-		if (o_ctrl->cam_ois_state == CAM_OIS_CONFIG) {
+		/*
+		 * Release may arrive from the START state (client crash
+		 * recovery without STOP): tear down exactly like the
+		 * CONFIG path. cam_ois_power_down() also drops
+		 * is_config/is_power_up, so the next session's INIT packet
+		 * is not silently skipped and the rails do not leak.
+		 */
+		if (o_ctrl->cam_ois_state >= CAM_OIS_CONFIG) {
 			rc = cam_ois_power_down(o_ctrl);
 			if (rc < 0) {
 				CAM_ERR(CAM_OIS, "OIS Power Down Failed");
