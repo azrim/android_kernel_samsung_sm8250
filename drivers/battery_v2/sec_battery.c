@@ -10314,7 +10314,7 @@ static int sec_battery_remove(struct platform_device *pdev)
 
 	switch (battery->pdata->polling_type) {
 	case SEC_BATTERY_MONITOR_WORKQUEUE:
-		cancel_delayed_work(&battery->polling_work);
+		cancel_delayed_work_sync(&battery->polling_work);
 		break;
 	case SEC_BATTERY_MONITOR_ALARM:
 		alarm_cancel(&battery->polling_alarm);
