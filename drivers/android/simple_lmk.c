@@ -720,8 +720,17 @@ static bool scan_and_kill(short adj_floor, struct mem_cgroup *scope)
 			if (READ_ONCE(t->mm))
 				set_tsk_thread_flag(t, TIF_MEMDIE);
 		}
-		for_each_thread(vtsk, t)
+		for_each_thread(vtsk, t) {
 			set_task_rt_prio(t, 1);
+			/*
+			 * Signals can't wake frozen tasks; only a thaw
+			 * operation can.  Thaw every thread of the group:
+			 * a frozen sibling left in the refrigerator would
+			 * linger with TIF_MEMDIE (which exempts it from the
+			 * freezer) and never finish dying.
+			 */
+			__thaw_task(t);
+		}
 		rcu_read_unlock();
 
 		/*
@@ -748,9 +757,6 @@ static bool scan_and_kill(short adj_floor, struct mem_cgroup *scope)
 		 * mask); the kill signal is already delivered.
 		 */
 		set_cpus_allowed_ptr(vtsk, cpu_all_mask);
-
-		/* Signals can't wake frozen tasks; only a thaw operation can */
-		__thaw_task(vtsk);
 
 		put_task_struct(vtsk);
 	}
