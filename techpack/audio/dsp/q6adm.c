@@ -1446,7 +1446,7 @@ static int adm_process_get_topo_list_response(u32 opcode, int copp_idx,
 	fill_list = adm_module_topo_list + idx;
 	*fill_list++ = num_modules;
 	for (i = 0; i < num_modules; i++) {
-		if (j > payload_size / sizeof(u32)) {
+		if (j >= payload_size / sizeof(u32)) {
 			pr_err("%s: Invalid number of modules specified %d\n",
 			       __func__, num_modules);
 			return -EINVAL;
@@ -1459,6 +1459,11 @@ static int adm_process_get_topo_list_response(u32 opcode, int copp_idx,
 		switch (opcode) {
 		case ADM_CMDRSP_GET_PP_TOPO_MODULE_LIST_V2:
 			/* store instance ID */
+			if (j >= payload_size / sizeof(u32)) {
+				pr_err("%s: Invalid number of modules specified %d\n",
+				       __func__, num_modules);
+				return -EINVAL;
+			}
 			*fill_list++ = payload[j];
 			j++;
 			break;
