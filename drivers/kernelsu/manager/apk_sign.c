@@ -345,6 +345,20 @@ bool is_manager_apk(char *path)
 	}
 #endif
 
+	// dummy.keystore, locked to the me.weishu.kernelsu pkgname as per
+	// TheSillyOk/33a2a0ed4.  The manager released by backslashxx/KernelSU
+	// (the build our releases point users at) is itself signed with the
+	// public dummy.keystore, so dropping this made is_manager_apk() return
+	// false for the recommended manager: the throne tracker never crowned
+	// it, is_manager() stayed false, GET_INFO omitted the MANAGER flag and
+	// the manager UI reported "Not installed" while root and modules kept
+	// working.  Keep the acceptance; it is pkg-locked on purpose.
+	char buf[KSU_MAX_PACKAGE_NAME];
+	constexpr char p[] = "me.weishu.kernelsu";
+	if (check_v2_signature(path, 0x363, "4359c171f32543394cbc23ef908c4bb94cad7c8087002ba164c8230948c21549") &&
+		!get_pkg_from_apk_path(buf, path) && !memcmp_inline(buf, p, sizeof(p)))
+		return true;
+
 	// kernelsu official
 	if (check_v2_signature(path, EXPECTED_SIZE, EXPECTED_HASH))
 		return true;
