@@ -661,7 +661,14 @@ static int s_show(struct seq_file *m, void *p)
 			   iter->type, iter->name);
 #else
 	{
-		if (strstr(iter->name, "ksu_") || !strncmp(iter->name, "susfs_", 6) || !strncmp(iter->name, "ksud", 4)) {
+		/*
+		 * Hide the KSU/SUSFS symbols only from readers that cannot see
+		 * symbol values (unprivileged).  Privileged readers (root /
+		 * CAP_SYSLOG per kallsyms_show_value) see the full kallsyms so
+		 * root tooling (perf/simpleperf/ftrace) can still symbolize them.
+		 */
+		if (!iter->show_value &&
+		    (strstr(iter->name, "ksu_") || !strncmp(iter->name, "susfs_", 6) || !strncmp(iter->name, "ksud", 4))) {
 			return 0;
 		}
 		seq_printf(m, "%px %c %s\n", value,
