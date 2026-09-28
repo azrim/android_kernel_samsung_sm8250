@@ -10360,6 +10360,9 @@ static int sec_battery_remove(struct platform_device *pdev)
 		adc_exit(battery->pdata, i);
 #endif
 	sb_full_soc_exit(battery);
+#if defined(CONFIG_WIRELESS_AUTH)
+	sec_bat_misc_exit();
+#endif
 	power_supply_unregister(battery->psy_ps);
 	power_supply_unregister(battery->psy_wireless);
 	power_supply_unregister(battery->psy_ac);

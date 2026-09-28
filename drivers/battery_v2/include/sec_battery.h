@@ -839,6 +839,7 @@ extern void set_cisd_power_data(struct sec_battery_info *battery, const char* bu
 
 #if defined(CONFIG_WIRELESS_AUTH)
 extern int sec_bat_misc_init(struct sec_battery_info *battery);
+extern void sec_bat_misc_exit(void);
 #endif
 
 int sec_bat_parse_dt(struct device *dev, struct sec_battery_info *battery);

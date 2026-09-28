@@ -404,7 +404,8 @@ void sec_bat_misc_exit(void)
 	pr_info("%s %s() called\n", WC_AUTH_MSG, __func__);
 	if (!c_dev)
 		return;
-	kfree(c_dev);
 	misc_deregister(&sec_bat_misc_device);
+	kfree(c_dev);
+	c_dev = NULL;
 }
 EXPORT_SYMBOL(sec_bat_misc_exit);
