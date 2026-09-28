@@ -804,7 +804,9 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		}
 
 #if defined(CONFIG_SAMSUNG_OIS_MCU_STM32) || defined(CONFIG_SAMSUNG_OIS_RUMBA_S4)
+		mutex_lock(&(o_ctrl->ois_mode_mutex));
 		o_ctrl->ois_mode = 0;
+		mutex_unlock(&(o_ctrl->ois_mode_mutex));
 
 		rc = cam_ois_thread_create(o_ctrl);
 		if (rc < 0) {
@@ -1122,7 +1124,9 @@ int cam_ois_driver_cmd(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		if (rc < 0)
 			CAM_ERR(CAM_OIS, "SERVO OFF: I2C write fail");
 #endif
+		mutex_lock(&(o_ctrl->ois_mode_mutex));
 		o_ctrl->ois_mode = 0;
+		mutex_unlock(&(o_ctrl->ois_mode_mutex));
 
 		if (o_ctrl->cam_ois_state == CAM_OIS_CONFIG) {
 			rc = cam_ois_power_down(o_ctrl);

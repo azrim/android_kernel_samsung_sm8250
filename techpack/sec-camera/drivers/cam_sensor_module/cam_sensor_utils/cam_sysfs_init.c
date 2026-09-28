@@ -2622,10 +2622,13 @@ static ssize_t ois_power_store(struct device *dev,
 
 		cam_ois_power_up(g_o_ctrl);
 		msleep(200);
+		/* serialize the mode state with the OIS thread */
+		mutex_lock(&(g_o_ctrl->ois_mode_mutex));
 #if defined(CONFIG_SAMSUNG_OIS_MCU_STM32)
 		cam_ois_mcu_init(g_o_ctrl);
 #endif
 		g_o_ctrl->ois_mode = 0;
+		mutex_unlock(&(g_o_ctrl->ois_mode_mutex));
 		pr_info("%s: power up", __func__);
 		break;
 
@@ -3131,6 +3134,7 @@ static ssize_t rear_actuator_power_store(struct device *dev,
 					mutex_lock(&(g_o_ctrl->ois_mutex));
 					cam_ois_power_up(g_o_ctrl);
 					msleep(20);
+					mutex_lock(&(g_o_ctrl->ois_mode_mutex));
 #if defined(CONFIG_SEC_C2Q_PROJECT)
 					g_o_ctrl->ois_mode = 0;
 					if (cam_ois_wait_idle(g_o_ctrl, 20) < 0)
@@ -3141,6 +3145,7 @@ static ssize_t rear_actuator_power_store(struct device *dev,
 #else
 					cam_ois_mcu_init(g_o_ctrl);
 #endif
+					mutex_unlock(&(g_o_ctrl->ois_mode_mutex));
 					mutex_unlock(&(g_o_ctrl->ois_mutex));
 				}
 				else

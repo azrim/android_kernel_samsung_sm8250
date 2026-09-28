@@ -3429,7 +3429,7 @@ int cam_ois_get_ois_mode(struct cam_ois_ctrl_t *o_ctrl, uint16_t *mode)
 	return 0;
 }
 
-/*** Have to lock/unlock ois_mutex, before/after call this function ***/
+/*** Have to lock/unlock ois_mode_mutex, before/after call this function ***/
 int cam_ois_set_ois_mode(struct cam_ois_ctrl_t *o_ctrl, uint16_t mode)
 {
 	int rc = 0;
