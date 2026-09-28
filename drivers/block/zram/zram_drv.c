@@ -372,6 +372,17 @@ static ssize_t idle_store(struct device *dev,
 #ifdef CONFIG_ZRAM_LRU_WRITEBACK
 static int zram_wbd(void *);
 static struct zram *g_zram;
+/*
+ * Guards g_zram and, transitively, the lifetime of the device it points
+ * at as seen by the /proc/<pid>/reclaim writeback walk (which runs from
+ * process context and takes the read side).  stop_lru_writeback() clears
+ * g_zram under the write side before any teardown, so a walk that raced
+ * the clear either blocks until it finishes or observes g_zram == NULL
+ * and bails.  init_lock cannot be used for this: backing_dev_store()
+ * calls stop_lru_writeback() while already holding init_lock for write,
+ * so a down_write() here would self-deadlock.
+ */
+static DECLARE_RWSEM(g_zram_lock);
 static bool is_app_launch;
 static void zram_app_launch_work_fn(struct work_struct *work);
 static DECLARE_WORK(zram_app_launch_work, zram_app_launch_work_fn);
@@ -466,7 +477,9 @@ static int init_lru_writeback(struct zram *zram)
 		goto out;
 	}
 
+	down_write(&g_zram_lock);
 	g_zram = zram;
+	up_write(&g_zram_lock);
 	zram->wb_limit_enable = true;
 	sched_setscheduler(zram->wbd, SCHED_IDLE, &param);
 
@@ -488,7 +501,15 @@ out:
 static void stop_lru_writeback(struct zram *zram)
 {
 	if (!IS_ERR_OR_NULL(zram->wbd)) {
+		/*
+		 * Take the write side so any in-flight /proc/<pid>/reclaim
+		 * walk (read side) finishes before we clear g_zram and
+		 * tear the device down; a walk that starts afterwards
+		 * observes g_zram == NULL and bails.
+		 */
+		down_write(&g_zram_lock);
 		g_zram = NULL;
+		up_write(&g_zram_lock);
 		/*
 		 * The app-launch work item dereferences g_zram; wait for
 		 * any running instance before tearing the device down.
@@ -1678,11 +1699,24 @@ void swap_add_to_list(struct list_head *list, swp_entry_t entry)
 void swap_writeback_list(struct zwbs **zwbs, int *idx,
 			struct list_head *list)
 {
-	struct zram *zram = g_zram;
+	struct zram *zram;
 	struct zram_table_entry *zram_entry;
 	u32 index;
 	unsigned long flags;
 	bool skip = false;
+
+	/*
+	 * Hold the read side of g_zram_lock across the whole walk so
+	 * stop_lru_writeback() (write side) cannot clear g_zram and let
+	 * the device be torn down underneath us.  This runs in process
+	 * context from /proc/<pid>/reclaim, so sleeping is fine.
+	 */
+	down_read(&g_zram_lock);
+	zram = g_zram;
+	if (!zram) {
+		up_read(&g_zram_lock);
+		return;
+	}
 
 	if (list == NULL) {
 		if (*idx > 0 || zwbs[*idx]->cnt > 0) {
@@ -1692,6 +1726,7 @@ void swap_writeback_list(struct zwbs **zwbs, int *idx,
 			zram_writeback_page(zram, zwbs, *idx, true, true);
 		}
 		*idx = 0;
+		up_read(&g_zram_lock);
 		return;
 	}
 
@@ -1718,6 +1753,7 @@ void swap_writeback_list(struct zwbs **zwbs, int *idx,
 		spin_unlock_irqrestore(&zram->list_lock, flags);
 		zram_slot_unlock(zram, index);
 	}
+	up_read(&g_zram_lock);
 }
 #endif
 
