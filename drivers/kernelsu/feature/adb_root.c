@@ -2,16 +2,29 @@
 
 static bool ksu_adb_root __read_mostly = false;
 
+/* Match only the real adbd binaries, never an arbitrary "/adbd" suffix. */
+static inline bool is_known_adbd(const char *path)
+{
+	return !strcmp(path, "/apex/com.android.adbd/bin/adbd") ||
+	       !strcmp(path, "/system/bin/adbd");
+}
+
 static inline long is_exec_adbd(const char __user **filename_user)
 {
-	// should be bigger than `/apex/com.android.adbd/bin/adbd`
-	char buf[40] = { 0 };
-	size_t copysize = sizeof("/apex/com.android.adbd/bin/adbd");
+	char buf[64];
+	long n;
 
-	if (!!copy_from_user(buf, *filename_user, copysize))
+	/*
+	 * Match only the exact known adbd paths.  A bare "/adbd" suffix match
+	 * would treat any similarly named binary (e.g. a malicious
+	 * /data/local/tmp/adbd) as adbd and escalate it to root.
+	 */
+	n = strncpy_from_user(buf, *filename_user, sizeof(buf) - 1);
+	if (n < 0)
 		return 0;
+	buf[n] = '\0';
 
-	if (!!endswith(buf, "/adbd"))
+	if (!is_known_adbd(buf))
 		return 0;
 
 	pr_info("%s: adbd: %s \n", __func__, buf);
@@ -212,7 +225,7 @@ static noinline void do_ksu_adb_root_execve_kernel(void *restrict filename, void
 	if (!*(void **)filename)
 		return;
 
-	if (!!endswith(*(char **)filename, "/adbd"))
+	if (!is_known_adbd(*(char **)filename))
 		return;
 
 	if (unlikely(!is_libadbroot_ok()))
