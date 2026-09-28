@@ -707,8 +707,19 @@ static bool scan_and_kill(short adj_floor, struct mem_cgroup *scope)
 		 * long time for exit_mmap() to complete.
 		 */
 		rcu_read_lock();
-		for_each_thread(vtsk, t)
-			set_tsk_thread_flag(t, TIF_MEMDIE);
+		for_each_thread(vtsk, t) {
+			/*
+			 * A thread already past exit_mm() has already run
+			 * the TIF_MEMDIE clearing in exit_mm() and will
+			 * never run it again: stamping it now leaves the
+			 * flag latched on a zombie, which keeps
+			 * oom_killer_disable()'s failure-path TIF_MEMDIE
+			 * scan non-empty and blocks its oom_victims reset.
+			 * Only stamp threads that still own an mm.
+			 */
+			if (READ_ONCE(t->mm))
+				set_tsk_thread_flag(t, TIF_MEMDIE);
+		}
 		for_each_thread(vtsk, t)
 			set_task_rt_prio(t, 1);
 		rcu_read_unlock();
