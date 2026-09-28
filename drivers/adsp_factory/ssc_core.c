@@ -440,14 +440,25 @@ struct ois_sensor_interface{
 };
 
 static struct ois_sensor_interface ois_reset;
+/*
+ * Serializes ois_reset registration against the SLPI SSR callback: the
+ * callback runs in hard-irq context and calls into ois_reset.core, so
+ * unregister must wait out an in-flight call before the caller frees the
+ * object.
+ */
+static DEFINE_SPINLOCK(ois_reset_lock);
 
 int ois_reset_register(struct ois_sensor_interface *ois)
 {
+	unsigned long flags;
+
+	spin_lock_irqsave(&ois_reset_lock, flags);
 	if (ois->core)
 		ois_reset.core = ois->core;
 
 	if (ois->ois_func)
 		ois_reset.ois_func = ois->ois_func;
+	spin_unlock_irqrestore(&ois_reset_lock, flags);
 
 	if (!ois->core || !ois->ois_func) {
 		pr_info("[FACTORY] %s - no ois struct\n", __func__);
@@ -460,8 +471,12 @@ EXPORT_SYMBOL(ois_reset_register);
 
 void ois_reset_unregister(void)
 {
+	unsigned long flags;
+
+	spin_lock_irqsave(&ois_reset_lock, flags);
 	ois_reset.core = NULL;
 	ois_reset.ois_func = NULL;
+	spin_unlock_irqrestore(&ois_reset_lock, flags);
 }
 EXPORT_SYMBOL(ois_reset_unregister);
 
@@ -758,11 +773,22 @@ void ssr_reason_call_back(char reason[], int len)
 
 	pr_info("[FACTORY] ssr %s\n", panic_msg);
 
-	if (ois_reset.ois_func != NULL && ois_reset.core != NULL) {
-		ois_reset.ois_func(ois_reset.core);
-		pr_info("[FACTORY] %s - send ssr notice to ois mcu\n", __func__);
-	} else {
-		pr_info("[FACTORY] %s - no ois struct\n", __func__);
+	{
+		unsigned long flags;
+
+		/*
+		 * Validate and call under the registration lock so a
+		 * concurrent ois_reset_unregister() waits for this call to
+		 * finish before the OIS driver frees the object.
+		 */
+		spin_lock_irqsave(&ois_reset_lock, flags);
+		if (ois_reset.ois_func != NULL && ois_reset.core != NULL) {
+			ois_reset.ois_func(ois_reset.core);
+			pr_info("[FACTORY] %s - send ssr notice to ois mcu\n", __func__);
+		} else {
+			pr_info("[FACTORY] %s - no ois struct\n", __func__);
+		}
+		spin_unlock_irqrestore(&ois_reset_lock, flags);
 	}
 
 	if (ssr_idx == HISTORY_CNT || ssr_idx == NO_SSR)

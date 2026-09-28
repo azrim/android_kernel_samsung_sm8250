@@ -20,6 +20,7 @@ struct cam_ois_ctrl_t *g_o_ctrl;
 
 static struct ois_sensor_interface ois_reset;
 extern int ois_reset_register(struct ois_sensor_interface *ois);
+extern void ois_reset_unregister(void);
 #endif
 
 static long cam_ois_subdev_ioctl(struct v4l2_subdev *sd,
@@ -282,6 +283,16 @@ static int cam_ois_i2c_driver_remove(struct i2c_client *client)
 	}
 
 	CAM_INFO(CAM_OIS, "i2c driver remove invoked");
+#if defined(CONFIG_SAMSUNG_OIS_MCU_STM32) || defined(CONFIG_SAMSUNG_OIS_RUMBA_S4)
+	/*
+	 * Invalidate the globals published at probe before anything can
+	 * dereference freed memory. ois_reset_unregister() runs under
+	 * ssc_core's lock and waits out an in-flight SLPI SSR callback, so
+	 * once it returns the IRQ path can no longer reach o_ctrl.
+	 */
+	ois_reset_unregister();
+	g_o_ctrl = NULL;
+#endif
 	soc_info = &o_ctrl->soc_info;
 
 	for (i = 0; i < soc_info->num_clk; i++)
@@ -428,6 +439,11 @@ static int cam_ois_platform_driver_remove(struct platform_device *pdev)
 	}
 
 	CAM_INFO(CAM_OIS, "platform driver remove invoked");
+#if defined(CONFIG_SAMSUNG_OIS_MCU_STM32) || defined(CONFIG_SAMSUNG_OIS_RUMBA_S4)
+	/* see cam_ois_i2c_driver_remove() */
+	ois_reset_unregister();
+	g_o_ctrl = NULL;
+#endif
 	soc_info = &o_ctrl->soc_info;
 	for (i = 0; i < soc_info->num_clk; i++)
 		devm_clk_put(soc_info->dev, soc_info->clk[i]);
