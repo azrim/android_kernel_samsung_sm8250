@@ -222,8 +222,13 @@ static void mnt_free_id(struct mount *mnt)
 	// so we free it in the original way
 	if (likely(mnt->mnt.susfs_mnt_id_backup)) {
 		// If mnt->mnt.susfs_mnt_id_backup is not zero, it means mnt->mnt_id is spoofed,
-		// so here we return the original mnt_id for being freed.
-		ida_free(&mnt_id_ida, mnt->mnt.susfs_mnt_id_backup);
+		// so here we return the original mnt_id for being freed.  Free it from
+		// the ida it was allocated from: a sus id (>= DEFAULT_SUS_MNT_ID) came
+		// from susfs_mnt_id_ida, anything else came from mnt_id_ida.
+		if (unlikely(mnt->mnt.susfs_mnt_id_backup >= DEFAULT_SUS_MNT_ID))
+			ida_free(&susfs_mnt_id_ida, mnt->mnt.susfs_mnt_id_backup);
+		else
+			ida_free(&mnt_id_ida, mnt->mnt.susfs_mnt_id_backup);
 		return;
 	}
 #endif
