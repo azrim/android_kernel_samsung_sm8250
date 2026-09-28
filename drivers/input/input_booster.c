@@ -695,13 +695,13 @@ void input_booster_init(void)
 					 MAX_IB_COUNT);
 
 	if (ev_unbound_wq == NULL || ib_unbound_highwq == NULL)
-		goto out;
+		goto err_free;
 
 	//Input Booster Trigger Strcut Init
 	ib_trigger = kcalloc(ABS_CNT, sizeof(struct t_ib_trigger) * MAX_IB_COUNT, GFP_KERNEL);
 	if (ib_trigger == NULL) {
 		pr_err(ITAG" ib_trigger mem alloc fail");
-		goto out;
+		goto err_free;
 	}
 
 	for (i = 0; i < MAX_IB_COUNT; i++) {
@@ -710,7 +710,7 @@ void input_booster_init(void)
 
 	np = of_find_compatible_node(NULL, NULL, "input_booster");
 	if (np == NULL) {
-		goto out;
+		goto err_free;
 	}
 
 	// Geting the count of devices.
@@ -721,17 +721,32 @@ void input_booster_init(void)
 	ib_device_trees = kcalloc(ABS_CNT, ib_dt_size * ndevice_in_dt, GFP_KERNEL);
 	if (ib_device_trees == NULL) {
 		pr_err(ITAG" dt_infor mem alloc fail");
-		goto out;
+		goto err_free;
 	}
 
 	// ib list mem alloc
 	ib_list = kcalloc(ABS_CNT, list_head_size * ndevice_in_dt, GFP_KERNEL);
 	if (ib_list == NULL) {
 		pr_err(ITAG" ib list mem alloc fail");
-		goto out;
+		goto err_free;
 	}
 
-	sscanf((of_get_property(np, "max_resource_count", NULL)), "%d", &max_resource_size);
+	{
+		const void *max_res_prop =
+			of_get_property(np, "max_resource_count", NULL);
+
+		if (!max_res_prop) {
+			pr_err(ITAG" max_resource_count missing from DT");
+			goto err_free;
+		}
+		sscanf(max_res_prop, "%d", &max_resource_size);
+	}
+
+	if (max_resource_size > MAX_RES_COUNT) {
+		pr_err(ITAG" max_resource_count %d exceeds MAX_RES_COUNT %d, clamping",
+			max_resource_size, MAX_RES_COUNT);
+		max_resource_size = MAX_RES_COUNT;
+	}
 
 	pr_info(ITAG" resource size : %d", max_resource_size);
 
@@ -739,18 +754,24 @@ void input_booster_init(void)
 	qos_list = kcalloc(ABS_CNT, list_head_size * max_resource_size, GFP_KERNEL);
 	if (qos_list == NULL) {
 		pr_err(ITAG" ib list mem alloc fail");
-		goto out;
+		goto err_free;
 	}
 
 	//Init Resource Release Values
-	const char* rel_vals = of_get_property(np, "ib_release_values", NULL);
+	{
+		const char *rel_vals = of_get_property(np, "ib_release_values", NULL);
 
-	rel_val_size = strlcpy(rel_val_str, rel_vals, sizeof(char) * 100);
+		if (!rel_vals) {
+			pr_err(ITAG" ib_release_values missing from DT");
+			goto err_free;
+		}
+		rel_val_size = strlcpy(rel_val_str, rel_vals, sizeof(char) * 100);
+	}
 	rel_val_pointer = rel_val_str;
 	token = strsep(&rel_val_pointer, ",");
 	res_type = 0;
 
-	while (token != NULL) {
+	while (token != NULL && res_type < MAX_RES_COUNT) {
 		pr_booster("Rel %d's Type Value(%s)", res_type, token);
 
 		//Release Values inserted inside array
@@ -765,7 +786,7 @@ void input_booster_init(void)
 
 	if (res_type < max_resource_size) {
 		pr_err(ITAG" release value parse fail");
-		goto out;
+		goto err_free;
 	}
 
 	struct device_node* cnp;
@@ -844,6 +865,17 @@ void input_booster_init(void)
 	}
 
 	ib_init_succeed = is_ib_init_succeed();
+	goto out;
+
+err_free:
+	kfree(ib_trigger);
+	ib_trigger = NULL;
+	kfree(ib_device_trees);
+	ib_device_trees = NULL;
+	kfree(ib_list);
+	ib_list = NULL;
+	kfree(qos_list);
+	qos_list = NULL;
 
 out:
 	of_node_put(np);
