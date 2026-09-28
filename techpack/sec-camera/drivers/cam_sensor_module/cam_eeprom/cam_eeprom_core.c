@@ -116,6 +116,21 @@ uint32_t CAMERA_NORMAL_CAL_CRC;
 
 ConfigInfo_t ConfigInfo[MAX_CONFIG_INFO_IDX];
 
+/*
+ * Size of the cal map the user-supplied ConfigInfo values index into. It is
+ * set at the start of the update_module_info pass so the consumers below can
+ * bound those values against the map they were parsed for.
+ */
+static uint32_t cal_map_size;
+
+/*
+ * Consumers read fixed per-key fields up to 0x0DC0 bytes past a ConfigInfo
+ * offset (the PAF far block: 0x0CD0 + 234 + 2). The map is allocated with
+ * this much zero-filled slack so those reads stay in bounds even when an
+ * offset sits at the end of the real map.
+ */
+#define CAL_MAP_TAIL_SLACK	0x1000
+
 char M_HW_INFO[HW_INFO_MAX_SIZE] = "";
 char M_SW_INFO[SW_INFO_MAX_SIZE] = "";
 char M_VENDOR_INFO[VENDOR_INFO_MAX_SIZE] = "";
@@ -541,7 +556,7 @@ static int cam_eeprom_module_info_set_load_version(int rev, uint32_t hasSubCalda
 
 #if defined(CONFIG_SAMSUNG_REAR_DUAL) || defined(CONFIG_SAMSUNG_REAR_TRIPLE) || defined(CONFIG_SAMSUNG_REAR_TOF) || defined(CONFIG_SAMSUNG_FRONT_DUAL) || defined(CONFIG_SAMSUNG_FRONT_TOF)
 static int cam_eeprom_module_info_set_dual_tilt(eDualTiltMode tiltMode, uint32_t dual_addr_idx,
-	uint32_t dual_size_idx, uint8_t *pMapData, char *log_str,
+	uint32_t dual_size_idx, uint32_t dual_cal_size, uint8_t *pMapData, char *log_str,
 	ModuleInfo_t *mInfo)
 {
 	uint32_t offset_dll_ver          = 0;
@@ -574,6 +589,19 @@ static int cam_eeprom_module_info_set_dual_tilt(eDualTiltMode tiltMode, uint32_t
 
 	if (isValidIdx(dual_addr_idx, &addr) == 1 && isValidIdx(dual_size_idx, &size) == 1)
 	{
+		/*
+		 * addr and size come from the userspace CustomInfo parse:
+		 * bound the block against the cal map (source) and the fixed
+		 * destination buffer before copying either way.
+		 */
+		if (addr >= cal_map_size || size > cal_map_size - addr ||
+				size >= dual_cal_size) {
+			CAM_ERR(CAM_EEPROM,
+				"%s dual cal out of range: addr 0x%x size %d map 0x%x",
+				log_str, addr, size, cal_map_size);
+			return 0;
+		}
+
 		switch (tiltMode)
 		{
 #if defined(CONFIG_SEC_X1Q_PROJECT) || defined(CONFIG_SEC_Y2Q_PROJECT) || defined(CONFIG_SEC_C1Q_PROJECT) || defined(CONFIG_SEC_F2Q_PROJECT)\
@@ -864,6 +892,23 @@ static int cam_eeprom_module_info_tof(uint8_t *pMapData, char *log_str,
 		isValidIdx(ADDR_VALIDATION_500, &validation_500) == 1 &&
 		isValidIdx(ADDR_VALIDATION_300, &validation_300) == 1)
 	{
+		/*
+		 * st_addr and cal_size come from the userspace CustomInfo
+		 * parse: bound the block against the cal map (source) and the
+		 * fixed destination buffers before copying. cal_size must
+		 * also cover TOFCAL_SIZE so the extra-size split below cannot
+		 * underflow.
+		 */
+		if (cal_size < TOFCAL_SIZE ||
+			cal_size - TOFCAL_SIZE > TOFCAL_EXTRA_SIZE ||
+			st_addr >= cal_map_size ||
+			cal_size > cal_map_size - st_addr) {
+			CAM_ERR(CAM_EEPROM,
+				"%s tof cal out of range: addr 0x%x size %d map 0x%x",
+				log_str, st_addr, cal_size, cal_map_size);
+			return 0;
+		}
+
 		cal_extra_size = cal_size - TOFCAL_SIZE;
 		CAM_INFO(CAM_EEPROM, "%s tof cal_size: %d, cal_extra_size: %d", log_str, cal_size, cal_extra_size);
 
@@ -933,6 +978,8 @@ static int cam_eeprom_update_module_info(struct cam_eeprom_ctrl_t *e_ctrl)
 		CAM_ERR(CAM_EEPROM, "subdev_id: %d is not supported", e_ctrl->soc_info.index);
 		return 0;
 	}
+
+	cal_map_size = e_ctrl->cal_data.num_data;
 
 	memset(&mInfo, 0x00, sizeof(ModuleInfo_t));
 	memset(&mInfoSub, 0x00, sizeof(ModuleInfo_t));
@@ -1222,7 +1269,8 @@ static int cam_eeprom_update_module_info(struct cam_eeprom_ctrl_t *e_ctrl)
 		mInfo.mVer.dual_cal = front2_dual_cal;
 		mInfo.mVer.DualTilt = &front2_dual;
 		cam_eeprom_module_info_set_dual_tilt(DUAL_TILT_FRONT, ADDR_M_DUAL_CAL,
-			SIZE_M_DUAL_CAL, e_ctrl->cal_data.mapdata, "front2", &mInfo);
+			SIZE_M_DUAL_CAL, sizeof(front2_dual_cal),
+			e_ctrl->cal_data.mapdata, "front2", &mInfo);
 #endif //#if defined(CONFIG_SAMSUNG_FRONT_DUAL)
 
 #if defined(CONFIG_SAMSUNG_FRONT_TOF)
@@ -1230,7 +1278,8 @@ static int cam_eeprom_update_module_info(struct cam_eeprom_ctrl_t *e_ctrl)
 		mInfo.mVer.dual_cal = front_tof_dual_cal;
 		mInfo.mVer.DualTilt = &front_tof_dual;
 		cam_eeprom_module_info_set_dual_tilt(DUAL_TILT_TOF_FRONT, ADDR_TOFCAL_START,
-			ADDR_TOFCAL_SIZE, e_ctrl->cal_data.mapdata, "front_tof", &mInfo);
+			ADDR_TOFCAL_SIZE, sizeof(front_tof_dual_cal),
+			e_ctrl->cal_data.mapdata, "front_tof", &mInfo);
 #endif
 	}
 #if defined(CONFIG_SAMSUNG_FRONT_TOP)
@@ -1327,7 +1376,8 @@ static int cam_eeprom_update_module_info(struct cam_eeprom_ctrl_t *e_ctrl)
 			mInfo.mVer.dual_cal = rear3_dual_cal;
 			mInfo.mVer.DualTilt = &rear3_dual;
 			cam_eeprom_module_info_set_dual_tilt(DUAL_TILT_REAR_TELE, ADDR_S_DUAL_CAL,
-				SIZE_M_DUAL_CAL, e_ctrl->cal_data.mapdata, "rear tele", &mInfo);
+				SIZE_M_DUAL_CAL, sizeof(rear3_dual_cal),
+				e_ctrl->cal_data.mapdata, "rear tele", &mInfo);
 		} else {
 			CAM_INFO(CAM_EEPROM, "this is old module, dual_tilt tests are not supported, will be filled zero");
 
@@ -1389,7 +1439,8 @@ static int cam_eeprom_update_module_info(struct cam_eeprom_ctrl_t *e_ctrl)
 		mInfo.mVer.dual_cal = rear2_dual_cal;
 		mInfo.mVer.DualTilt = &rear2_dual;
 		cam_eeprom_module_info_set_dual_tilt(DUAL_TILT_REAR_UW, ADDR_M_DUAL_CAL,
-			SIZE_M_DUAL_CAL, e_ctrl->cal_data.mapdata, "rear2 uw", &mInfo);
+			SIZE_M_DUAL_CAL, sizeof(rear2_dual_cal),
+			e_ctrl->cal_data.mapdata, "rear2 uw", &mInfo);
 #endif
 
 		cam_eeprom_module_info_set_paf(ADDR_M0_PAF,
@@ -1515,14 +1566,16 @@ static int cam_eeprom_update_module_info(struct cam_eeprom_ctrl_t *e_ctrl)
 		mInfo.mVer.dual_cal = rear_tof_dual_cal;
 		mInfo.mVer.DualTilt = &rear_tof_dual;
 		cam_eeprom_module_info_set_dual_tilt(DUAL_TILT_TOF_REAR, ADDR_TOFCAL_START,
-			ADDR_TOFCAL_SIZE, e_ctrl->cal_data.mapdata, "rear tof", &mInfo);
+			ADDR_TOFCAL_SIZE, sizeof(rear_tof_dual_cal),
+			e_ctrl->cal_data.mapdata, "rear tof", &mInfo);
 
 		/* rear2 tof tilt */
 		//	same dual_cal data between rear_tof and rear2_tof
 		mInfo.mVer.dual_cal = rear_tof_dual_cal;
 		mInfo.mVer.DualTilt = &rear2_tof_dual;
 		cam_eeprom_module_info_set_dual_tilt(DUAL_TILT_TOF_REAR2, ADDR_TOFCAL_START,
-			ADDR_TOFCAL_SIZE, e_ctrl->cal_data.mapdata, "rear2 tof", &mInfo);
+			ADDR_TOFCAL_SIZE, sizeof(rear_tof_dual_cal),
+			e_ctrl->cal_data.mapdata, "rear2 tof", &mInfo);
 #endif
 	}
 #if defined(CONFIG_SAMSUNG_REAR_DUAL) || defined(CONFIG_SAMSUNG_REAR_TRIPLE)
@@ -3273,7 +3326,8 @@ static int32_t cam_eeprom_get_cal_data(struct cam_eeprom_ctrl_t *e_ctrl,
 	return rc;
 }
 
-static int32_t cam_eeprom_fill_configInfo(char *configString, uint32_t value, ConfigInfo_t *ConfigInfo)
+static int32_t cam_eeprom_fill_configInfo(char *configString, uint32_t value,
+	uint32_t map_size, ConfigInfo_t *ConfigInfo)
 {
 	int32_t i, ret = 1;
 
@@ -3284,6 +3338,20 @@ static int32_t cam_eeprom_fill_configInfo(char *configString, uint32_t value, Co
 
 		if(!strcmp(configString, ConfigInfoStrs[i]))
 		{
+			/*
+			 * The DEF_* keys hold packed version scalars; every
+			 * later key indexes the cal map (an offset into it, or
+			 * the length of a block inside it). Reject map
+			 * references that cannot point inside the map so no
+			 * consumer reads or copies outside of it.
+			 */
+			if (i > DEF_M_CHK_VER && value > map_size) {
+				CAM_ERR(CAM_EEPROM,
+					"reject OOR ConfigInfo value: %s 0x%08X, map 0x%X",
+					configString, value, map_size);
+				return ret;
+			}
+
 			ConfigInfo[i].isSet = 1;
 			ConfigInfo[i].value = value;
 			ret = 0;
@@ -3476,7 +3544,10 @@ static int32_t cam_eeprom_get_customInfo(struct cam_eeprom_ctrl_t *e_ctrl,
 					CAM_ERR(CAM_EEPROM, "ConfigInfo[%d] = %s     0x%04X", i, configString, configValue);
 #endif
 
-					cam_eeprom_fill_configInfo(configString, configValue, ConfigInfo);
+					cam_eeprom_fill_configInfo(configString,
+						configValue,
+						e_ctrl->cal_data.num_data,
+						ConfigInfo);
 				}
 			}
 
@@ -3846,7 +3917,8 @@ static int32_t cam_eeprom_pkt_parse(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 		}
 
 		e_ctrl->cal_data.mapdata =
-			vzalloc(e_ctrl->cal_data.num_data);
+			vzalloc(e_ctrl->cal_data.num_data +
+				CAL_MAP_TAIL_SLACK);
 		if (!e_ctrl->cal_data.mapdata) {
 			rc = -ENOMEM;
 			CAM_ERR(CAM_EEPROM, "failed");
