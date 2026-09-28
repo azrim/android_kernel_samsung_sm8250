@@ -1330,6 +1330,8 @@ int subsystem_restart_dev(struct subsys_device *dev)
 	if (system_state == SYSTEM_RESTART
 		|| system_state == SYSTEM_POWER_OFF) {
 		pr_err("%s crashed during a system poweroff/shutdown.\n", name);
+		module_put(dev->owner);
+		put_device(&dev->dev);
 		return -EBUSY;
 	}
 
@@ -1339,6 +1341,8 @@ int subsystem_restart_dev(struct subsys_device *dev)
 	if (disable_restart_work == DISABLE_SSR) {
 		pr_warn("subsys-restart: Ignoring restart request for %s\n",
 									name);
+		module_put(dev->owner);
+		put_device(&dev->dev);
 		return 0;
 	}
 
