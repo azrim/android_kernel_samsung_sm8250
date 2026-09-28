@@ -673,7 +673,8 @@ void susfs_auto_add_try_umount_for_bind_mount(struct path *path) {
 #endif
 
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-	if (path->dentry->d_inode->i_state & INODE_STATE_SUS_KSTAT) {
+	if (d_inode(path->dentry) &&
+		(d_inode(path->dentry)->i_state & INODE_STATE_SUS_KSTAT)) {
 		SUSFS_LOGI("skip adding path to try_umount list as its inode is flagged INODE_STATE_SUS_KSTAT already\n");
 		return;
 	}
@@ -708,7 +709,8 @@ void susfs_auto_add_try_umount_for_bind_mount(struct path *path) {
 		if (unlikely(!strcmp(dpath, cursor->info.target_pathname))) {
 			spin_unlock(&susfs_spin_lock);
 			SUSFS_LOGE("target_pathname: '%s', ino: %lu, is already created in LH_TRY_UMOUNT_PATH\n",
-							dpath, path->dentry->d_inode->i_ino);
+							dpath, d_inode(path->dentry) ?
+							d_inode(path->dentry)->i_ino : 0);
 			goto out_free_pathname;
 		}
 	}
@@ -741,7 +743,8 @@ out_add_to_list:
 	list_add_tail(&new_list->list, &LH_TRY_UMOUNT_PATH);
 	spin_unlock(&susfs_spin_lock);
 	SUSFS_LOGI("target_pathname: '%s', ino: %lu, mnt_mode: %d, is successfully added to LH_TRY_UMOUNT_PATH\n",
-					new_list->info.target_pathname, path->dentry->d_inode->i_ino, new_list->info.mnt_mode);
+					new_list->info.target_pathname, d_inode(path->dentry) ?
+					d_inode(path->dentry)->i_ino : 0, new_list->info.mnt_mode);
 out_free_pathname:
 	kfree(pathname);
 }

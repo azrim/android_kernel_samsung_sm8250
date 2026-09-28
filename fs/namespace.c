@@ -335,7 +335,16 @@ static struct mount *alloc_vfsmnt(const char *name)
 			if (!custom_mnt_id) {
 				err = susfs_mnt_alloc_id(mnt);
 			} else {
+				/*
+				 * The id is borrowed from an existing mount
+				 * (unshare of a sus mount); it was not
+				 * allocated here, so any failure path below
+				 * must not return it to an ida.  Mark it with
+				 * the sentinel mnt_free_id() skips.
+				 */
 				mnt->mnt_id = custom_mnt_id;
+				mnt->mnt.susfs_mnt_id_backup =
+					DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE;
 				err = 0;
 			}
 			goto bypass_orig_flow;
