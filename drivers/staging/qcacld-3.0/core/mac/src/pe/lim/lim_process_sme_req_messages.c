@@ -4370,6 +4370,16 @@ static void lim_process_sme_update_access_policy_vendor_ie(
 		qdf_mem_free(pe_session_entry->access_policy_vendor_ie);
 
 	num_bytes = update_vendor_ie->ie[1] + 2;
+	/*
+	 * Consumers read the 3-byte OUI at &ie[2]; a 2-byte IE (ie[1] == 0)
+	 * would make wlan_get_vendor_ie_ptr_from_oui() read past the
+	 * allocation.  Clear the just-freed pointer so no dangling
+	 * access_policy_vendor_ie survives the early return.
+	 */
+	if (num_bytes < 5) {
+		pe_session_entry->access_policy_vendor_ie = NULL;
+		return;
+	}
 	pe_session_entry->access_policy_vendor_ie = qdf_mem_malloc(num_bytes);
 	if (!pe_session_entry->access_policy_vendor_ie)
 		return;
