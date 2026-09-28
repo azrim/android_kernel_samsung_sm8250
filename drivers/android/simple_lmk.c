@@ -1108,9 +1108,12 @@ void simple_lmk_notify_memcg_oom(struct mem_cgroup *memcg)
 		return;
 
 	/*
-	 * Replace any older scope: the newest over-limit group is the
-	 * one whose charge is stuck now.  tryget fails if the css is
-	 * already offline; then leave the previous scope alone.
+	 * A pending scope can only be replaced by widening the pass to a
+	 * global one: the newest over-limit group is the one whose charge is
+	 * stuck now, and a global pass (no memcg filter) covers it and the
+	 * displaced group alike. Silently dropping the displaced scope would
+	 * drop that group's emergency pass entirely.  tryget fails if the css
+	 * is already offline; then leave the previous scope alone.
 	 */
 	if (!css_tryget(&memcg->css))
 		return;
@@ -1122,10 +1125,16 @@ void simple_lmk_notify_memcg_oom(struct mem_cgroup *memcg)
 	 */
 	spin_lock(&scope_lock);
 	old_scope = emergency_scope;
-	emergency_scope = memcg;
-	spin_unlock(&scope_lock);
 	if (old_scope)
+		emergency_scope = NULL;
+	else
+		emergency_scope = memcg;
+	spin_unlock(&scope_lock);
+	if (old_scope) {
 		css_put(&old_scope->css);
+		/* the slot did not take this ref; the pass is global now */
+		css_put(&memcg->css);
+	}
 
 	atomic_set(&needs_emergency, 1);
 	smp_mb__after_atomic();
