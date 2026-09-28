@@ -623,6 +623,10 @@ static int q6lsm_set_params_v2(struct lsm_client *client,
 	uint32_t pkt_size = 0;
 	int ret;
 
+	/* Match the v3 guard: reject param_size values that wrap pkt_size. */
+	if (param_size > UINT_MAX - sizeof(struct lsm_session_cmd_set_params_v2))
+		return -EINVAL;
+
 	pkt_size = sizeof(struct lsm_session_cmd_set_params_v2);
 	/* Only include param size in packet size when inband */
 	if (param_data != NULL)
