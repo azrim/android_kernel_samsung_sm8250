@@ -808,9 +808,9 @@ void input_booster_init(void)
 	for_each_child_of_node(np, cnp) {
 		/************************************************/
 		// fill all needed data into res_info instance that is in dt instance.
-		struct t_ib_device_tree* ib_dt;
-		struct device_node* child_resource_node;
-		struct device_node* resource_node;
+		struct t_ib_device_tree *ib_dt;
+		struct device_node *child_resource_node;
+		struct device_node *resource_node;
 
 		if (device_count >= MAX_DEVICE_TYPE_NUM) {
 			pr_err(ITAG" more DT devices than MAX_DEVICE_TYPE_NUM");

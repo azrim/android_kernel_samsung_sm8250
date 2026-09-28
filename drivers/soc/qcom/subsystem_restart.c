@@ -1408,31 +1408,31 @@ EXPORT_SYMBOL(subsystem_crashed);
 #ifdef CONFIG_SEC_PCIE
 bool is_subsystem_crash(const char *name)
 {
-        struct subsys_device *dev = find_subsys_device(name);
-        bool crashed;
+	struct subsys_device *dev = find_subsys_device(name);
+	bool crashed;
 
-        if (!dev)
-                return false;
+	if (!dev)
+		return false;
 
-        crashed = subsys_get_crash_status(dev) ? true : false;
-        /* find_subsys_device() took a reference; this caller only borrows. */
-        put_device(&dev->dev);
-        return crashed;
+	crashed = subsys_get_crash_status(dev) ? true : false;
+	/* find_subsys_device() took a reference; this caller only borrows. */
+	put_device(&dev->dev);
+	return crashed;
 }
 EXPORT_SYMBOL(is_subsystem_crash);
 
 int is_subsystem_online(const char *name)
 {
-        struct subsys_device *dev = find_subsys_device(name);
-        int online;
+	struct subsys_device *dev = find_subsys_device(name);
+	int online;
 
-        if (!dev)
-                return false;
+	if (!dev)
+		return false;
 
-        online = dev->count;
-        /* find_subsys_device() took a reference; this caller only borrows. */
-        put_device(&dev->dev);
-        return online;
+	online = dev->count;
+	/* find_subsys_device() took a reference; this caller only borrows. */
+	put_device(&dev->dev);
+	return online;
 }
 EXPORT_SYMBOL(is_subsystem_online);
 #endif

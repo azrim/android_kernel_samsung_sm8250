@@ -650,6 +650,16 @@ static void s_stop(struct seq_file *m, void *p)
 {
 }
 
+#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+/* True if this symbol belongs to KSU/SUSFS and must be hidden. */
+static bool susfs_symbol_hidden(const char *name)
+{
+	return strnstr(name, "ksu_", KSYM_NAME_LEN) ||
+	       !strncmp(name, "susfs_", 6) ||
+	       !strncmp(name, "ksud", 4);
+}
+#endif
+
 static int s_show(struct seq_file *m, void *p)
 {
 	void *value;
@@ -675,8 +685,7 @@ static int s_show(struct seq_file *m, void *p)
 		 * Apply the same KSU/SUSFS symbol hiding to module symbols;
 		 * the module branch previously bypassed the filter entirely.
 		 */
-		if (!iter->show_value_now &&
-		    (strstr(iter->name, "ksu_") || !strncmp(iter->name, "susfs_", 6) || !strncmp(iter->name, "ksud", 4)))
+		if (!iter->show_value_now && susfs_symbol_hidden(iter->name))
 			return 0;
 #endif
 		seq_printf(m, "%px %c %s\t[%s]\n", value,
@@ -693,10 +702,8 @@ static int s_show(struct seq_file *m, void *p)
 		 * CAP_SYSLOG per kallsyms_show_value) see the full kallsyms so
 		 * root tooling (perf/simpleperf/ftrace) can still symbolize them.
 		 */
-		if (!iter->show_value_now &&
-		    (strstr(iter->name, "ksu_") || !strncmp(iter->name, "susfs_", 6) || !strncmp(iter->name, "ksud", 4))) {
+		if (!iter->show_value_now && susfs_symbol_hidden(iter->name))
 			return 0;
-		}
 		seq_printf(m, "%px %c %s\n", value,
 			   iter->type, iter->name);
 	}
