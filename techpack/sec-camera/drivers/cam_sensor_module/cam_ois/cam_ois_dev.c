@@ -17,6 +17,16 @@
 
 #if defined(CONFIG_SAMSUNG_OIS_MCU_STM32) || defined(CONFIG_SAMSUNG_OIS_RUMBA_S4)
 struct cam_ois_ctrl_t *g_o_ctrl;
+/*
+ * Serialises the sysfs handlers in cam_sysfs_init.c (which read g_o_ctrl and
+ * then dereference it) against cam_ois_i2c_driver_remove(), which clears
+ * g_o_ctrl and frees the struct.  A handler that observes g_o_ctrl != NULL
+ * holds this lock until it is finished, so remove cannot free the object
+ * underneath it; a handler that runs after the clear sees NULL and bails.
+ * Lock order is g_o_ctrl_lock -> ois_mutex in every path.
+ */
+DEFINE_MUTEX(g_o_ctrl_lock);
+EXPORT_SYMBOL(g_o_ctrl_lock);
 
 static struct ois_sensor_interface ois_reset;
 extern int ois_reset_register(struct ois_sensor_interface *ois);
@@ -291,7 +301,9 @@ static int cam_ois_i2c_driver_remove(struct i2c_client *client)
 	 * once it returns the IRQ path can no longer reach o_ctrl.
 	 */
 	ois_reset_unregister();
+	mutex_lock(&g_o_ctrl_lock);
 	g_o_ctrl = NULL;
+	mutex_unlock(&g_o_ctrl_lock);
 #endif
 	soc_info = &o_ctrl->soc_info;
 
@@ -307,9 +319,16 @@ static int cam_ois_i2c_driver_remove(struct i2c_client *client)
 		(struct cam_ois_soc_private *)soc_info->soc_private;
 	power_info = &soc_private->power_info;
 
+	/*
+	 * Hold g_o_ctrl_lock across the free: a sysfs handler that already
+	 * passed its NULL check holds the same lock, so the object cannot be
+	 * released underneath it.
+	 */
+	mutex_lock(&g_o_ctrl_lock);
 	kfree(o_ctrl->soc_info.soc_private);
 	v4l2_set_subdevdata(&o_ctrl->v4l2_dev_str.sd, NULL);
 	kfree(o_ctrl);
+	mutex_unlock(&g_o_ctrl_lock);
 
 	return 0;
 }
@@ -442,7 +461,9 @@ static int cam_ois_platform_driver_remove(struct platform_device *pdev)
 #if defined(CONFIG_SAMSUNG_OIS_MCU_STM32) || defined(CONFIG_SAMSUNG_OIS_RUMBA_S4)
 	/* see cam_ois_i2c_driver_remove() */
 	ois_reset_unregister();
+	mutex_lock(&g_o_ctrl_lock);
 	g_o_ctrl = NULL;
+	mutex_unlock(&g_o_ctrl_lock);
 #endif
 	soc_info = &o_ctrl->soc_info;
 	for (i = 0; i < soc_info->num_clk; i++)
@@ -457,11 +478,13 @@ static int cam_ois_platform_driver_remove(struct platform_device *pdev)
 		(struct cam_ois_soc_private *)o_ctrl->soc_info.soc_private;
 	power_info = &soc_private->power_info;
 
+	mutex_lock(&g_o_ctrl_lock);
 	kfree(o_ctrl->soc_info.soc_private);
 	kfree(o_ctrl->io_master_info.cci_client);
 	platform_set_drvdata(pdev, NULL);
 	v4l2_set_subdevdata(&o_ctrl->v4l2_dev_str.sd, NULL);
 	kfree(o_ctrl);
+	mutex_unlock(&g_o_ctrl_lock);
 
 	return 0;
 }

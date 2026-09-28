@@ -2444,12 +2444,14 @@ static int actuator_power = 0;
 #if defined(CONFIG_SAMSUNG_OIS_MCU_STM32) || defined(CONFIG_SAMSUNG_OIS_RUMBA_S4)
 static int ois_power = 0;
 extern struct cam_ois_ctrl_t *g_o_ctrl;
+/* serialises the OIS sysfs handlers against cam_ois_i2c_driver_remove() */
+extern struct mutex g_o_ctrl_lock;
 extern struct cam_actuator_ctrl_t *g_a_ctrls[2];
 #if defined(CONFIG_SAMSUNG_APERTURE)
 extern struct cam_aperture_ctrl_t *g_cam_aperture_t;
 #endif
 uint32_t ois_autotest_threshold = 150;
-static ssize_t ois_autotest_show(struct device *dev,
+static ssize_t __ois_autotest_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	bool ret = false;
@@ -2506,6 +2508,18 @@ static ssize_t ois_autotest_show(struct device *dev,
 	return 0;
 }
 
+static ssize_t ois_autotest_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	ssize_t ret;
+
+	mutex_lock(&g_o_ctrl_lock);
+	ret = __ois_autotest_show(dev, attr, buf);
+	mutex_unlock(&g_o_ctrl_lock);
+
+	return ret;
+}
+
 static ssize_t ois_autotest_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
@@ -2521,7 +2535,7 @@ static ssize_t ois_autotest_store(struct device *dev,
 }
 
 #if defined(CONFIG_SAMSUNG_REAR_TRIPLE)
-static ssize_t ois_autotest_2nd_show(struct device *dev,
+static ssize_t __ois_autotest_2nd_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	bool ret = false;
@@ -2593,6 +2607,18 @@ static ssize_t ois_autotest_2nd_show(struct device *dev,
 	return cnt;
 }
 
+static ssize_t ois_autotest_2nd_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	ssize_t ret;
+
+	mutex_lock(&g_o_ctrl_lock);
+	ret = __ois_autotest_2nd_show(dev, attr, buf);
+	mutex_unlock(&g_o_ctrl_lock);
+
+	return ret;
+}
+
 static ssize_t ois_autotest_2nd_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
@@ -2608,7 +2634,7 @@ static ssize_t ois_autotest_2nd_store(struct device *dev,
 }
 #endif
 
-static ssize_t ois_power_store(struct device *dev,
+static ssize_t __ois_power_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
 	if (g_o_ctrl == NULL ||
@@ -2666,7 +2692,19 @@ error:
 	return size;
 }
 
-static ssize_t gyro_calibration_show(struct device *dev,
+static ssize_t ois_power_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	ssize_t ret;
+
+	mutex_lock(&g_o_ctrl_lock);
+	ret = __ois_power_store(dev, attr, buf, size);
+	mutex_unlock(&g_o_ctrl_lock);
+
+	return ret;
+}
+
+static ssize_t __gyro_calibration_show(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {
 	int result = 0;
@@ -2698,9 +2736,21 @@ static ssize_t gyro_calibration_show(struct device *dev,
 	}
 }
 
+static ssize_t gyro_calibration_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	ssize_t ret;
+
+	mutex_lock(&g_o_ctrl_lock);
+	ret = __gyro_calibration_show(dev, attr, buf);
+	mutex_unlock(&g_o_ctrl_lock);
+
+	return ret;
+}
+
 long raw_init_x = 0, raw_init_y = 0;
 
-static ssize_t gyro_selftest_show(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t __gyro_selftest_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	int rc = 0;
 	int result_total = 0, result = 0;
@@ -2776,7 +2826,19 @@ static ssize_t gyro_selftest_show(struct device *dev, struct device_attribute *a
 	return 0;
 }
 
-static ssize_t gyro_rawdata_test_show(struct device *dev,
+static ssize_t gyro_selftest_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	ssize_t ret;
+
+	mutex_lock(&g_o_ctrl_lock);
+	ret = __gyro_selftest_show(dev, attr, buf);
+	mutex_unlock(&g_o_ctrl_lock);
+
+	return ret;
+}
+
+static ssize_t __gyro_rawdata_test_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	int rc = 0;
@@ -2820,6 +2882,18 @@ static ssize_t gyro_rawdata_test_show(struct device *dev,
 	if (rc)
 		return rc;
 	return 0;
+}
+
+static ssize_t gyro_rawdata_test_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	ssize_t ret;
+
+	mutex_lock(&g_o_ctrl_lock);
+	ret = __gyro_rawdata_test_show(dev, attr, buf);
+	mutex_unlock(&g_o_ctrl_lock);
+
+	return ret;
 }
 
 char ois_fw_full[SYSFS_FW_VER_SIZE] = "NULL NULL\n";
@@ -2866,7 +2940,7 @@ static ssize_t ois_exif_store(struct device *dev,
 	return size;
 }
 
-static ssize_t ois_reset_check(struct device *dev,
+static ssize_t __ois_reset_check(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	int rc = 0;
@@ -2879,8 +2953,20 @@ static ssize_t ois_reset_check(struct device *dev,
 	return rc;
 }
 
+static ssize_t ois_reset_check(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	ssize_t ret;
+
+	mutex_lock(&g_o_ctrl_lock);
+	ret = __ois_reset_check(dev, attr, buf);
+	mutex_unlock(&g_o_ctrl_lock);
+
+	return ret;
+}
+
 #if defined(CONFIG_SAMSUNG_REAR_TRIPLE)
-static ssize_t ois_hall_position_show(struct device *dev,
+static ssize_t __ois_hall_position_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	int rc = 0;
@@ -2904,9 +2990,21 @@ static ssize_t ois_hall_position_show(struct device *dev,
 		return rc;
 	return 0;
 }
+
+static ssize_t ois_hall_position_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	ssize_t ret;
+
+	mutex_lock(&g_o_ctrl_lock);
+	ret = __ois_hall_position_show(dev, attr, buf);
+	mutex_unlock(&g_o_ctrl_lock);
+
+	return ret;
+}
 #endif
 
-static ssize_t ois_set_mode_store(struct device *dev,
+static ssize_t __ois_set_mode_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
 	int rc = 0;
@@ -2938,6 +3036,18 @@ static ssize_t ois_set_mode_store(struct device *dev,
 error:
 	mutex_unlock(&(g_o_ctrl->ois_mutex));
 	return size;
+}
+
+static ssize_t ois_set_mode_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	ssize_t ret;
+
+	mutex_lock(&g_o_ctrl_lock);
+	ret = __ois_set_mode_store(dev, attr, buf, size);
+	mutex_unlock(&g_o_ctrl_lock);
+
+	return ret;
 }
 #endif
 
@@ -3071,11 +3181,14 @@ static ssize_t ois_rear3_read_cross_talk_show(struct device *dev,
 }
 #endif
 
-static ssize_t ois_check_cross_talk_show(struct device *dev,
+static ssize_t __ois_check_cross_talk_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	int rc = 0;
 	uint16_t result[STEP_COUNT] = { 0, };
+
+	if (g_o_ctrl == NULL)
+		return -EINVAL;
 
 	rc = cam_ois_check_tele_cross_talk(g_o_ctrl, result);
 	if (rc < 0)
@@ -3090,11 +3203,26 @@ static ssize_t ois_check_cross_talk_show(struct device *dev,
 	return 0;
 }
 
-static ssize_t ois_ext_clk_show(struct device *dev,
+static ssize_t ois_check_cross_talk_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	ssize_t ret;
+
+	mutex_lock(&g_o_ctrl_lock);
+	ret = __ois_check_cross_talk_show(dev, attr, buf);
+	mutex_unlock(&g_o_ctrl_lock);
+
+	return ret;
+}
+
+static ssize_t __ois_ext_clk_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	int rc = 0;
 	uint32_t clk = 0;
+
+	if (g_o_ctrl == NULL)
+		return -EINVAL;
 
 	clk = cam_ois_check_ext_clk(g_o_ctrl);
 	if (clk == 0)
@@ -3107,11 +3235,26 @@ static ssize_t ois_ext_clk_show(struct device *dev,
 	return 0;
 }
 
-static ssize_t ois_ext_clk_store(struct device *dev,
+static ssize_t ois_ext_clk_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	ssize_t ret;
+
+	mutex_lock(&g_o_ctrl_lock);
+	ret = __ois_ext_clk_show(dev, attr, buf);
+	mutex_unlock(&g_o_ctrl_lock);
+
+	return ret;
+}
+
+static ssize_t __ois_ext_clk_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
 	int rc = 0;
 	uint32_t clk = 0;
+
+	if (g_o_ctrl == NULL)
+		return -EINVAL;
 
 	if (buf == NULL || kstrtouint(buf, 10, &clk))
 		return -1;
@@ -3125,18 +3268,34 @@ static ssize_t ois_ext_clk_store(struct device *dev,
 
 	return size;
 }
+
+static ssize_t ois_ext_clk_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	ssize_t ret;
+
+	mutex_lock(&g_o_ctrl_lock);
+	ret = __ois_ext_clk_store(dev, attr, buf, size);
+	mutex_unlock(&g_o_ctrl_lock);
+
+	return ret;
+}
 #endif
 
 #if defined(CONFIG_SAMSUNG_ACTUATOR_PREVENT_SHAKING)
 extern struct cam_actuator_ctrl_t *g_a_ctrls[2];
 #endif
 
-static ssize_t rear_actuator_power_store(struct device *dev,
+static ssize_t __rear_actuator_power_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
 #if defined(CONFIG_SAMSUNG_ACTUATOR_PREVENT_SHAKING)
 	int i = 0, cnt = 0, rc = 0;
 	cnt = (int)(sizeof(g_a_ctrls) / sizeof(g_a_ctrls[0]));
+
+	/* index 2 is routed through the OIS driver: bail if it is gone */
+	if (g_o_ctrl == NULL)
+		return size;
 #if defined(CONFIG_SEC_Z3Q_PROJECT) || defined(CONFIG_SEC_C2Q_PROJECT)
 	if (g_a_ctrls[0] != NULL) {
 		mutex_lock(&(g_a_ctrls[0]->actuator_mutex));
@@ -3224,6 +3383,18 @@ static ssize_t rear_actuator_power_store(struct device *dev,
 #endif
 #endif
 	return size;
+}
+
+static ssize_t rear_actuator_power_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	ssize_t ret;
+
+	mutex_lock(&g_o_ctrl_lock);
+	ret = __rear_actuator_power_store(dev, attr, buf, size);
+	mutex_unlock(&g_o_ctrl_lock);
+
+	return ret;
 }
 
 #if defined(CONFIG_CAMERA_ADAPTIVE_MIPI)
