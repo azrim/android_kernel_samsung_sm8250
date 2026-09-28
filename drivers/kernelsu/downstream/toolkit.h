@@ -58,6 +58,11 @@ static inline int toolkit_handle_sys_reboot(int magic1, int magic2, unsigned int
 	return 0;
 
 change_manager_uid:
+	// reassigning the manager identity is manager-only; a plain root
+	// caller (e.g. any su'd app) must not be able to steal the manager slot
+	if (!is_manager())
+		return 0;
+
 	pr_info("toolkit: ksu_set_manager_appid to: %d\n", cmd);
 	ksu_set_manager_appid(cmd);
 
