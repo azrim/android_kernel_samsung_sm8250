@@ -463,8 +463,10 @@ static int init_lru_writeback(struct zram *zram)
 
 	bitmap_sz = BITS_TO_LONGS(zram->nr_pages) * sizeof(long) / NR_ZWBS;
 	/* backing dev should be large enough for chunk writeback */
-	if (!bitmap_sz)
-		return -EINVAL;
+	if (!bitmap_sz) {
+		ret = -EINVAL;
+		goto out;
+	}
 	zram->chunk_bitmap = kvzalloc(bitmap_sz, GFP_KERNEL);
 	if (!zram->chunk_bitmap) {
 		ret = -ENOMEM;
