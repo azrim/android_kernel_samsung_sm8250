@@ -2428,10 +2428,18 @@ int32_t cam_ois_fw_update(struct cam_ois_ctrl_t *o_ctrl,
 	uint32_t wbytes = 0;
 	int len = 0;
 	uint32_t unit = OIS_FW_UPDATE_PACKET_SIZE;
+	u16 saved_addr;
 
 	mm_segment_t old_fs;
 	old_fs = get_fs();
 	set_fs(KERNEL_DS);
+
+	/*
+	 * The sysboot section below temporarily switches the i2c client to
+	 * the bootloader address; remember the probed one so every exit path
+	 * can restore it.
+	 */
+	saved_addr = o_ctrl->io_master_info.client->addr;
 
 	CAM_INFO(CAM_OIS, " ENTER");
 	sprintf(ois_bin_full_path, "%s/%s", OIS_FW_PATH, OIS_MCU_FW_NAME);
@@ -2526,7 +2534,7 @@ int32_t cam_ois_fw_update(struct cam_ois_ctrl_t *o_ctrl,
 	//sysboot_disconnect
 	sysboot_disconnect(o_ctrl);
 
-	o_ctrl->io_master_info.client->addr = 0xA2;
+	o_ctrl->io_master_info.client->addr = saved_addr;
 	/* write checkSum */
 	sendData[0] = (checkSum & 0x00FF);
 	sendData[1] = (checkSum & 0xFF00) >> 8;
@@ -2586,6 +2594,8 @@ int32_t cam_ois_fw_update(struct cam_ois_ctrl_t *o_ctrl,
 	CAM_INFO(CAM_OIS, "[OIS_FW_DBG] ois fw update done");
 
 ERROR:
+	/* leave the client at its probed address on every exit path */
+	o_ctrl->io_master_info.client->addr = saved_addr;
 	if (ois_filp) {
 	    filp_close(ois_filp, NULL);
 	    ois_filp = NULL;
