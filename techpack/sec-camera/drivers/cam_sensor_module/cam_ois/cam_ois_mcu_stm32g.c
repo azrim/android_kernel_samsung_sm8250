@@ -3226,6 +3226,7 @@ int cam_ois_check_fw(struct cam_ois_ctrl_t *o_ctrl)
 FW_UPDATE_RETRY:
 	is_mcu_nack = false;
 	is_force_update = false;
+	is_empty_cal_ver = false;
 
 	rc = cam_ois_power_up(o_ctrl);
 	if (rc < 0) {
@@ -3277,7 +3278,7 @@ FW_UPDATE_RETRY:
 	//	there is no need to compare the version to update FW.
 	for (i = 0; i < OIS_VER_SIZE; i++) {
 		if (isalnum(o_ctrl->cal_ver[i]) == '\0') {
-			is_empty_cal_ver = 0;
+			is_empty_cal_ver = true;
 			CAM_ERR(CAM_OIS, "Cal Ver is not vaild. will not update firmware");
 			break;
 		}
