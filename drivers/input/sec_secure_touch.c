@@ -284,7 +284,15 @@ static ssize_t virtual_hall_ic_store(struct device *dev,
 		if (ret < 0)
 			return -EINVAL;
 	} else if (val == 0) {
-		sysfs_delete_link(&data->device->kobj, data->touch_driver[data->hall_ic - 1].kobj, "secure");
+		/*
+		 * hall_ic is 0 after kzalloc and only ever set from val
+		 * (1 or 2); guard the index so a "0" write cannot index
+		 * touch_driver[-1].
+		 */
+		if (data->hall_ic >= 1 && data->hall_ic <= 2)
+			sysfs_delete_link(&data->device->kobj,
+					data->touch_driver[data->hall_ic - 1].kobj,
+					"secure");
 		pr_info("%s: %s: delete previous link\n", SECLOG, __func__);
 	} else {
 		return -EINVAL;
