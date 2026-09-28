@@ -1227,6 +1227,17 @@ static int32_t afe_callback(struct apr_client_data *data, void *priv)
 					payload, data->token);
 				return -EINVAL;
 			}
+			/*
+			 * The header and the channel-count word that follows
+			 * it must be present before either is read.
+			 */
+			if (data->payload_size <
+				sizeof(struct afe_port_mod_evt_rsp_hdr) +
+				sizeof(uint32_t)) {
+				pr_err("%s: short AFE_PORT_MOD_EVENT %d\n",
+					__func__, data->payload_size);
+				return -EINVAL;
+			}
 			if ((evt_pl->module_id == AFE_MODULE_SPEAKER_PROTECTION_V2_EX_VI) &&
 			    (evt_pl->event_id == AFE_PORT_SP_DC_DETECTION_EVENT) &&
 			    (evt_pl->payload_size == sizeof(flag_dc_presence))) {
@@ -1241,15 +1252,18 @@ static int32_t afe_callback(struct apr_client_data *data, void *priv)
 				}
 			} else if ((evt_pl->module_id ==
 					 AFE_MODULE_SPEAKER_PROTECTION_V4_VI) &&
-				(evt_pl->event_id ==
+					(evt_pl->event_id ==
 					 AFE_PORT_SP_DC_DETECTION_EVENT)) {
 				bool dc_detected = false;
 				uint32_t *num_channels =
 				    (uint32_t *)((uint8_t *)payload +
 				    sizeof(struct afe_port_mod_evt_rsp_hdr));
 				uint32_t *dc_presence_flag = num_channels + 1;
+				u32 max = (data->payload_size -
+					sizeof(struct afe_port_mod_evt_rsp_hdr) -
+					sizeof(uint32_t)) / sizeof(uint32_t);
 
-				for (i = 0; i < *num_channels; i++) {
+				for (i = 0; i < *num_channels && i < max; i++) {
 					if (dc_presence_flag[i] == 1)
 						dc_detected = true;
 				}
