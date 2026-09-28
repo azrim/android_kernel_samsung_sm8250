@@ -2313,6 +2313,18 @@ static int32_t q6asm_callback(struct apr_client_data *data, void *priv)
 
 		struct audio_port_data *port = &ac->port[OUT];
 
+		/*
+		 * The indexed reads below (through READDONE_IDX_SEQ_ID, index
+		 * 10) reach up to 44 bytes; a shorter payload would read past
+		 * the rpmsg buffer.
+		 */
+		if (data->payload_size <
+				(READDONE_IDX_SEQ_ID + 1) * sizeof(uint32_t)) {
+			pr_err("%s: ReadDone payload too short %d\n",
+				__func__, data->payload_size);
+			break;
+		}
+
 		config_debug_fs_read_cb();
 
 		dev_vdbg(ac->dev, "%s: ReadDone: status=%d buff_add=0x%x act_size=%d offset=%d\n",
