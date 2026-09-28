@@ -222,18 +222,30 @@ int schedule_bio_write(void *mem, struct page *page, u32 index, int offset,
 		 * the *oldest* entry, so an unrelated page's callback was
 		 * silently dropped and that page never got page_endio().
 		 * Starting first means there is nothing to undo on failure.
+		 *
+		 * Claim the NOT_STARTED -> RUNNING transition with a cmpxchg
+		 * so two concurrent writers cannot both kthread_run() and
+		 * leave one worker untracked (surviving kcompressd_exit() and
+		 * dereferencing freed state).
 		 */
 		if (atomic_read(&kcompress[idx].running) == KCOMPRESSD_NOT_STARTED) {
-			atomic_set(&kcompress[idx].running, KCOMPRESSD_RUNNING);
-			kcompress[idx].kcompressd = kthread_run(kcompressd_worker,
-					&kcompressd_para[idx], "kcompressd:%d", idx);
-			if (IS_ERR(kcompress[idx].kcompressd)) {
-				kcompress[idx].kcompressd = NULL;
-				atomic_set(&kcompress[idx].running,
-					   KCOMPRESSD_NOT_STARTED);
-				pr_warn("Failed to start kcompressd:%d\n", idx);
-				/* nothing queued: caller falls back */
-				return -EBUSY;
+			if (atomic_cmpxchg(&kcompress[idx].running,
+					   KCOMPRESSD_NOT_STARTED,
+					   KCOMPRESSD_RUNNING) ==
+			    KCOMPRESSD_NOT_STARTED) {
+				kcompress[idx].kcompressd =
+					kthread_run(kcompressd_worker,
+						    &kcompressd_para[idx],
+						    "kcompressd:%d", idx);
+				if (IS_ERR(kcompress[idx].kcompressd)) {
+					kcompress[idx].kcompressd = NULL;
+					atomic_set(&kcompress[idx].running,
+						   KCOMPRESSD_NOT_STARTED);
+					pr_warn("Failed to start kcompressd:%d\n",
+						idx);
+					/* nothing queued: caller falls back */
+					return -EBUSY;
+				}
 			}
 		}
 
