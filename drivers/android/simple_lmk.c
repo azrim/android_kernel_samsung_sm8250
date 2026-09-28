@@ -313,6 +313,23 @@ static unsigned long get_mm_kill_score(struct mm_struct *mm)
 	return anon_pages + swap_pages + get_mm_counter(mm, MM_FILEPAGES);
 }
 
+/*
+ * True when a thread group other than @tsk's shares @tsk's mm (a vfork
+ * parent/child pair or a clone(CLONE_VM) sibling).  Called from
+ * find_victims() under rcu_read_lock(); process_shares_mm() also covers
+ * groups whose leader already dropped its own mm reference.
+ */
+static bool mm_shared_with_other_group(struct task_struct *tsk)
+{
+	struct task_struct *p;
+
+	for_each_process(p) {
+		if (!same_thread_group(p, tsk) && process_shares_mm(p, tsk->mm))
+			return true;
+	}
+	return false;
+}
+
 static unsigned long find_victims(int *vindex, unsigned long target,
 				  short adj_floor, struct mem_cgroup *scope)
 {
@@ -426,7 +443,6 @@ static unsigned long find_victims(int *vindex, unsigned long target,
 		do {
 			struct task_struct *vtsk;
 			struct mm_struct *mm;
-			int j;
 
 			vtsk = find_lock_task_mm(tsk);
 			if (!vtsk)
@@ -435,20 +451,23 @@ static unsigned long find_victims(int *vindex, unsigned long target,
 			mm = vtsk->mm;
 
 			/*
-			 * Two thread group leaders can share one mm (a
-			 * CLONE_VM-but-not-CLONE_THREAD child, e.g. from
-			 * vfork). Counting it twice would double the
-			 * accounting and kill two processes for one mm.
+			 * Veto candidates whose mm is shared with another
+			 * thread group (CLONE_VM-but-not-CLONE_THREAD, e.g.
+			 * vfork): killing only this group would leave the
+			 * reaper to zap the shared mm under the surviving
+			 * group - silent heap/stack corruption there. Stock
+			 * OOM instead kills every group sharing the mm and
+			 * refuses in-vfork victims; the conservative
+			 * equivalent is to skip such candidates entirely and
+			 * leave the pages to some other victim. In-vfork
+			 * tasks are skipped for the same reason stock skips
+			 * them even when the partner group is in the same
+			 * thread group (CLONE_VFORK|CLONE_THREAD).
 			 */
-			for (j = 0; j < *vindex; j++) {
-				if (victims[j].mm != mm)
-					continue;
+			if (in_vfork(vtsk) || mm_shared_with_other_group(vtsk)) {
 				task_unlock(vtsk);
-				mm = NULL;
-				break;
-			}
-			if (!mm)
 				continue;
+			}
 
 			/* Store this potential victim away for later */
 			victims[*vindex].tsk = vtsk;
