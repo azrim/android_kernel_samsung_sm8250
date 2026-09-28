@@ -4991,7 +4991,12 @@ int wma_extscan_hotlist_match_event_handler(void *handle,
 		dest_ap->rtt_sd = src_hotlist->rtt_sd;
 		dest_ap->beaconPeriod = src_hotlist->beacon_interval;
 		dest_ap->capability = src_hotlist->capabilities;
-		dest_ap->ieLength = src_hotlist->ie_length;
+		/*
+		 * The IE blob is not copied into dest_ap->ieData[] below, so
+		 * reporting src_hotlist->ie_length here would make
+		 * hdd_extscan_nl_fill_bss() read past the allocation.
+		 */
+		dest_ap->ieLength = 0;
 		WMI_MAC_ADDR_TO_CHAR_ARRAY(&src_hotlist->bssid,
 					   dest_ap->bssid.bytes);
 		if (src_hotlist->ssid.ssid_len > WLAN_SSID_MAX_LEN) {
@@ -5174,7 +5179,12 @@ static int wma_group_num_bss_to_scan_id(const u_int8_t *cmd_param_info,
 			ap->rtt_sd = src_hotlist->rtt_sd;
 			ap->beaconPeriod = src_hotlist->beacon_interval;
 			ap->capability = src_hotlist->capabilities;
-			ap->ieLength = src_hotlist->ie_length;
+			/*
+			 * The IE blob is not copied into ap->ieData[] below,
+			 * so reporting src_hotlist->ie_length here would make
+			 * hdd_extscan_nl_fill_bss() read past the allocation.
+			 */
+			ap->ieLength = 0;
 
 			/* Firmware already applied noise floor adjustment and
 			 * due to WMI interface "UINT32 rssi", host driver
