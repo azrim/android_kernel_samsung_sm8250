@@ -1206,6 +1206,7 @@ static int zram_writeback_fill_page(struct zram *zram, u32 index,
 				struct zwbs *zwbs)
 {
 	struct zram_wb_header *zhdr;
+	struct zram_entry *entry;
 	struct page *page = zwbs->page;
 	int offset = zwbs->off;
 	unsigned long handle;
@@ -1238,13 +1239,20 @@ static int zram_writeback_fill_page(struct zram *zram, u32 index,
 	/* Need for hugepage writeback racing */
 	zram_set_flag(zram, index, ZRAM_IDLE);
 
-	handle = zram_get_element(zram, index);
-	if (!handle) {
+	/*
+	 * With dedup enabled the slot holds a struct zram_entry *, not a
+	 * raw zs handle; zram_get_element() would hand zs_map_object() a
+	 * pointer and it would walk it as a handle.  Go through the
+	 * accessor that knows which representation is in use.
+	 */
+	entry = zram_get_entry(zram, index);
+	if (!entry) {
 		zram_clear_flag(zram, index, ZRAM_UNDER_WB);
 		zram_clear_flag(zram, index, ZRAM_IDLE);
 		zram_slot_unlock(zram, index);
 		return -ENOENT;
 	}
+	handle = zram_entry_handle(zram, entry);
 	src = zs_map_object(zram->mem_pool, handle, ZS_MM_RO);
 	dst = kmap_atomic(page);
 	if (size != PAGE_SIZE) {
