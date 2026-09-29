@@ -1,555 +1,497 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * sec_tsp_log.c
+ * Samsung TSP Debug Log and Ring Buffer Framework
  *
- * driver supporting debug functions for Samsung touch device
+ * Copyright (C) 2006-2026 Samsung Electronics Co., Ltd.
  *
- * COPYRIGHT(C) Samsung Electronics Co., Ltd. 2006-2011 All Right Reserved.
+ * Concurrency & Writer Serialization:
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * Touch events are generated from hardware interrupts and processed in
+ * threaded IRQ handlers, while factory commands and sysfs accesses execute
+ * in process context. Writers to the TSP ring buffers may thus run
+ * concurrently on different CPUs or interrupt contexts.
  *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
+ * Each ring buffer is protected by a dedicated irq-safe spinlock (ring->lock).
+ * Writers format the message into a local stack buffer and atomically append
+ * it to the ring buffer under spin_lock_irqsave(), ensuring:
+ *  1. No corrupted or interleaved indices (head / fix).
+ *  2. No partial or torn log lines.
+ *  3. Safe invocation from any context (process, threaded IRQ, or timer).
  *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ * Procfs readers snapshot the current head index (READ_ONCE) and copy to
+ * user buffers without holding spinlocks, preventing sleep-in-atomic bugs
+ * during user page faults.
  */
 
-
 #ifdef CONFIG_SEC_DEBUG_TSP_LOG
+
 #include <linux/input/sec_tsp_log.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/init.h>
+#include <linux/slab.h>
+#include <linux/proc_fs.h>
+#include <linux/uaccess.h>
+#include <linux/sched/clock.h>
+#include <linux/spinlock.h>
 
-static int sec_tsp_log_index;
-static int sec_tsp_log_index_fix;
-static char *sec_tsp_log_buf;
-static unsigned int sec_tsp_log_size;
+#define TSP_BUF_SIZE	512
 
+/**
+ * struct sec_tsp_ring - Append-only ring buffer with fixed-index wrap anchor
+ * @buf: Allocated buffer storage
+ * @size: Total capacity in bytes
+ * @head: Current write offset
+ * @fix: Wrap-around anchor established at boot or via sec_tsp_log_fix
+ * @lock: Serializes all write access across CPUs and IRQ contexts
+ */
+struct sec_tsp_ring {
+	char			*buf;
+	unsigned int		size;
+	unsigned int		head;
+	unsigned int		fix;
+	spinlock_t		lock;
+};
+
+static struct sec_tsp_ring sec_tsp_log_ring;
 #ifdef CONFIG_TOUCHSCREEN_DUAL_FOLDABLE
 #define MAIN_TOUCH	0
 #define SUB_TOUCH	1
-static int sec_tsp_raw_data_index_main;
-static int sec_tsp_raw_data_index_sub;
-static char *sec_tsp_raw_data_buf;
-static unsigned int sec_tsp_raw_data_size;
+static struct sec_tsp_ring sec_tsp_raw_main_ring;
+static struct sec_tsp_ring sec_tsp_raw_sub_ring;
 #else
-static int sec_tsp_raw_data_index;
-static char *sec_tsp_raw_data_buf;
-static unsigned int sec_tsp_raw_data_size;
+static struct sec_tsp_ring sec_tsp_raw_ring;
 #endif
+static struct sec_tsp_ring sec_tsp_cmd_hist_ring;
+static struct sec_tsp_ring sec_tsp_sponge_ring;
 
-static int sec_tsp_command_history_index;
-static char *sec_tsp_command_history_buf;
-static unsigned int sec_tsp_command_history_size;
-
-static int sec_tsp_log_timestamp(unsigned long idx)
+/**
+ * sec_tsp_ring_init - Allocate storage and initialize a ring buffer
+ * @ring: Target ring buffer
+ * @size: Allocation size in bytes
+ *
+ * Return: 0 on success, -ENOMEM on allocation failure.
+ */
+static int __init sec_tsp_ring_init(struct sec_tsp_ring *ring, unsigned int size)
 {
-	/* Add the current time stamp */
-	char tbuf[50];
-	unsigned int tlen;
-	unsigned long long t;
-	unsigned long nanosec_rem;
+	ring->buf = kmalloc(size, GFP_KERNEL);
+	if (!ring->buf)
+		return -ENOMEM;
 
-	t = local_clock();
-	nanosec_rem = do_div(t, 1000000000);
-	tlen = snprintf(tbuf, sizeof(tbuf), "[%5lu.%06lu] ",
-			(unsigned long)t,
-			nanosec_rem / 1000);
+	ring->size = size;
+	ring->head = 0;
+	ring->fix = 0;
+	spin_lock_init(&ring->lock);
 
-	/* Overflow buffer size */
-	if (idx + tlen > sec_tsp_log_size - 1) {
-		if (sec_tsp_log_index_fix + tlen > sec_tsp_log_size - 1)
-			return sec_tsp_log_index;
-		tlen = scnprintf(&sec_tsp_log_buf[sec_tsp_log_index_fix],
-				tlen + 1, "%s", tbuf);
-		sec_tsp_log_index = sec_tsp_log_index_fix + tlen;
-	} else {
-		tlen = scnprintf(&sec_tsp_log_buf[idx], tlen + 1, "%s", tbuf);
-		sec_tsp_log_index += tlen;
-	}
-
-	return sec_tsp_log_index;
-}
-
-#ifdef CONFIG_TOUCHSCREEN_DUAL_FOLDABLE
-static int sec_tsp_raw_data_timestamp(char mode, unsigned long idx)
-{
-	/* Add the current time stamp */
-	char tbuf[50];
-	unsigned int tlen;
-	unsigned long long t;
-	unsigned long nanosec_rem;
-
-	t = local_clock();
-	nanosec_rem = do_div(t, 1000000000);
-	tlen = snprintf(tbuf, sizeof(tbuf), "[%5lu.%06lu] ",
-			(unsigned long)t,
-			nanosec_rem / 1000);
-
-	if (mode == MAIN_TOUCH) {
-		/* Overflow buffer size */
-		if (idx + tlen > (sec_tsp_raw_data_size / 2) - 1) {
-			tlen = scnprintf(&sec_tsp_raw_data_buf[0],
-					tlen + 1, "%s", tbuf);
-			sec_tsp_raw_data_index_main = tlen;
-		} else {
-			tlen = scnprintf(&sec_tsp_raw_data_buf[idx], tlen + 1, "%s", tbuf);
-			sec_tsp_raw_data_index_main += tlen;
-		}
-
-		return sec_tsp_raw_data_index_main;
-
-	} else if (mode == SUB_TOUCH) {
-		/* Overflow buffer size */
-		if (idx + tlen > sec_tsp_raw_data_size - 1) {
-			tlen = scnprintf(&sec_tsp_raw_data_buf[sec_tsp_raw_data_size / 2],
-					tlen + 1, "%s", tbuf);
-			sec_tsp_raw_data_index_sub = sec_tsp_raw_data_size / 2 + tlen;
-		} else {
-			tlen = scnprintf(&sec_tsp_raw_data_buf[idx], tlen + 1, "%s", tbuf);
-			sec_tsp_raw_data_index_sub += tlen;
-		}
-
-		return sec_tsp_raw_data_index_sub;
-
-	}
-
-	pr_info("[sec_input] %s error param\n", __func__);
 	return 0;
 }
-#else
-static int sec_tsp_raw_data_timestamp(unsigned long idx)
+
+/**
+ * sec_tsp_ring_write - Append a formatted string to a TSP log ring buffer
+ * @ring: Target ring buffer
+ * @str: String data to append
+ * @len: Length of string in bytes (excluding terminating null)
+ *
+ * Serialized by @ring->lock. If the text does not fit between @ring->head and
+ * the end of the buffer, the write wraps around to @ring->fix (the fixed-index
+ * anchor established at boot or via sec_tsp_log_fix). Text that exceeds the
+ * remaining buffer capacity even from the anchor is dropped.
+ */
+static void sec_tsp_ring_write(struct sec_tsp_ring *ring, const char *str, size_t len)
 {
-	/* Add the current time stamp */
-	char tbuf[50];
-	unsigned int tlen;
-	unsigned long long t;
-	unsigned long nanosec_rem;
+	unsigned long flags;
 
-	t = local_clock();
-	nanosec_rem = do_div(t, 1000000000);
-	tlen = snprintf(tbuf, sizeof(tbuf), "[%5lu.%06lu] ",
-			(unsigned long)t,
-			nanosec_rem / 1000);
+	if (unlikely(!ring->buf || !ring->size || !len))
+		return;
 
-	/* Overflow buffer size */
-	if (idx + tlen > sec_tsp_raw_data_size - 1) {
-		tlen = scnprintf(&sec_tsp_raw_data_buf[0],
-				tlen + 1, "%s", tbuf);
-		sec_tsp_raw_data_index = tlen;
-	} else {
-		tlen = scnprintf(&sec_tsp_raw_data_buf[idx], tlen + 1, "%s", tbuf);
-		sec_tsp_raw_data_index += tlen;
+	spin_lock_irqsave(&ring->lock, flags);
+
+	if (ring->head + len > ring->size - 1) {
+		if (ring->fix + len > ring->size - 1) {
+			spin_unlock_irqrestore(&ring->lock, flags);
+			return;
+		}
+		ring->head = ring->fix;
 	}
 
-	return sec_tsp_raw_data_index;
-}
-#endif
+	memcpy(ring->buf + ring->head, str, len);
+	ring->head += len;
+	ring->buf[ring->head] = '\0';
 
-#define TSP_BUF_SIZE 512
+	spin_unlock_irqrestore(&ring->lock, flags);
+}
+
+/**
+ * sec_tsp_ring_proc_read - Generic procfs read handler for TSP ring buffers
+ * @ring: Target ring buffer
+ * @buf: Userspace buffer
+ * @len: Maximum bytes requested
+ * @offset: Current file offset pointer
+ *
+ * Return: Bytes copied, 0 on EOF, or -EFAULT on copy failure.
+ */
+static ssize_t sec_tsp_ring_proc_read(struct sec_tsp_ring *ring, char __user *buf,
+				      size_t len, loff_t *offset)
+{
+	loff_t pos = *offset;
+	size_t head, count;
+
+	if (!ring->buf)
+		return 0;
+
+	if (pos < 0)
+		return -EINVAL;
+
+	head = READ_ONCE(ring->head);
+	if (pos >= head)
+		return 0;
+
+	count = min(len, head - (size_t)pos);
+	if (copy_to_user(buf, ring->buf + pos, count))
+		return -EFAULT;
+
+	*offset += count;
+	return count;
+}
+
+/**
+ * sec_tsp_format_timestamp - Format standard SEC TSP timestamp prefix
+ * @buf: Destination buffer
+ * @buf_size: Buffer capacity
+ *
+ * Return: Number of characters written (excluding null byte).
+ */
+static size_t sec_tsp_format_timestamp(char *buf, size_t buf_size)
+{
+	unsigned long long t = local_clock();
+	unsigned long nanosec_rem = do_div(t, 1000000000);
+
+	return snprintf(buf, buf_size, "[%5lu.%06lu] ",
+			(unsigned long)t, nanosec_rem / 1000);
+}
+
 void sec_debug_tsp_log(char *fmt, ...)
 {
 	va_list args;
-	char buf[TSP_BUF_SIZE];
-	int len = 0;
-	unsigned int idx;
-	unsigned long size;
+	char line[TSP_BUF_SIZE + 64];
+	size_t tlen, len;
 
-	/* In case of sec_tsp_log_setup is failed */
-	if (!sec_tsp_log_size)
+	if (unlikely(!sec_tsp_log_ring.buf))
 		return;
+
+	tlen = sec_tsp_format_timestamp(line, sizeof(line));
+	if (tlen >= sizeof(line))
+		return;
+
 	va_start(args, fmt);
-	vsnprintf(buf, sizeof(buf), fmt, args);
+	len = vsnprintf(line + tlen, sizeof(line) - tlen, fmt, args);
 	va_end(args);
 
-	idx = sec_tsp_log_index;
-	size = strlen(buf);
+	len = min(len, sizeof(line) - tlen - 2);
+	line[tlen + len] = '\n';
+	line[tlen + len + 1] = '\0';
 
-	idx = sec_tsp_log_timestamp(idx);
-
-	/* Overflow buffer size */
-	if (idx + size > sec_tsp_log_size - 1) {
-		if (sec_tsp_log_index_fix + size > sec_tsp_log_size - 1)
-			return;
-		len = scnprintf(&sec_tsp_log_buf[sec_tsp_log_index_fix],
-				size + 1, "%s\n", buf);
-		sec_tsp_log_index = sec_tsp_log_index_fix + len;
-	} else {
-		len = scnprintf(&sec_tsp_log_buf[idx], size + 1, "%s\n", buf);
-		sec_tsp_log_index += len;
-	}
+	sec_tsp_ring_write(&sec_tsp_log_ring, line, tlen + len + 1);
 }
 EXPORT_SYMBOL(sec_debug_tsp_log);
-
-#ifdef CONFIG_TOUCHSCREEN_DUAL_FOLDABLE
-void sec_debug_tsp_raw_data(char *fmt, ...)
-{
-}
-EXPORT_SYMBOL(sec_debug_tsp_raw_data);
-#else
-void sec_debug_tsp_raw_data(char *fmt, ...)
-{
-	va_list args;
-	char buf[TSP_BUF_SIZE];
-	int len = 0;
-	unsigned int idx;
-	unsigned long size;
-
-	/* In case of sec_tsp_log_setup is failed */
-	if (!sec_tsp_raw_data_size || !sec_tsp_raw_data_buf)
-		return;
-	va_start(args, fmt);
-	vsnprintf(buf, sizeof(buf), fmt, args);
-	va_end(args);
-
-	idx = sec_tsp_raw_data_index;
-	size = strlen(buf);
-
-	idx = sec_tsp_raw_data_timestamp(idx);
-
-	/* Overflow buffer size */
-	if (idx + size > sec_tsp_raw_data_size - 1) {
-		len = scnprintf(&sec_tsp_raw_data_buf[0],
-				size + 1, "%s\n", buf);
-		sec_tsp_raw_data_index = len;
-	} else {
-		len = scnprintf(&sec_tsp_raw_data_buf[idx], size + 1, "%s\n", buf);
-		sec_tsp_raw_data_index += len;
-	}
-}
-EXPORT_SYMBOL(sec_debug_tsp_raw_data);
-#endif
 
 void sec_debug_tsp_log_msg(char *msg, char *fmt, ...)
 {
 	va_list args;
-	char buf[TSP_BUF_SIZE];
-	int len = 0;
-	unsigned int idx;
-	size_t size;
-	size_t size_dev_name;
+	char line[TSP_BUF_SIZE + 128];
+	size_t tlen, prefix_len, len;
 
-	/* In case of sec_tsp_log_setup is failed */
-	if (!sec_tsp_log_size)
+	if (unlikely(!sec_tsp_log_ring.buf))
 		return;
+
+	tlen = sec_tsp_format_timestamp(line, sizeof(line));
+	if (tlen >= sizeof(line))
+		return;
+
+	prefix_len = snprintf(line + tlen, sizeof(line) - tlen, "%s : ",
+			      msg ? msg : "");
+	if (prefix_len >= sizeof(line) - tlen)
+		return;
+
 	va_start(args, fmt);
-	vsnprintf(buf, sizeof(buf), fmt, args);
+	len = vsnprintf(line + tlen + prefix_len,
+			sizeof(line) - (tlen + prefix_len), fmt, args);
 	va_end(args);
 
-	idx = sec_tsp_log_index;
-	size = strlen(buf);
-	size_dev_name = strlen(msg);
-
-	idx = sec_tsp_log_timestamp(idx);
-
-	/* Overflow buffer size */
-	if (idx + size + size_dev_name + 3 + 1 > sec_tsp_log_size) {
-		if (sec_tsp_log_index_fix + size + size_dev_name
-				> sec_tsp_log_size - 1)
-			return;
-		len = scnprintf(&sec_tsp_log_buf[sec_tsp_log_index_fix],
-			size + size_dev_name + 3 + 1, "%s : %s", msg, buf);
-		sec_tsp_log_index = sec_tsp_log_index_fix + len;
-	} else {
-		len = scnprintf(&sec_tsp_log_buf[idx],
-			size + size_dev_name + 3 + 1, "%s : %s", msg, buf);
-		sec_tsp_log_index += len;
-	}
+	len = min(len, sizeof(line) - (tlen + prefix_len) - 1);
+	sec_tsp_ring_write(&sec_tsp_log_ring, line, tlen + prefix_len + len);
 }
 EXPORT_SYMBOL(sec_debug_tsp_log_msg);
 
 #ifdef CONFIG_TOUCHSCREEN_DUAL_FOLDABLE
+void sec_debug_tsp_raw_data(char *fmt, ...)
+{
+}
+EXPORT_SYMBOL(sec_debug_tsp_raw_data);
+
 void sec_debug_tsp_raw_data_msg(char mode, char *msg, char *fmt, ...)
 {
+	struct sec_tsp_ring *ring;
 	va_list args;
-	char buf[TSP_BUF_SIZE];
-	int len = 0;
-	unsigned int idx;
-	size_t size;
-	size_t size_dev_name;
+	char line[TSP_BUF_SIZE + 128];
+	size_t tlen, prefix_len, len;
 
-	/* In case of sec_tsp_log_setup is failed */
-	if (!sec_tsp_raw_data_size || !sec_tsp_raw_data_buf)
+	ring = (mode == MAIN_TOUCH) ? &sec_tsp_raw_main_ring : &sec_tsp_raw_sub_ring;
+	if (unlikely(!ring->buf))
 		return;
+
+	tlen = sec_tsp_format_timestamp(line, sizeof(line));
+	if (tlen >= sizeof(line))
+		return;
+
+	prefix_len = snprintf(line + tlen, sizeof(line) - tlen, "%s : ",
+			      msg ? msg : "");
+	if (prefix_len >= sizeof(line) - tlen)
+		return;
+
 	va_start(args, fmt);
-	vsnprintf(buf, sizeof(buf), fmt, args);
+	len = vsnprintf(line + tlen + prefix_len,
+			sizeof(line) - (tlen + prefix_len), fmt, args);
 	va_end(args);
 
-	if (mode == MAIN_TOUCH)
-		idx = sec_tsp_raw_data_index_main;
-	else if (mode == SUB_TOUCH)
-		idx = sec_tsp_raw_data_index_sub;
-
-	size = strlen(buf);
-	size_dev_name = strlen(msg);
-
-	idx = sec_tsp_raw_data_timestamp(mode, idx);
-
-	if (mode == MAIN_TOUCH) {
-		/* Overflow buffer size */
-		if (idx + size + size_dev_name + 3 + 1 > (sec_tsp_raw_data_size / 2)) {
-			len = scnprintf(&sec_tsp_raw_data_buf[0],
-					size + size_dev_name + 3 + 1, "%s : %s", msg, buf);
-			sec_tsp_raw_data_index_main = len;
-		} else {
-			len = scnprintf(&sec_tsp_raw_data_buf[idx],
-					size + size_dev_name + 3 + 1, "%s : %s", msg, buf);
-			sec_tsp_raw_data_index_main += len;
-		}
-	} else if (mode == SUB_TOUCH) {
-		/* Overflow buffer size */
-		if (idx + size + size_dev_name + 3 + 1 > sec_tsp_raw_data_size) {
-			len = scnprintf(&sec_tsp_raw_data_buf[sec_tsp_raw_data_size / 2],
-					size + size_dev_name + 3 + 1, "%s : %s", msg, buf);
-			sec_tsp_raw_data_index_sub = sec_tsp_raw_data_size / 2 + len;
-		} else {
-			len = scnprintf(&sec_tsp_raw_data_buf[idx],
-					size + size_dev_name + 3 + 1, "%s : %s", msg, buf);
-			sec_tsp_raw_data_index_sub += len;
-		}
-	}
+	len = min(len, sizeof(line) - (tlen + prefix_len) - 1);
+	sec_tsp_ring_write(ring, line, tlen + prefix_len + len);
 }
 EXPORT_SYMBOL(sec_debug_tsp_raw_data_msg);
+
+void sec_tsp_raw_data_clear(char mode)
+{
+	struct sec_tsp_ring *ring = (mode == MAIN_TOUCH) ?
+				    &sec_tsp_raw_main_ring : &sec_tsp_raw_sub_ring;
+	unsigned long flags;
+
+	if (!ring->buf)
+		return;
+
+	spin_lock_irqsave(&ring->lock, flags);
+	ring->head = 0;
+	memset(ring->buf, 0, ring->size);
+	spin_unlock_irqrestore(&ring->lock, flags);
+}
+EXPORT_SYMBOL(sec_tsp_raw_data_clear);
 #else
+void sec_debug_tsp_raw_data(char *fmt, ...)
+{
+	va_list args;
+	char line[TSP_BUF_SIZE + 64];
+	size_t tlen, len;
+
+	if (unlikely(!sec_tsp_raw_ring.buf))
+		return;
+
+	tlen = sec_tsp_format_timestamp(line, sizeof(line));
+	if (tlen >= sizeof(line))
+		return;
+
+	va_start(args, fmt);
+	len = vsnprintf(line + tlen, sizeof(line) - tlen, fmt, args);
+	va_end(args);
+
+	len = min(len, sizeof(line) - tlen - 2);
+	line[tlen + len] = '\n';
+	line[tlen + len + 1] = '\0';
+
+	sec_tsp_ring_write(&sec_tsp_raw_ring, line, tlen + len + 1);
+}
+EXPORT_SYMBOL(sec_debug_tsp_raw_data);
+
 void sec_debug_tsp_raw_data_msg(char *msg, char *fmt, ...)
 {
 	va_list args;
-	char buf[TSP_BUF_SIZE];
-	int len = 0;
-	unsigned int idx;
-	size_t size;
-	size_t size_dev_name;
+	char line[TSP_BUF_SIZE + 128];
+	size_t tlen, prefix_len, len;
 
-	/* In case of sec_tsp_log_setup is failed */
-	if (!sec_tsp_raw_data_size || !sec_tsp_raw_data_buf)
+	if (unlikely(!sec_tsp_raw_ring.buf))
 		return;
+
+	tlen = sec_tsp_format_timestamp(line, sizeof(line));
+	if (tlen >= sizeof(line))
+		return;
+
+	prefix_len = snprintf(line + tlen, sizeof(line) - tlen, "%s : ",
+			      msg ? msg : "");
+	if (prefix_len >= sizeof(line) - tlen)
+		return;
+
 	va_start(args, fmt);
-	vsnprintf(buf, sizeof(buf), fmt, args);
+	len = vsnprintf(line + tlen + prefix_len,
+			sizeof(line) - (tlen + prefix_len), fmt, args);
 	va_end(args);
 
-	idx = sec_tsp_raw_data_index;
-	size = strlen(buf);
-	size_dev_name = strlen(msg);
-
-	idx = sec_tsp_raw_data_timestamp(idx);
-
-	/* Overflow buffer size */
-	if (idx + size + size_dev_name + 3 + 1 > sec_tsp_raw_data_size) {
-		len = scnprintf(&sec_tsp_raw_data_buf[0],
-			size + size_dev_name + 3 + 1, "%s : %s", msg, buf);
-		sec_tsp_raw_data_index = len;
-	} else {
-		len = scnprintf(&sec_tsp_raw_data_buf[idx],
-			size + size_dev_name + 3 + 1, "%s : %s", msg, buf);
-		sec_tsp_raw_data_index += len;
-	}
+	len = min(len, sizeof(line) - (tlen + prefix_len) - 1);
+	sec_tsp_ring_write(&sec_tsp_raw_ring, line, tlen + prefix_len + len);
 }
 EXPORT_SYMBOL(sec_debug_tsp_raw_data_msg);
+
+void sec_tsp_raw_data_clear(void)
+{
+	unsigned long flags;
+
+	if (!sec_tsp_raw_ring.buf)
+		return;
+
+	spin_lock_irqsave(&sec_tsp_raw_ring.lock, flags);
+	sec_tsp_raw_ring.head = 0;
+	memset(sec_tsp_raw_ring.buf, 0, sec_tsp_raw_ring.size);
+	spin_unlock_irqrestore(&sec_tsp_raw_ring.lock, flags);
+}
+EXPORT_SYMBOL(sec_tsp_raw_data_clear);
 #endif
 
 void sec_debug_tsp_command_history(char *buf)
 {
-	int len = 0;
-	unsigned int idx;
-	size_t size;
+	char line[256];
+	size_t len;
 
-	/* In case of sec_tsp_log_setup is failed */
-	if (!sec_tsp_command_history_size || !sec_tsp_command_history_buf)
+	if (unlikely(!sec_tsp_cmd_hist_ring.buf || !buf))
 		return;
 
-	idx = sec_tsp_command_history_index;
-	size = strlen(buf);
+	len = snprintf(line, sizeof(line), "%s ", buf);
+	len = min(len, sizeof(line) - 1);
 
-	/* Overflow buffer size */
-	if (idx + size + 1 > sec_tsp_command_history_size) {
-		len = scnprintf(&sec_tsp_command_history_buf[0],
-			size + 1, "%s ", buf);
-		sec_tsp_command_history_index = len;
-	} else {
-		len = scnprintf(&sec_tsp_command_history_buf[idx],
-			size + 1, "%s ", buf);
-		sec_tsp_command_history_index += len;
-	}
+	sec_tsp_ring_write(&sec_tsp_cmd_hist_ring, line, len);
 }
 EXPORT_SYMBOL(sec_debug_tsp_command_history);
 
-#ifdef CONFIG_TOUCHSCREEN_DUAL_FOLDABLE
-void sec_tsp_raw_data_clear(char mode)
-{
-	if (!sec_tsp_raw_data_size || !sec_tsp_raw_data_buf)
-		return;
-
-	if (mode == MAIN_TOUCH) {
-		sec_tsp_raw_data_index_main = 0;
-		memset(sec_tsp_raw_data_buf, 0x00, sec_tsp_raw_data_size / 2);
-	} else if (mode == SUB_TOUCH) {
-		sec_tsp_raw_data_index_sub = sec_tsp_raw_data_size / 2;
-		memset(sec_tsp_raw_data_buf + sec_tsp_raw_data_index_sub, 0x00, sec_tsp_raw_data_size / 2);
-	}
-}
-EXPORT_SYMBOL(sec_tsp_raw_data_clear);
-#else
-void sec_tsp_raw_data_clear(void)
-{
-	if (!sec_tsp_raw_data_size || !sec_tsp_raw_data_buf)
-		return;
-
-	sec_tsp_raw_data_index = 0;
-	memset(sec_tsp_raw_data_buf, 0x00, sec_tsp_raw_data_size);
-}
-EXPORT_SYMBOL(sec_tsp_raw_data_clear);
-#endif
-
 void sec_tsp_log_fix(void)
 {
-	char *buf = "FIX LOG!\n";
-	int len = 0;
-	unsigned int idx;
-	size_t size;
+	char line[64];
+	size_t tlen, flen;
+	unsigned long flags;
 
-	/* In case of sec_tsp_log_setup is failed */
-	if (!sec_tsp_log_size)
+	if (unlikely(!sec_tsp_log_ring.buf))
 		return;
 
-	idx = sec_tsp_log_index;
-	size = strlen(buf);
+	tlen = sec_tsp_format_timestamp(line, sizeof(line));
+	flen = snprintf(line + tlen, sizeof(line) - tlen, "FIX LOG!\n");
 
-	idx = sec_tsp_log_timestamp(idx);
+	sec_tsp_ring_write(&sec_tsp_log_ring, line, tlen + flen);
 
-	/* Overflow buffer size */
-	if (idx + size > sec_tsp_log_size - 1) {
-		if (sec_tsp_log_index_fix + size > sec_tsp_log_size - 1)
-			return;
-		len = scnprintf(&sec_tsp_log_buf[sec_tsp_log_index_fix],
-				size + 1, "%s", buf);
-		sec_tsp_log_index = sec_tsp_log_index_fix + len;
-	} else {
-		len = scnprintf(&sec_tsp_log_buf[idx], size + 1, "%s", buf);
-		sec_tsp_log_index += len;
-	}
-	sec_tsp_log_index_fix = sec_tsp_log_index;
+	spin_lock_irqsave(&sec_tsp_log_ring.lock, flags);
+	sec_tsp_log_ring.fix = sec_tsp_log_ring.head;
+	spin_unlock_irqrestore(&sec_tsp_log_ring.lock, flags);
 }
 EXPORT_SYMBOL(sec_tsp_log_fix);
 
-static ssize_t sec_tsp_log_write(struct file *file,
-				const char __user *buf,
-				size_t count, loff_t *ppos)
+void sec_tsp_sponge_log(char *buf)
 {
-	char *page = NULL;
-	ssize_t ret;
-	int new_value;
+	char line[256];
+	size_t len;
 
-	if (!sec_tsp_log_buf)
+	if (unlikely(!sec_tsp_sponge_ring.buf || !buf))
+		return;
+
+	len = snprintf(line, sizeof(line), "%s ", buf);
+	len = min(len, sizeof(line) - 1);
+
+	sec_tsp_ring_write(&sec_tsp_sponge_ring, line, len);
+}
+EXPORT_SYMBOL(sec_tsp_sponge_log);
+
+static ssize_t sec_tsp_log_proc_write(struct file *file,
+				      const char __user *buf,
+				      size_t count, loff_t *ppos)
+{
+	char *page;
+	unsigned int val;
+
+	if (!sec_tsp_log_ring.buf)
 		return 0;
 
-	ret = -EINVAL;
 	if (count >= PAGE_SIZE)
-		return ret;
+		return -EINVAL;
 
-	ret = -ENOMEM;
-	page = (char *)get_zeroed_page(GFP_KERNEL);
-	if (!page)
-		return ret;
+	page = memdup_user_nul(buf, count);
+	if (IS_ERR(page))
+		return PTR_ERR(page);
 
-	ret = -EFAULT;
-	if (copy_from_user(page, buf, count))
-		goto out;
-
-	ret = -EINVAL;
-	if (sscanf(page, "%d", &new_value) != 1) {
+	if (kstrtouint(page, 10, &val) != 0) {
 		pr_info("%s\n", page);
-		/* print tsp_log to sec_tsp_log_buf */
 		sec_debug_tsp_log("%s", page);
 	}
-	ret = count;
-out:
-	free_page((unsigned long)page);
-	return ret;
-}
 
-static ssize_t sec_tsp_raw_data_write(struct file *file,
-				const char __user *buf,
-				size_t count, loff_t *ppos)
-{
-	char *page = NULL;
-	ssize_t ret;
-	int new_value;
-
-	if (!sec_tsp_raw_data_buf)
-		return 0;
-
-	ret = -EINVAL;
-	if (count >= PAGE_SIZE)
-		return ret;
-
-	ret = -ENOMEM;
-	page = (char *)get_zeroed_page(GFP_KERNEL);
-	if (!page)
-		return ret;
-
-	ret = -EFAULT;
-	if (copy_from_user(page, buf, count))
-		goto out;
-
-	ret = -EINVAL;
-	if (sscanf(page, "%d", &new_value) != 1) {
-		pr_info("%s\n", page);
-		sec_debug_tsp_raw_data("%s", page);
-	}
-	ret = count;
-out:
-	free_page((unsigned long)page);
-	return ret;
-}
-
-static ssize_t sec_tsp_log_read(struct file *file, char __user *buf,
-					size_t len, loff_t *offset)
-{
-	loff_t pos = *offset;
-	ssize_t count;
-
-	if (!sec_tsp_log_buf)
-		return 0;
-
-	if (pos >= sec_tsp_log_index)
-		return 0;
-
-	count = min(len, (size_t)(sec_tsp_log_index - pos));
-	if (copy_to_user(buf, sec_tsp_log_buf + pos, count))
-		return -EFAULT;
-	*offset += count;
+	kfree(page);
 	return count;
 }
 
+static ssize_t sec_tsp_raw_data_proc_write(struct file *file,
+					   const char __user *buf,
+					   size_t count, loff_t *ppos)
+{
+	char *page;
+	unsigned int val;
+
+#ifdef CONFIG_TOUCHSCREEN_DUAL_FOLDABLE
+	if (!sec_tsp_raw_main_ring.buf)
+		return 0;
+#else
+	if (!sec_tsp_raw_ring.buf)
+		return 0;
+#endif
+
+	if (count >= PAGE_SIZE)
+		return -EINVAL;
+
+	page = memdup_user_nul(buf, count);
+	if (IS_ERR(page))
+		return PTR_ERR(page);
+
+	if (kstrtouint(page, 10, &val) != 0) {
+		pr_info("%s\n", page);
+		sec_debug_tsp_raw_data("%s", page);
+	}
+
+	kfree(page);
+	return count;
+}
+
+static ssize_t sec_tsp_log_read(struct file *file, char __user *buf,
+				size_t len, loff_t *offset)
+{
+	return sec_tsp_ring_proc_read(&sec_tsp_log_ring, buf, len, offset);
+}
+
+static const struct file_operations tsp_msg_file_ops = {
+	.owner		= THIS_MODULE,
+	.read		= sec_tsp_log_read,
+	.write		= sec_tsp_log_proc_write,
+	.llseek		= generic_file_llseek,
+};
+
 #ifdef CONFIG_TOUCHSCREEN_DUAL_FOLDABLE
 static ssize_t sec_tsp_raw_data_read(struct file *file, char __user *buf,
-					size_t len, loff_t *offset)
+				     size_t len, loff_t *offset)
 {
 	loff_t pos = *offset;
-	ssize_t count;
-	int pos_range;
+	size_t main_head, sub_head, total, count;
 
-	if (!sec_tsp_raw_data_buf)
+	if (!sec_tsp_raw_main_ring.buf || !sec_tsp_raw_sub_ring.buf)
 		return 0;
 
-	pos_range = sec_tsp_raw_data_index_main + (sec_tsp_raw_data_index_sub - (sec_tsp_raw_data_size / 2));
-	if (pos_range < 0)
-		return 0;
-	if (pos >= pos_range)
+	if (pos < 0)
+		return -EINVAL;
+
+	main_head = READ_ONCE(sec_tsp_raw_main_ring.head);
+	sub_head = READ_ONCE(sec_tsp_raw_sub_ring.head);
+	total = main_head + sub_head;
+
+	if (pos >= total)
 		return 0;
 
-	if (pos < sec_tsp_raw_data_index_main) {
-		count = min(len, (size_t)(sec_tsp_raw_data_index_main - pos));
-		if (copy_to_user(buf, sec_tsp_raw_data_buf + pos, count))
+	if (pos < main_head) {
+		count = min(len, main_head - (size_t)pos);
+		if (copy_to_user(buf, sec_tsp_raw_main_ring.buf + pos, count))
 			return -EFAULT;
 	} else {
-		count = min(len, (size_t)(sec_tsp_raw_data_index_sub - (sec_tsp_raw_data_size / 2)
-						- (pos - sec_tsp_raw_data_index_main)));
-		if (copy_to_user(buf, &sec_tsp_raw_data_buf[sec_tsp_raw_data_size / 2] + (pos - sec_tsp_raw_data_index_main), count))
+		size_t sub_pos = (size_t)pos - main_head;
+
+		count = min(len, sub_head - sub_pos);
+		if (copy_to_user(buf, sec_tsp_raw_sub_ring.buf + sub_pos, count))
 			return -EFAULT;
 	}
 
@@ -558,286 +500,126 @@ static ssize_t sec_tsp_raw_data_read(struct file *file, char __user *buf,
 }
 #else
 static ssize_t sec_tsp_raw_data_read(struct file *file, char __user *buf,
-					size_t len, loff_t *offset)
+				     size_t len, loff_t *offset)
 {
-	loff_t pos = *offset;
-	ssize_t count;
-
-	if (!sec_tsp_raw_data_buf)
-		return 0;
-
-	if (pos >= sec_tsp_raw_data_index)
-		return 0;
-
-	count = min(len, (size_t)(sec_tsp_raw_data_index - pos));
-	if (copy_to_user(buf, sec_tsp_raw_data_buf + pos, count))
-		return -EFAULT;
-	*offset += count;
-
-	return count;
+	return sec_tsp_ring_proc_read(&sec_tsp_raw_ring, buf, len, offset);
 }
 #endif
 
+static const struct file_operations tsp_raw_data_file_ops = {
+	.owner		= THIS_MODULE,
+	.read		= sec_tsp_raw_data_read,
+	.write		= sec_tsp_raw_data_proc_write,
+	.llseek		= generic_file_llseek,
+};
+
 static ssize_t sec_tsp_command_history_read(struct file *file, char __user *buf,
-					size_t len, loff_t *offset)
+					    size_t len, loff_t *offset)
 {
-	loff_t pos = *offset;
-	ssize_t count;
-
-	if (!sec_tsp_command_history_buf)
-		return 0;
-
-	if (pos >= sec_tsp_command_history_index)
-		return 0;
-
-	count = min(len, (size_t)(sec_tsp_command_history_index - pos));
-	if (copy_to_user(buf, sec_tsp_command_history_buf + pos, count))
-		return -EFAULT;
-	*offset += count;
-	return count;
+	return sec_tsp_ring_proc_read(&sec_tsp_cmd_hist_ring, buf, len, offset);
 }
 
-static const struct file_operations tsp_msg_file_ops = {
-	.owner = THIS_MODULE,
-	.read = sec_tsp_log_read,
-	.write = sec_tsp_log_write,
-	.llseek = generic_file_llseek,
-};
-
-static const struct file_operations tsp_raw_data_file_ops = {
-	.owner = THIS_MODULE,
-	.read = sec_tsp_raw_data_read,
-	.write = sec_tsp_raw_data_write,
-	.llseek = generic_file_llseek,
-};
-
 static const struct file_operations tsp_command_history_file_ops = {
-	.owner = THIS_MODULE,
-	.read = sec_tsp_command_history_read,
-	.llseek = generic_file_llseek,
+	.owner		= THIS_MODULE,
+	.read		= sec_tsp_command_history_read,
+	.llseek		= generic_file_llseek,
+};
+
+static ssize_t sec_tsp_sponge_log_read(struct file *file, char __user *buf,
+				       size_t len, loff_t *offset)
+{
+	return sec_tsp_ring_proc_read(&sec_tsp_sponge_ring, buf, len, offset);
+}
+
+static const struct file_operations tsp_sponge_log_file_ops = {
+	.owner		= THIS_MODULE,
+	.read		= sec_tsp_sponge_log_read,
+	.llseek		= generic_file_llseek,
 };
 
 static int __init sec_tsp_log_late_init(void)
 {
 	struct proc_dir_entry *entry;
 
-	if (!sec_tsp_log_buf)
-		return 0;
-
-	entry = proc_create("tsp_msg", S_IFREG | S_IRUSR | S_IRGRP,
-			NULL, &tsp_msg_file_ops);
-	if (!entry) {
-		pr_err("%s: failed to create proc entry of tsp_msg\n", __func__);
-		return 0;
+	if (sec_tsp_log_ring.buf) {
+		entry = proc_create("tsp_msg", 0440, NULL, &tsp_msg_file_ops);
+		if (entry)
+			proc_set_size(entry, sec_tsp_log_ring.size);
+		else
+			pr_err("%s: failed to create proc entry tsp_msg\n", __func__);
 	}
 
-	proc_set_size(entry, sec_tsp_log_size);
+#ifdef CONFIG_TOUCHSCREEN_DUAL_FOLDABLE
+	if (sec_tsp_raw_main_ring.buf) {
+		entry = proc_create("tsp_raw_data", 0444, NULL, &tsp_raw_data_file_ops);
+		if (entry)
+			proc_set_size(entry, sec_tsp_raw_main_ring.size +
+					     sec_tsp_raw_sub_ring.size);
+		else
+			pr_err("%s: failed to create proc entry tsp_raw_data\n", __func__);
+	}
+#else
+	if (sec_tsp_raw_ring.buf) {
+		entry = proc_create("tsp_raw_data", 0444, NULL, &tsp_raw_data_file_ops);
+		if (entry)
+			proc_set_size(entry, sec_tsp_raw_ring.size);
+		else
+			pr_err("%s: failed to create proc entry tsp_raw_data\n", __func__);
+	}
+#endif
+
+	if (sec_tsp_cmd_hist_ring.buf) {
+		entry = proc_create("tsp_cmd_hist", 0444, NULL, &tsp_command_history_file_ops);
+		if (entry)
+			proc_set_size(entry, sec_tsp_cmd_hist_ring.size);
+		else
+			pr_err("%s: failed to create proc entry tsp_cmd_hist\n", __func__);
+	}
+
+	if (sec_tsp_sponge_ring.buf) {
+		entry = proc_create("tsp_sponge_log", 0444, NULL, &tsp_sponge_log_file_ops);
+		if (entry)
+			proc_set_size(entry, sec_tsp_sponge_ring.size);
+		else
+			pr_err("%s: failed to create proc entry tsp_sponge_log\n", __func__);
+	}
+
 	return 0;
 }
 late_initcall(sec_tsp_log_late_init);
 
-static int __init sec_tsp_raw_data_late_init(void)
-{
-	struct proc_dir_entry *entry;
-
-	if (!sec_tsp_raw_data_buf)
-		return 0;
-
-	entry = proc_create("tsp_raw_data", S_IFREG | 0444,
-			NULL, &tsp_raw_data_file_ops);
-	if (!entry) {
-		pr_err("%s: failed to create proc entry of tsp_raw_data\n", __func__);
-		return 0;
-	}
-
-	proc_set_size(entry, sec_tsp_raw_data_size);
-
-	return 0;
-}
-late_initcall(sec_tsp_raw_data_late_init);
-
-static int __init sec_tsp_command_history_late_init(void)
-{
-	struct proc_dir_entry *entry;
-
-	if (!sec_tsp_command_history_buf)
-		return 0;
-
-	entry = proc_create("tsp_cmd_hist", S_IFREG | 0444,
-			NULL, &tsp_command_history_file_ops);
-	if (!entry) {
-		pr_err("%s: failed to create proc entry of tsp_command_history\n", __func__);
-		return 0;
-	}
-
-	proc_set_size(entry, sec_tsp_command_history_size);
-
-	return 0;
-}
-late_initcall(sec_tsp_command_history_late_init);
-
 static int __init __init_sec_tsp_log(void)
 {
-	char *vaddr;
+	int ret;
 
-	sec_tsp_log_size = SEC_TSP_LOG_BUF_SIZE;
-	vaddr = kmalloc(sec_tsp_log_size, GFP_KERNEL);
-
-	if (!vaddr) {
-		pr_info("%s: ERROR! init failed!\n", __func__);
-		return -ENOMEM;
-	}
-
-	sec_tsp_log_buf = vaddr;
-
-	pr_info("%s: init done\n", __func__);
-
-	return 0;
-}
-fs_initcall(__init_sec_tsp_log);	/* earlier than device_initcall */
-
-static int __init __init_sec_tsp_raw_data(void)
-{
-	char *vaddr;
-
-	sec_tsp_raw_data_size = SEC_TSP_RAW_DATA_BUF_SIZE;
-	vaddr = kmalloc(sec_tsp_raw_data_size, GFP_KERNEL);
-
-	if (!vaddr) {
-		pr_info("%s: ERROR! init failed!\n", __func__);
-		return -ENOMEM;
-	}
-
-	sec_tsp_raw_data_buf = vaddr;
+	ret = sec_tsp_ring_init(&sec_tsp_log_ring, SEC_TSP_LOG_BUF_SIZE);
+	if (ret)
+		return ret;
 
 #ifdef CONFIG_TOUCHSCREEN_DUAL_FOLDABLE
-	sec_tsp_raw_data_index_sub = (sec_tsp_raw_data_size / 2);
+	ret = sec_tsp_ring_init(&sec_tsp_raw_main_ring, SEC_TSP_RAW_DATA_BUF_SIZE / 2);
+	if (ret)
+		return ret;
+	ret = sec_tsp_ring_init(&sec_tsp_raw_sub_ring, SEC_TSP_RAW_DATA_BUF_SIZE / 2);
+	if (ret)
+		return ret;
+#else
+	ret = sec_tsp_ring_init(&sec_tsp_raw_ring, SEC_TSP_RAW_DATA_BUF_SIZE);
+	if (ret)
+		return ret;
 #endif
 
-	pr_info("%s: init done\n", __func__);
+	ret = sec_tsp_ring_init(&sec_tsp_cmd_hist_ring, SEC_TSP_COMMAND_HISTORY_BUF_SIZE);
+	if (ret)
+		return ret;
 
-	return 0;
-}
-fs_initcall(__init_sec_tsp_raw_data);	/* earlier than device_initcall */
-
-static int __init __init_sec_tsp_command_history(void)
-{
-	char *vaddr;
-
-	sec_tsp_command_history_size = SEC_TSP_COMMAND_HISTORY_BUF_SIZE;
-	vaddr = kmalloc(sec_tsp_command_history_size, GFP_KERNEL);
-
-	if (!vaddr) {
-		pr_info("%s: ERROR! init failed!\n", __func__);
-		return -ENOMEM;
-	}
-
-	sec_tsp_command_history_buf = vaddr;
+	ret = sec_tsp_ring_init(&sec_tsp_sponge_ring, SEC_TSP_SPONGE_LOG_BUF_SIZE);
+	if (ret)
+		return ret;
 
 	pr_info("%s: init done\n", __func__);
-
 	return 0;
 }
-fs_initcall(__init_sec_tsp_command_history);	/* earlier than device_initcall */
-
-/* Sponge Infinite dump */
-static int sec_tsp_sponge_log_index;
-static char *sec_tsp_sponge_log_buf;
-static unsigned int sec_tsp_sponge_log_size;
-static int sec_tsp_sponge_log_index_fix;
-
-void sec_tsp_sponge_log(char *buf)
-{
-	int len = 0;
-	unsigned int idx;
-	size_t size;
-
-	/* In case of sec_tsp_log_setup is failed */
-	if (!sec_tsp_sponge_log_size || !sec_tsp_sponge_log_buf)
-		return;
-
-	idx = sec_tsp_sponge_log_index;
-	size = strlen(buf);
-
-	/* Overflow buffer size */
-	if (idx + size + 1 > sec_tsp_sponge_log_size) {
-		if (sec_tsp_sponge_log_index_fix + size + 1 > sec_tsp_sponge_log_size)
-			return;
-		len = scnprintf(&sec_tsp_sponge_log_buf[sec_tsp_sponge_log_index_fix],
-					size + 1, "%s ", buf);
-		sec_tsp_sponge_log_index = sec_tsp_sponge_log_index_fix + len;
-	} else {
-		len = scnprintf(&sec_tsp_sponge_log_buf[idx],
-					size + 1, "%s ", buf);
-		sec_tsp_sponge_log_index += len;
-	}
-}
-EXPORT_SYMBOL(sec_tsp_sponge_log);
-
-static ssize_t sec_tsp_sponge_log_read(struct file *file, char __user *buf,
-					size_t len, loff_t *offset)
-{
-	loff_t pos = *offset;
-	ssize_t count;
-
-	if (!sec_tsp_sponge_log_buf)
-		return 0;
-
-	if (pos >= sec_tsp_sponge_log_index)
-		return 0;
-
-	count = min(len, (size_t)(sec_tsp_sponge_log_index - pos));
-	if (copy_to_user(buf, sec_tsp_sponge_log_buf + pos, count))
-		return -EFAULT;
-	*offset += count;
-	return count;
-}
-
-static const struct file_operations tsp_sponge_log_file_ops = {
-	.owner = THIS_MODULE,
-	.read = sec_tsp_sponge_log_read,
-	.llseek = generic_file_llseek,
-};
-
-static int __init sec_tsp_sponge_log_late_init(void)
-{
-	struct proc_dir_entry *entry;
-
-	if (!sec_tsp_sponge_log_buf)
-		return 0;
-
-	entry = proc_create("tsp_sponge_log", S_IFREG | 0444,
-			NULL, &tsp_sponge_log_file_ops);
-	if (!entry) {
-		pr_err("%s: failed to create proc entry of tsp_sponge_log\n", __func__);
-		return 0;
-	}
-
-	proc_set_size(entry, sec_tsp_sponge_log_size);
-
-	return 0;
-}
-late_initcall(sec_tsp_sponge_log_late_init);
-
-static int __init __init_sec_tsp_sponge_log(void)
-{
-	char *vaddr;
-
-	sec_tsp_sponge_log_size = SEC_TSP_SPONGE_LOG_BUF_SIZE;
-	vaddr = kmalloc(sec_tsp_sponge_log_size, GFP_KERNEL);
-
-	if (!vaddr) {
-		pr_info("%s: ERROR! init failed!\n", __func__);
-		return -ENOMEM;
-	}
-
-	sec_tsp_sponge_log_buf = vaddr;
-
-	pr_info("%s: init done\n", __func__);
-
-	return 0;
-}
-fs_initcall(__init_sec_tsp_sponge_log);	/* earlier than device_initcall */
+fs_initcall(__init_sec_tsp_log);
 
 #endif /* CONFIG_SEC_DEBUG_TSP_LOG */
-
