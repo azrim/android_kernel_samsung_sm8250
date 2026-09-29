@@ -2018,6 +2018,15 @@ static bool ts_read_coord(struct zt_ts_info *info)
 	if (info->touch_info[0].byte00.value.eid == COORDINATE_EVENT) {
 		info->touched_finger_num = info->touch_info[0].byte07.value.left_event;
 
+		/*
+		 * left_event is a 4-bit field (0..15) but only
+		 * MAX_SUPPORTED_FINGER_NUM - 1 extra points fit after
+		 * touch_info[0]. A larger value would make the read below write
+		 * past touch_info[] into touch_fod_info/fod_touch_vi_data.
+		 */
+		if (info->touched_finger_num > info->cap_info.multi_fingers - 1)
+			info->touched_finger_num = info->cap_info.multi_fingers - 1;
+
 		if (info->touched_finger_num > 0) {
 			if (read_data(info->client, ZT_POINT_STATUS_REG1, (u8 *)(&info->touch_info[1]),
 						(info->touched_finger_num) * sizeof(struct point_info)) < 0) {
@@ -3428,9 +3437,14 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 	}
 
 	if (!mutex_trylock(&info->work_lock)) {
+		/*
+		 * Another context owns the controller right now. Drop this
+		 * frame, but do NOT synthesise a finger-up: the finger may
+		 * still be down and the next frame carries its real state.
+		 * Whoever holds work_lock releases what it needs to.
+		 */
 		input_err(true, &client->dev, "%s: Failed to occupy work lock\n", __func__);
 		write_cmd(client, ZT_CLEAR_INT_STATUS_CMD);
-		clear_report_data(info);
 		return IRQ_HANDLED;
 	}
 #if ESD_TIMER_INTERVAL
@@ -3441,9 +3455,12 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 		input_err(true, &client->dev, "%s: Other process occupied\n", __func__);
 		usleep_range(DELAY_FOR_SIGNAL_DELAY, DELAY_FOR_SIGNAL_DELAY);
 
+		/*
+		 * Discard the stale frame only. A busy work_state does not mean
+		 * the finger is gone, so do not release anything here.
+		 */
 		if (!gpio_get_value(info->pdata->gpio_int)) {
 			write_cmd(client, ZT_CLEAR_INT_STATUS_CMD);
-			clear_report_data(info);
 			usleep_range(DELAY_FOR_SIGNAL_DELAY, DELAY_FOR_SIGNAL_DELAY);
 		}
 
@@ -3474,6 +3491,19 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 			continue;
 
 		tid = info->touch_info[i].byte00.value.tid;
+
+		/*
+		 * tid is a 4-bit field (0..15) while cur_coord[]/old_coord[] only
+		 * have MAX_SUPPORTED_FINGER_NUM entries. A bogus tid would write
+		 * past the array and corrupt the neighbouring state, so ignore
+		 * the point instead.
+		 */
+		if (tid >= info->cap_info.multi_fingers) {
+			input_dbg(true, &client->dev,
+					"%s: bogus tid %d (max %d), ignored\n",
+					__func__, tid, info->cap_info.multi_fingers);
+			continue;
+		}
 
 		info->cur_coord[tid].id = tid;
 		info->cur_coord[tid].touch_status = tstatus;
