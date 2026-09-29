@@ -131,10 +131,14 @@ enum power_control {
  * A RELEASE reported by the controller is held for this long and cancelled if
  * the same slot reports PRESS/MOVE again. A one-frame release+re-press is
  * decoded by Android as finger-up followed by finger-down, i.e. a spurious
- * tap/click in the middle of a drag or a scroll. Keeping the window short
- * bounds the extra latency added to a real release.
+ * tap/click in the middle of a drag or a scroll.
+ *
+ * Only the end of a drag is held back: a tap (finger travel below
+ * ZT_REL_MIN_MOVE) is committed immediately, exactly as before, so that fast
+ * consecutive taps on a keyboard are never merged into a single glide.
  */
 #define ZT_REL_DEBOUNCE_MS			25
+#define ZT_REL_MIN_MOVE				40
 
 /*Test Mode (Monitoring Raw Data) */
 #define TSP_INIT_TEST_RATIO  100
@@ -866,12 +870,13 @@ struct zt_ts_info {
 
 	/*
 	 * Deferred finger release (glitch filter). rel_pending[i] is set when
-	 * the controller reports FINGER_RELEASE for slot i; the release is only
-	 * committed if the slot does not come back within ZT_REL_DEBOUNCE_MS.
-	 * rel_timer/rel_work provide the safety net when no further interrupt
-	 * arrives to resolve it.
+	 * the controller reports FINGER_RELEASE for a slot that was dragging;
+	 * the release is only committed if the slot does not come back before
+	 * rel_deadline[i]. rel_timer/rel_work provide the safety net when no
+	 * further interrupt arrives to resolve it.
 	 */
 	bool rel_pending[MAX_SUPPORTED_FINGER_NUM];
+	unsigned long rel_deadline[MAX_SUPPORTED_FINGER_NUM];
 	unsigned int glitch_count;
 	struct timer_list rel_timer;
 	struct work_struct rel_work;
@@ -3712,17 +3717,21 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 	}
 
 	/*
-	 * Resolve any deferred release against this frame. If the controller
-	 * reports the same slot again (PRESS/MOVE) the release was a one-frame
-	 * glitch: swallow it and keep the touch continuous. Otherwise the
-	 * finger is really gone, so commit the release now.
+	 * Resolve any deferred release against this frame. If the same slot
+	 * comes back (PRESS/MOVE) inside the debounce window the release was a
+	 * one-frame glitch: swallow it and keep the touch continuous.
+	 * Otherwise - the finger is really gone, or the window has expired -
+	 * commit the release now. The window is checked against jiffies rather
+	 * than trusting the timer/work to run on time, so a delayed workqueue
+	 * can never extend it and merge two separate taps.
 	 */
 	for (i = 0; i < info->cap_info.multi_fingers; i++) {
 		if (!info->rel_pending[i])
 			continue;
 
-		if (info->cur_coord[i].touch_status == FINGER_PRESS ||
-				info->cur_coord[i].touch_status == FINGER_MOVE) {
+		if (time_before(jiffies, info->rel_deadline[i]) &&
+				(info->cur_coord[i].touch_status == FINGER_PRESS ||
+				 info->cur_coord[i].touch_status == FINGER_MOVE)) {
 			info->rel_pending[i] = false;
 			info->glitch_count++;
 			/*
@@ -3873,19 +3882,26 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 				info->move_count[i]++;
 			}
 		} else if (info->cur_coord[i].touch_status == FINGER_RELEASE) {
+			int dx = (int)info->cur_coord[i].x - (int)info->pressed_x[i];
+			int dy = (int)info->cur_coord[i].y - (int)info->pressed_y[i];
+
 			location_detect(info, location, info->cur_coord[i].x, info->cur_coord[i].y);
 
 			/*
-			 * Hold the release for a short window (ZT_REL_DEBOUNCE_MS).
-			 * If this slot comes back in the next frame it was a
-			 * glitch and the touch stays continuous; otherwise the
-			 * resolve loop above, or zt_rel_work(), commits it.
+			 * Hold the release only at the end of a drag/scroll. A tap
+			 * (finger travel below ZT_REL_MIN_MOVE) is committed right
+			 * away, exactly as before, so consecutive taps on a
+			 * keyboard are never merged into a glide.
 			 */
-			if (!info->rel_pending[i]) {
+			if (info->rel_pending[i]) {
+				zt_flush_release(info, i);
+			} else if (abs(dx) + abs(dy) >= ZT_REL_MIN_MOVE) {
 				info->rel_pending[i] = true;
-				mod_timer(&info->rel_timer,
-						jiffies + msecs_to_jiffies(ZT_REL_DEBOUNCE_MS));
+				info->rel_deadline[i] = jiffies +
+					msecs_to_jiffies(ZT_REL_DEBOUNCE_MS);
+				mod_timer(&info->rel_timer, info->rel_deadline[i]);
 			} else {
+				info->rel_pending[i] = true;
 				zt_flush_release(info, i);
 			}
 
