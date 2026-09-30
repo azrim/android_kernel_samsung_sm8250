@@ -564,6 +564,7 @@ static int synx_release_core(struct synx_table_row *row)
 int synx_release(s32 synx_obj)
 {
 	int rc;
+	s32 idx;
 	struct synx_table_row *row  = NULL;
 	struct dma_fence *fence;
 	struct synx_handle_entry *entry;
@@ -588,9 +589,19 @@ int synx_release(s32 synx_obj)
 		return -EINVAL;
 	}
 
+	/*
+	 * synx_release_core() wipes the row for a merged object
+	 * (synx_deinit_object() memsets it), so row->index and row->fence
+	 * are invalid once it returns. Cache them first and drop the
+	 * reference taken by synx_from_handle() explicitly, keeping the row
+	 * lock held while doing so (see synx_release_handle()).
+	 */
+	idx = row->index;
 	fence = row->fence;
 	rc = synx_release_core(row);
-	synx_release_handle(row);
+	mutex_lock(&synx_dev->row_locks[idx]);
+	dma_fence_put(fence);
+	mutex_unlock(&synx_dev->row_locks[idx]);
 	return rc;
 }
 
