@@ -6820,7 +6820,8 @@ static void binder_in_transaction(struct binder_proc *proc, int uid)
 						break;
 					}
 				}
-				else if (w->type != BINDER_WORK_TRANSACTION_COMPLETE && w->type != BINDER_WORK_NODE) {
+				else if (w->type != BINDER_WORK_TRANSACTION_COMPLETE && w->type != BINDER_WORK_NODE &&
+					 w->type != BINDER_WORK_FROZEN_BINDER && w->type != BINDER_WORK_CLEAR_FREEZE_NOTIFICATION) {
 					found = true;
 					break;
 				}
@@ -6855,7 +6856,8 @@ static void binder_in_transaction(struct binder_proc *proc, int uid)
 					break;
 				}
 			}
-			else if (w->type != BINDER_WORK_TRANSACTION_COMPLETE && w->type != BINDER_WORK_NODE) {
+			else if (w->type != BINDER_WORK_TRANSACTION_COMPLETE && w->type != BINDER_WORK_NODE &&
+				 w->type != BINDER_WORK_FROZEN_BINDER && w->type != BINDER_WORK_CLEAR_FREEZE_NOTIFICATION) {
 				found = true;
 				break;
 			}
