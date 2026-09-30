@@ -3486,13 +3486,27 @@ static int a96t3x6_remove(struct i2c_client *client)
 	}
 #endif
 
-	/* 2. Free IRQ synchronously before cancelling works and freeing data */
+	/*
+	 * 2. Remove every sysfs entry point before tearing the instance down:
+	 *    a store callback (e.g. grip enable) must not run against a freed
+	 *    IRQ or a torn-down input device.
+	 */
+	sensors_unregister(data->dev, grip_sensor_attributes);
+
+	if (data->input_dev) {
+		sysfs_remove_group(&data->input_dev->dev.kobj,
+				   &a96t3x6_input_attr_group);
+		sensors_remove_symlink(&data->input_dev->dev.kobj,
+				       data->input_dev->name);
+	}
+
+	/* 3. Free IRQ synchronously before cancelling works and freeing data */
 	if (data->irq >= 0) {
 		free_irq(data->irq, data);
 		data->irq = -1;
 	}
 
-	/* 3. Cancel all pending and running delayed/standard works synchronously */
+	/* 4. Cancel all pending and running delayed/standard works synchronously */
 	cancel_delayed_work_sync(&data->debug_work);
 #ifdef CONFIG_SENSORS_FW_VENDOR
 	cancel_delayed_work_sync(&data->firmware_work);
@@ -3506,14 +3520,8 @@ static int a96t3x6_remove(struct i2c_client *client)
 	cancel_work_sync(&data->cmdon_work);
 #endif
 
-	/* 4. Remove sysfs groups, symlinks, and unregister devices */
-	sensors_unregister(data->dev, grip_sensor_attributes);
-
+	/* 5. Unregister input devices */
 	if (data->input_dev) {
-		sysfs_remove_group(&data->input_dev->dev.kobj,
-				   &a96t3x6_input_attr_group);
-		sensors_remove_symlink(&data->input_dev->dev.kobj,
-				       data->input_dev->name);
 		input_unregister_device(data->input_dev);
 		data->input_dev = NULL;
 	}
@@ -3523,14 +3531,14 @@ static int a96t3x6_remove(struct i2c_client *client)
 		data->noti_input_dev = NULL;
 	}
 
-	/* 5. Power off hardware and release GPIO */
+	/* 6. Power off hardware and release GPIO */
 	if (data->power)
 		data->power(data, false);
 
 	if (gpio_is_valid(data->grip_int))
 		gpio_free(data->grip_int);
 
-	/* 6. Destroy synchronization primitives and free driver memory */
+	/* 7. Destroy synchronization primitives and free driver memory */
 	wake_lock_destroy(&data->grip_wake_lock);
 	mutex_destroy(&data->lock);
 	kfree(data);
