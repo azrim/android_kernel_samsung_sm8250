@@ -6845,42 +6845,6 @@ static void binder_in_transaction(struct binder_proc *proc, int uid)
 	}
 
 	//check binder proc todo list
-#ifdef CONFIG_FAST_TRACK
-        empty = binder_proc_worklist_empty_ilocked(proc);
-	if (!empty) {
-		list_for_each_entry(w, &proc->todo, entry) {
-			if (w->type == BINDER_WORK_TRANSACTION) {
-				t = container_of(w, struct binder_transaction, work);
-				if (!(t->flags & TF_ONE_WAY)) {
-					found = true;
-					break;
-				}
-			}
-			else if (w->type != BINDER_WORK_TRANSACTION_COMPLETE && w->type != BINDER_WORK_NODE) {
-				found = true;
-				break;
-			}
-		}
-		list_for_each_entry(w, &proc->fg_todo, entry) {
-			if (w->type == BINDER_WORK_TRANSACTION) {
-				t = container_of(w, struct binder_transaction, work);
-				if (!(t->flags & TF_ONE_WAY)) {
-					found = true;
-					break;
-				}
-			}
-			else if (w->type != BINDER_WORK_TRANSACTION_COMPLETE && w->type != BINDER_WORK_NODE) {
-				found = true;
-				break;
-			}
-		}
-		if (found == true) {
-			binder_inner_proc_unlock(proc);
-			cfb_report(uid, "proc");
-			return;
-		}
-	}
-#else
 	empty = binder_worklist_empty_ilocked(&proc->todo);
 	if (!empty) {
 		list_for_each_entry(w, &proc->todo, entry) {
@@ -6903,7 +6867,6 @@ static void binder_in_transaction(struct binder_proc *proc, int uid)
 			return;
 		}
 	}
-#endif
 	binder_inner_proc_unlock(proc);
 }
 
