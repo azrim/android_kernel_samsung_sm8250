@@ -1250,15 +1250,25 @@ static enum hrtimer_restart pd_timeout(struct hrtimer *timer)
 static void log_decoded_request(struct usbpd *pd, u32 rdo)
 {
 	const u32 *pdos;
+	int n_pdos;
 	int pos = PD_RDO_OBJ_POS(rdo);
 	int type;
 
 	usbpd_dbg(&pd->dev, "RDO: 0x%08x\n", pd->rdo);
 
-	if (pd->current_pr == PR_SINK)
+	if (pd->current_pr == PR_SINK) {
 		pdos = pd->received_pdos;
-	else
+		n_pdos = ARRAY_SIZE(pd->received_pdos);
+	} else {
 		pdos = default_src_caps;
+		n_pdos = ARRAY_SIZE(default_src_caps);
+	}
+
+	/* Obj Pos comes from the peer; bound it before indexing pdos[] */
+	if (pos < 1 || pos > n_pdos) {
+		usbpd_dbg(&pd->dev, "RDO Object Position %d out of range\n", pos);
+		return;
+	}
 
 	type = PD_SRC_PDO_TYPE(pdos[pos - 1]);
 
