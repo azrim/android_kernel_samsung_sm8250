@@ -3172,18 +3172,29 @@ static void freecess_async_binder_report(struct binder_proc *proc,
 		&& (proc->pid != target_proc->pid)) {
 		if (thread_group_is_frozen(target_proc->tsk)) {
 			if (t->buffer->data_size > skip_bytes) {
-				if (0 == copy_from_user(buf_user, (const void __user *)(uintptr_t)tr->data.ptr.buffer,
-					min_t(binder_size_t, tr->data_size, INTERFACETOKEN_BUFF_SIZE - 2))) {
-					p = &buf_user[skip_bytes];
-					i = 0;
-					j = skip_bytes + 1;
-					while (i < INTERFACETOKEN_BUFF_SIZE && j < t->buffer->data_size && *p != '\0') {
-						buf[i++] = *p;
-						j += 2;
-						p += 2;
-					}
-					if (i == INTERFACETOKEN_BUFF_SIZE) buf[i-1] = '\0';
+				/*
+				 * Read the interface token from the kernel-side
+				 * copy of the transaction data (t->buffer) that
+				 * binder_transaction() already populated. Reading
+				 * it again from tr->data.ptr.buffer would be a
+				 * double-fetch: userspace can modify that buffer
+				 * between the copy and this read.
+				 */
+				binder_alloc_copy_from_buffer(&target_proc->alloc,
+					buf_user, t->buffer, 0,
+					min_t(binder_size_t, t->buffer->data_size,
+					      INTERFACETOKEN_BUFF_SIZE - 2));
+				p = &buf_user[skip_bytes];
+				i = 0;
+				j = skip_bytes + 1;
+				while (i < INTERFACETOKEN_BUFF_SIZE &&
+				       j < t->buffer->data_size && *p != '\0') {
+					buf[i++] = *p;
+					j += 2;
+					p += 2;
 				}
+				if (i == INTERFACETOKEN_BUFF_SIZE)
+					buf[i-1] = '\0';
 				binder_report(target_proc->tsk, tr->code, buf, tr->flags & TF_ONE_WAY);
 			}
 		}
