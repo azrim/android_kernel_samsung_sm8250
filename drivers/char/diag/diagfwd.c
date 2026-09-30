@@ -1711,7 +1711,8 @@ static void diag_hdlc_start_recovery(unsigned char *buf, int len,
 	for (i = 0; i < len; i++) {
 		if (actual_pkt->start == CONTROL_CHAR &&
 				actual_pkt->version == 1 &&
-				actual_pkt->length < len &&
+				actual_pkt->length <
+					len - (int)sizeof(struct diag_pkt_frame_t) &&
 				(*(uint8_t *)(buf +
 				sizeof(struct diag_pkt_frame_t) +
 				actual_pkt->length) == CONTROL_CHAR)) {
