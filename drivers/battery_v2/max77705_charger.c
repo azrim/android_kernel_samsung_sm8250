@@ -2695,6 +2695,8 @@ static int max77705_charger_request_irqs(struct max77705_charger_data *charger,
 	if (ret) {
 		pr_err("%s: Failed to Request IRQ\n", __func__);
 		charger->wc_w_irq = 0;
+		if (charger->pdata->chg_irq)
+			free_irq(charger->pdata->chg_irq, charger);
 		return ret;
 	}
 #endif
@@ -2949,6 +2951,19 @@ static int max77705_charger_remove(struct platform_device *pdev)
 		free_irq(charger->irq_bat, charger);
 #endif
 
+	/*
+	 * Detach the external power-supply interfaces first: once they are
+	 * unregistered no caller can queue new work, so draining and then
+	 * destroying the workqueue is safe. This mirrors the
+	 * err_unreg_psy -> err_destroy_wq ordering of the probe path.
+	 */
+	if (charger->psy_chg) {
+		max77705_chg_destroy_attrs(&charger->psy_chg->dev);
+		power_supply_unregister(charger->psy_chg);
+	}
+	if (charger->psy_otg)
+		power_supply_unregister(charger->psy_otg);
+
 	/* Synchronously cancel all works */
 	if (charger->pdata && charger->pdata->chg_irq)
 		cancel_delayed_work_sync(&charger->isr_work);
@@ -2961,13 +2976,6 @@ static int max77705_charger_remove(struct platform_device *pdev)
 #endif
 
 	destroy_workqueue(charger->wqueue);
-
-	if (charger->psy_chg) {
-		max77705_chg_destroy_attrs(&charger->psy_chg->dev);
-		power_supply_unregister(charger->psy_chg);
-	}
-	if (charger->psy_otg)
-		power_supply_unregister(charger->psy_otg);
 
 	wakeup_source_unregister(charger->sysovlo_wake_lock);
 	wakeup_source_unregister(charger->otg_wake_lock);
