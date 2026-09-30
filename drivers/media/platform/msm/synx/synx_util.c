@@ -598,6 +598,8 @@ void *synx_from_handle(s32 synx_obj)
 	if ((base >> 16) != (synx_obj >> 16)) {
 		pr_err("current client: %d, base: %d, synx_obj: 0x%x\n",
 			current->tgid, base, synx_obj);
+		/* drop the reference taken above before bailing out */
+		synx_release_handle(row);
 		return NULL;
 	}
 
