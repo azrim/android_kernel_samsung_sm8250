@@ -615,7 +615,8 @@ static void process_ssid_range_report(uint8_t *buf, uint32_t len,
 }
 
 static void diag_build_time_mask_update(uint8_t *buf,
-					struct diag_ssid_range_t *range)
+					struct diag_ssid_range_t *range,
+					int buf_len)
 {
 	int i;
 	int j;
@@ -655,7 +656,8 @@ static void diag_build_time_mask_update(uint8_t *buf,
 			       __func__);
 		}
 		dest_ptr = build_mask->ptr;
-		for (j = 0; (j < build_mask->range) && mask_ptr && dest_ptr;
+		for (j = 0; (j < build_mask->range) && mask_ptr && dest_ptr &&
+		     (j < buf_len / (int)sizeof(uint32_t));
 			j++, mask_ptr++, dest_ptr++)
 			*(uint32_t *)dest_ptr |= *mask_ptr;
 		mutex_unlock(&build_mask->lock);
@@ -696,6 +698,7 @@ static void process_build_mask_report(uint8_t *buf, uint32_t len,
 	int i;
 	int read_len = 0;
 	int num_items = 0;
+	int remaining = 0;
 	int header_len = sizeof(struct diag_ctrl_build_mask_report);
 	uint8_t *ptr = buf;
 	struct diag_ctrl_build_mask_report *header = NULL;
@@ -714,7 +717,14 @@ static void process_build_mask_report(uint8_t *buf, uint32_t len,
 		ptr += sizeof(struct diag_ssid_range_t);
 		read_len += sizeof(struct diag_ssid_range_t);
 		num_items = range->ssid_last - range->ssid_first + 1;
-		diag_build_time_mask_update(ptr, range);
+		remaining = (int)len - (int)(ptr - buf);
+		if (remaining < 0)
+			remaining = 0;
+		diag_build_time_mask_update(ptr, range, remaining);
+		/* the range must fit in the bytes actually received */
+		if (num_items <= 0 ||
+		    (long long)num_items * sizeof(uint32_t) > remaining)
+			break;
 		ptr += num_items * sizeof(uint32_t);
 		read_len += num_items * sizeof(uint32_t);
 	}
