@@ -253,6 +253,7 @@ static int __init kfreecess_pkg_init(void)
 	int ret;
 	int i;
 	struct net *net;
+	struct net *failed_net = NULL;
 
 	for (i = 0; i < MAX_REC_UID; i++)
 		atomic_set(&uid_rec[i], 0);
@@ -263,14 +264,24 @@ static int __init kfreecess_pkg_init(void)
 						ARRAY_SIZE(freecess_nf_ops));
 		if (ret < 0) {
 			pr_err("nf_register_hooks(freecess hooks) error\n");
+			failed_net = net;
 			break;
 		}
 	}
 	rtnl_unlock();
 
-	if (ret < 0) {
+	if (failed_net) {
+		/*
+		 * Only the namespaces iterated before the failing one were
+		 * successfully registered; unregister just those. Calling
+		 * nf_unregister_net_hooks() on the failing and later
+		 * namespaces would warn ("hook not found") for hooks that
+		 * were never registered.
+		 */
 		rtnl_lock();
 		for_each_net(net) {
+			if (net == failed_net)
+				break;
 			nf_unregister_net_hooks(net, freecess_nf_ops,
 						ARRAY_SIZE(freecess_nf_ops));
 		}
