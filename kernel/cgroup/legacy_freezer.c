@@ -457,13 +457,11 @@ static u64 freezer_parent_freezing_read(struct cgroup_subsys_state *css,
  */
 static int freezer_can_attach(struct cgroup_taskset *tset)
 {
-	const struct cred *cred = current_cred(), *tcred;
+	const struct cred *cred = current_cred();
 	struct task_struct *task;
 	struct cgroup_subsys_state *css;
 
 	cgroup_taskset_for_each(task, css, tset) {
-		tcred = __task_cred(task);
-
 		//Only system process and root have the permission.
 		if ((current != task) && !(cred->euid.val == 1000 || capable(CAP_SYS_ADMIN))) {
 			pr_err("Permission problem\n");
