@@ -15,6 +15,7 @@
  */
 
 #include <linux/err.h>
+#include <linux/delay.h>
 #include <linux/mm.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
@@ -365,9 +366,15 @@ static int ion_rbin_heap_prereclaim(void *data)
 			if (PTR_ERR(page) == -ENOMEM)
 				break;
 			if (PTR_ERR(page) == -EBUSY) {
-				if (time_is_after_jiffies(jiffies_bstop))
+				if (time_is_after_jiffies(jiffies_bstop)) {
+					/*
+					 * The rbin region is busy; back off
+					 * instead of spinning so we don't
+					 * starve other tasks on this CPU.
+					 */
+					usleep_range(1000, 2000);
 					continue;
-				else
+				} else
 					break;
 			}
 			last_size = page_private(page);
