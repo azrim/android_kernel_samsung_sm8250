@@ -511,6 +511,10 @@ static void diagfwd_data_read_untag_done(struct diagfwd_info *fwd_info,
 		}
 
 		while (processed < len) {
+			/* Do not read the 4-byte header past the bytes received */
+			if ((len - processed) < 4)
+				goto end;
+
 			/* Debug log to check diag_id header validity*/
 			pr_debug("diag_fr:untagged packet buf contents: %02x %02x %02x %02x\n",
 			 *temp_buf_main, *(temp_buf_main+1),
@@ -532,6 +536,9 @@ static void diagfwd_data_read_untag_done(struct diagfwd_info *fwd_info,
 			packet_len =
 				*(uint16_t *) (temp_buf_main + 2);
 			if (packet_len > PERIPHERAL_BUF_SZ)
+				goto end;
+			/* Do not read past the bytes actually received */
+			if (packet_len > (len - processed) - 4)
 				goto end;
 			if ((*temp_buf_main) ==
 				fwd_info->root_diag_id.diagid_val) {
