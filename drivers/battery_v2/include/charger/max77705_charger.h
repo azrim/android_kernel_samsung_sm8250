@@ -40,6 +40,7 @@ extern int factory_mode;
 
 extern void max77705_set_fw_noautoibus(int enable);
 extern void max77705_set_snkcap(u8 *snkcap_data, int length);
+void max77705_usbc_icurr(u8 curr);
 
 ssize_t max77705_chg_show_attrs(struct device *dev,
 				struct device_attribute *attr, char *buf);
