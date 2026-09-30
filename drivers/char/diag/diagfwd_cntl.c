@@ -865,6 +865,11 @@ static void process_diagid(uint8_t *buf, uint32_t len,
 		}
 		packet_v2 = (struct diag_ctrl_diagid_v2 *)buf;
 		feature_len = (uint32_t)packet_v2->feature_len;
+		if (feature_len > sizeof(pd_feature_mask)) {
+			pr_err("diag: Invalid feature_len(%u) from peripheral: %d\n",
+				feature_len, peripheral);
+			return;
+		}
 		memcpy((uint32_t *)&pd_feature_mask,
 			&packet_v2->pd_feature_mask, feature_len);
 		process_name = (char *)&packet_v2->feature_len +
