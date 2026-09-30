@@ -127,6 +127,8 @@ int synx_create(s32 *synx_obj, const char *name)
 	bool bit;
 	s32 id;
 	struct synx_table_row *row = NULL;
+	struct synx_handle_entry *entry;
+	unsigned long flags;
 
 	pr_debug("Enter %s\n", __func__);
 
@@ -152,6 +154,14 @@ int synx_create(s32 *synx_obj, const char *name)
 			idx, id, name, &synx_fence_ops);
 	if (rc < 0) {
 		pr_err("unable to init row at idx = %ld\n", idx);
+		/*
+		 * synx_create_handle() already published the handle in the
+		 * IDR table, so unwind it to avoid a dangling entry.
+		 */
+		spin_lock_irqsave(&synx_dev->idr_lock, flags);
+		entry = idr_remove(&synx_dev->synx_ids, id);
+		spin_unlock_irqrestore(&synx_dev->idr_lock, flags);
+		kfree(entry);
 		clear_bit(idx, synx_dev->bitmap);
 		return -EINVAL;
 	}
@@ -445,6 +455,8 @@ int synx_merge(s32 *synx_objs, u32 num_objs, s32 *synx_merged)
 	u32 count = 0;
 	struct dma_fence **fences = NULL;
 	struct synx_table_row *row = NULL;
+	struct synx_handle_entry *entry;
+	unsigned long flags;
 
 	pr_debug("Enter %s\n", __func__);
 
@@ -471,11 +483,24 @@ int synx_merge(s32 *synx_objs, u32 num_objs, s32 *synx_merged)
 
 	/* global synx id */
 	id = synx_create_handle(synx_dev->synx_table + idx);
+	if (id < 0) {
+		pr_err("unable to allocate the synx handle\n");
+		rc = id;
+		goto clear;
+	}
 
 	rc = synx_init_group_object(synx_dev->synx_table,
 			idx, id, fences, count);
 	if (rc < 0) {
 		pr_err("unable to init row at idx = %ld\n", idx);
+		/*
+		 * synx_create_handle() already published the handle in the
+		 * IDR table, so unwind it to avoid a dangling entry.
+		 */
+		spin_lock_irqsave(&synx_dev->idr_lock, flags);
+		entry = idr_remove(&synx_dev->synx_ids, id);
+		spin_unlock_irqrestore(&synx_dev->idr_lock, flags);
+		kfree(entry);
 		goto clear;
 	}
 
