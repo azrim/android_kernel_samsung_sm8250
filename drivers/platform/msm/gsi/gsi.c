@@ -632,7 +632,7 @@ static void gsi_process_evt_re(struct gsi_evt_ctx *ctx,
 		struct gsi_chan_xfer_notify *notify, bool callback)
 {
 	struct gsi_xfer_compl_evt *evt;
-	struct gsi_chan_ctx *ch_ctx;
+	struct gsi_chan_ctx *ch_ctx = NULL;
 
 	evt = (struct gsi_xfer_compl_evt *)(ctx->ring.base_va +
 			ctx->ring.rp_local - ctx->ring.base);
@@ -641,8 +641,9 @@ static void gsi_process_evt_re(struct gsi_evt_ctx *ctx,
 	 * Increment RP local only in polling context to avoid
 	 * sys len mismatch.
 	 */
-	ch_ctx = &gsi_ctx->chan[evt->chid];
-	if (callback && ch_ctx->props.dir == GSI_CHAN_DIR_FROM_GSI)
+	if (evt->chid < gsi_ctx->max_ch)
+		ch_ctx = &gsi_ctx->chan[evt->chid];
+	if (callback && ch_ctx && ch_ctx->props.dir == GSI_CHAN_DIR_FROM_GSI)
 		return;
 	gsi_incr_ring_rp(&ctx->ring);
 	/* recycle this element */
@@ -1656,6 +1657,11 @@ static int gsi_cleanup_xfer_user_data(unsigned long chan_hdl,
 	struct gsi_chan_ctx *ctx;
 	uint64_t i;
 	uint16_t rp_idx;
+
+	if (unlikely(chan_hdl >= gsi_ctx->max_ch)) {
+		GSIERR("bad chan_hdl=%lu\n", chan_hdl);
+		return -GSI_STATUS_INVALID_PARAMS;
+	}
 
 	ctx = &gsi_ctx->chan[chan_hdl];
 	if (ctx->state != GSI_CHAN_STATE_ALLOCATED) {
