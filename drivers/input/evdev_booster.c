@@ -1,113 +1,90 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Samsung Input Booster - evdev event filter
+ */
+
 #ifdef CONFIG_SEC_INPUT_BOOSTER
-int chk_next_data(struct evdev_client *dev, int idx, int input_type)
+
+static inline bool chk_next_data(struct evdev_client *dev, int idx, int input_type)
 {
-	int ret_val = 0;
-	int next_type = -1;
-	int next_code = -1;
-
-	int next_idx = (idx+1) & (dev->bufsize - 1);
-
-	next_type = dev->buffer[next_idx].type;
-	next_code = dev->buffer[next_idx].code;
+	int next_idx = (idx + 1) & (dev->bufsize - 1);
+	int next_type = dev->buffer[next_idx].type;
+	int next_code = dev->buffer[next_idx].code;
 
 	switch (input_type) {
 	case BTN_TOUCH:
-		if (next_type == EV_ABS && next_code == ABS_PRESSURE)
-			ret_val = 1;
-		break;
+		return (next_type == EV_ABS && next_code == ABS_PRESSURE);
 	case EV_KEY:
-		ret_val = 1;
-		break;
+		return (next_type == EV_KEY);
 	default:
-		break;
+		return false;
 	}
-
-	return ret_val;
 }
 
-int chk_boost_on_off(struct evdev_client *dev, int idx, int dev_type)
+static inline int chk_boost_on_off(struct evdev_client *dev, int idx, int dev_type)
 {
-	int ret_val = -1;
+	int val;
 
-	if (dev_type < 0)
-		return ret_val;
+	if (dev_type < 0 || dev_type >= MAX_DEVICE_TYPE_NUM)
+		return -EINVAL;
 
-	/* In case of SPEN or HOVER, it must be empty multi event
-	 * Before starting input booster.
-	 */
+	val = dev->buffer[idx].value;
+
 	if (dev_type == SPEN || dev_type == HOVER) {
-		if (!dev->mt_event[dev_type] && dev->buffer[idx].value)
-			ret_val = 1;
-		else if (dev->mt_event[dev_type] && !dev->buffer[idx].value)
-			ret_val = 0;
-	} else if (dev_type == TOUCH || dev_type == MULTI_TOUCH) {
-		if (dev->buffer[idx].value >= 0)
-			ret_val = 1;
-		else
-			ret_val = 0;
-	} else if (dev->buffer[idx].value > 0)
-		ret_val = 1;
-	else if (dev->buffer[idx].value <= 0)
-		ret_val = 0;
+		if (!dev->mt_event[dev_type] && val)
+			return BOOSTER_ON;
+		if (dev->mt_event[dev_type] && !val)
+			return BOOSTER_OFF;
+		return -EINVAL;
+	}
 
-	return ret_val;
+	if (dev_type == TOUCH || dev_type == MULTI_TOUCH)
+		return (val >= 0) ? BOOSTER_ON : BOOSTER_OFF;
+
+	return (val > 0) ? BOOSTER_ON : BOOSTER_OFF;
 }
 
 /*
- * get_device_type : Define type of device for input_booster.
- * dev : Current device that in which input events triggered.
- * keyId : Each device get given unique keyid using Type, Code, Slot values
- *  to identify which booster will be triggered.
- * cur_idx : Pointing current handling index from input booster.
- *  cur_idx will be updated when cur_idx is same as head.
- * head : End of events set. Input booster handles from tail event to head events.
- *  Must check if the event is the last one referring to head.
+ * get_device_type : Identify the device type and boost action for an input packet.
+ *
+ * Scans the evdev_client ring buffer between *cur_idx and head to find
+ * the trigger event. Once classified, returns BOOSTER_ON (1) or BOOSTER_OFF (0),
+ * or negative errno if the packet contains no booster event.
  */
-int get_device_type(struct evdev_client *dev, unsigned int *keyId, int *cur_idx, int head)
+int get_device_type(struct evdev_client *dev, unsigned int *key_id,
+		    int *cur_idx, int head)
 {
+	int mask;
 	int i;
-	int ret_val = -1;
+	int ret_val = -EINVAL;
 	int dev_type = NONE_TYPE_DEVICE;
 	int uniq_slot = 0;
-	int next_idx = 0 ;
 	int target_idx = 0;
 
-	if (dev == NULL) {
-		pr_debug("evdev client is null");
-		return ret_val;
-	}
-	/*
-	 * Must advance *cur_idx toward head even on this bail-out.
-	 * input_booster() treats a negative return as "skip this slot"
-	 * and continues the loop; without an index move that spins
-	 * forever under ib_type_lock with IRQs off.
-	 */
-	if (dev->ev_cnt > MAX_EVENTS) {
-		pr_debug("evdev client is null and exceed max event number");
+	if (unlikely(!dev))
+		return -EINVAL;
+
+	if (unlikely(dev->ev_cnt > MAX_EVENTS)) {
 		*cur_idx = head;
-		return ret_val;
+		return -EINVAL;
 	}
 
-	/* Initializing device type before finding the proper device type. */
-	dev->device_type = dev_type;
+	mask = dev->bufsize - 1;
+	i = *cur_idx;
+	dev->device_type = NONE_TYPE_DEVICE;
 
-	for (i = *cur_idx; i != head; i=(i+1) & (dev->bufsize - 1)) {
-		pr_booster("%s Type : %d, Code : %d, Value : %d, Head : %d, idx : %d\n",
-			"Input Data || ", dev->buffer[i].type,
-			dev->buffer[i].code, dev->buffer[i].value,
-			head, i);
+	for (; i != head; i = (i + 1) & mask) {
+		const struct input_event *ev = &dev->buffer[i];
 
-		if ( dev->buffer[i].type == EV_SYN || dev->buffer[i].code == SYN_REPORT) {
+		if (ev->type == EV_SYN || ev->code == SYN_REPORT)
 			break;
-		}
 
-		if (dev->buffer[i].type == EV_KEY) {
+		if (ev->type == EV_KEY) {
 			target_idx = i;
-			switch (dev->buffer[i].code) {
+			switch (ev->code) {
 			case BTN_TOUCH:
-				if (!chk_next_data(dev, i, BTN_TOUCH))
-					break;
-				dev_type = SPEN;
+				if (chk_next_data(dev, i, BTN_TOUCH))
+					dev_type = SPEN;
 				break;
 			case BTN_TOOL_PEN:
 				dev_type = HOVER;
@@ -126,162 +103,115 @@ int get_device_type(struct evdev_client *dev, unsigned int *keyId, int *cur_idx,
 			default:
 				break;
 			}
-
-		} else if (dev->buffer[i].type == EV_ABS) {
+		} else if (ev->type == EV_ABS && ev->code == ABS_MT_TRACKING_ID) {
 			target_idx = i;
-			switch (dev->buffer[i].code) {
-			case ABS_MT_TRACKING_ID:
-
-				if (dev->buffer[i].value >= 0) {
-					dev->touch_slot_cnt++;
-				} else {
+			if (ev->value >= 0) {
+				dev->touch_slot_cnt++;
+				if (dev->touch_slot_cnt == 1) {
+					dev_type = TOUCH;
+					uniq_slot = 1;
+				} else if (dev->touch_slot_cnt == 2) {
+					dev_type = MULTI_TOUCH;
+					uniq_slot = 2;
+				}
+			} else {
+				if (dev->touch_slot_cnt > 0)
 					dev->touch_slot_cnt--;
+				if (dev->touch_slot_cnt == 0) {
+					dev_type = TOUCH;
+					uniq_slot = 1;
+				} else if (dev->touch_slot_cnt == 1) {
+					dev_type = MULTI_TOUCH;
+					uniq_slot = 2;
 				}
-
-				if (dev->buffer[i].value >= 0) {
-					if (dev->touch_slot_cnt == 1) {
-						dev_type = TOUCH;
-						uniq_slot = 1;
-					} else if (dev->touch_slot_cnt == 2) {
-						dev_type = MULTI_TOUCH;
-						uniq_slot = 2;
-					}
-				} else if (dev->buffer[i].value < 0) {
-					//ret_val = 0;
-					if (dev->touch_slot_cnt == 0) {
-						dev_type = TOUCH;
-						uniq_slot = 1;
-					} else if (dev->touch_slot_cnt == 1) {
-						dev_type = MULTI_TOUCH;
-						uniq_slot = 2;
-					}
-				}
-
-				pr_booster("Touch Booster Trigger(%d), Type(%d), Code(%d), Val(%d), head(%d), Tail(%d), uniq_slot(%d), Idx(%d), Cnt(%d)",
-					dev->touch_slot_cnt, dev->buffer[i].type, dev->buffer[i].code, dev->buffer[i].value, head, dev->tail, uniq_slot, i, dev->ev_cnt);
-
-				break;
 			}
-		} else if (dev->buffer[i].type == EV_MSC &&
-					dev->buffer[i].code == MSC_SCAN) {
-
-			if (!chk_next_data(dev, i, EV_KEY)) {
+		} else if (ev->type == EV_MSC && ev->code == MSC_SCAN) {
+			if (!chk_next_data(dev, i, EV_KEY))
 				break;
-			}
-			next_idx = (i+1) & (dev->bufsize - 1);
-			target_idx = next_idx;
-			switch (dev->buffer[next_idx].code) {
-			case BTN_LEFT: /* Checking Touch Button Event */
+
+			target_idx = (i + 1) & mask;
+			uniq_slot = dev->buffer[target_idx].code;
+			switch (uniq_slot) {
+			case BTN_LEFT:
 			case BTN_RIGHT:
 			case BTN_MIDDLE:
 				dev_type = MOUSE;
-				//Remain the last of CODE value as a uniq_slot to recognize BTN Type (LEFT, RIGHT, MIDDLE)
-				uniq_slot = dev->buffer[next_idx].code;
 				break;
-			default: /* Checking Keyboard Event */
+			default:
 				dev_type = KEYBOARD;
-				uniq_slot = dev->buffer[next_idx].code;
-
-				pr_booster("KBD Booster Trigger(%d), Type(%d), Code(%d), Val(%d), head(%d), Tail(%d), Idx(%d), Cnt(%d)\n",
-						dev->buffer[next_idx].code, dev->buffer[i].type,
-						dev->buffer[i].code, dev->buffer[i].value,
-						head, dev->tail, i, dev->ev_cnt);
 				break;
 			}
 		}
 
-		if (dev_type != NONE_TYPE_DEVICE ) {
-			*keyId = create_uniq_id(dev->buffer[i].type, dev->buffer[i].code, uniq_slot);
+		if (dev_type != NONE_TYPE_DEVICE) {
+			*key_id = create_uniq_id(ev->type, ev->code, uniq_slot);
 			ret_val = chk_boost_on_off(dev, target_idx, dev_type);
-			pr_booster("Dev type Find(%d), KeyID(%d), enable(%d), Target(%d)\n",
-				dev_type, *keyId, ret_val, target_idx);
 			break;
 		}
-
 	}
-	// if for loop reach the end, cur_idx is set as head value or pointing next one with plus one.
-	// Especially, dev->bufsize has to be set as a 2^n.
-	// In the code that set bufzise, we can see bufsize would be set using roundup_pow_of_two function.
-	// return roundup_pow_of_two(n_events);
-	// which means "A power of two is a number of the form 2n where n is an integer"
 
-	*cur_idx = (i == head) ? head : ((i+1) & (dev->bufsize - 1));
-
+	*cur_idx = (i == head) ? head : ((i + 1) & mask);
 	dev->device_type = dev_type;
 	return ret_val;
 }
 
-// ********** Detect Events ********** //
-void input_booster(struct evdev_client* dev, int dev_head) {
-	int dev_type = 0;
-	int keyId = 0;
-	unsigned int uniqId = 0;
-	int res_type = 0;
-	int cur_idx = -1;
-	int head = 0;
-	int slot = 0;
+/*
+ * input_booster : Hot-path hook called on SYN_REPORT under ib_type_lock.
+ *
+ * Inspects recent events, determines if boost threshold is crossed,
+ * claims a lockless trigger slot, and queues work onto ev_unbound_wq.
+ * No memory allocations or sleeps are permitted in this path.
+ */
+void input_booster(struct evdev_client *dev, int dev_head)
+{
+	int mask, head, cur_idx;
 
-	if (dev == NULL) {
-		pr_debug(ITAG"dev is Null");
+	if (unlikely(!dev || !ib_init_succeed || dev->ev_cnt == 0))
 		return;
-	}
 
-	if (!ib_init_succeed || dev->ev_cnt == 0) {
-		pr_debug(ITAG"ev_cnt(%d) dt_infor hasn't mem alloc", dev->ev_cnt);
-		return;
-	}
-
+	mask = dev->bufsize - 1;
 	head = dev_head;
-	cur_idx = (head- dev->ev_cnt) & (dev->bufsize - 1);
+	cur_idx = (head - dev->ev_cnt) & mask;
 
 	while (cur_idx != head) {
-		keyId = 0;
-		int enable = get_device_type(dev, &keyId, &cur_idx, head);
-		if (enable < 0 || keyId == 0) {
-			continue;
-		}
+		unsigned int key_id = 0;
+		int enable = get_device_type(dev, &key_id, &cur_idx, head);
+		int dev_type = dev->device_type;
+		int slot;
 
-		dev_type = dev->device_type;
-		if (dev_type <= NONE_TYPE_DEVICE || dev_type >= MAX_DEVICE_TYPE_NUM) {
+		if (enable < 0 || key_id == 0)
 			continue;
-		}
 
-		if (enable == BOOSTER_ON) {
+		if (dev_type <= NONE_TYPE_DEVICE || dev_type >= MAX_DEVICE_TYPE_NUM)
+			continue;
+
+		if (enable == BOOSTER_ON)
 			dev->mt_event[dev_type]++;
-		} else {
+		else if (dev->mt_event[dev_type] > 0)
 			dev->mt_event[dev_type]--;
-		}
 
-		/*
-		 * Claim a slot whose worker has already finished, so the payload
-		 * written below cannot race a worker still reading that slot.
-		 */
 		slot = ib_trigger_get_slot();
-		if (slot < 0) {
-			pr_booster("IB Trigger :: all slots busy, drop event");
+		if (unlikely(slot < 0))
 			continue;
+
+		if (dev->evdev && dev->evdev->handle.dev &&
+		    dev->evdev->handle.dev->name) {
+			strscpy(ib_trigger[slot].dev_name,
+				dev->evdev->handle.dev->name,
+				sizeof(ib_trigger[slot].dev_name));
+		} else {
+			ib_trigger[slot].dev_name[0] = '\0';
 		}
 
-		if (dev->evdev->handle.dev != NULL) {
-			const char *name = dev->evdev->handle.dev->name;
-			int n = 0;
-
-			while (n < (int)sizeof(ib_trigger[slot].dev_name) - 1 &&
-					name[n] != '\0') {
-				ib_trigger[slot].dev_name[n] = name[n];
-				n++;
-			}
-			ib_trigger[slot].dev_name[n] = '\0';
-		}
-
-		pr_booster("Dev Name : %s(%d), Key Id(%d), IB_Slot(%d)", ib_trigger[slot].dev_name, dev_type, keyId, slot);
-
-		ib_trigger[slot].key_id = keyId;
+		ib_trigger[slot].key_id = key_id;
 		ib_trigger[slot].event_type = enable;
 		ib_trigger[slot].dev_type = dev_type;
 
-		if (!queue_work(ev_unbound_wq, &ib_trigger[slot].ib_trigger_work))
+		if (!queue_work(ev_unbound_wq, &ib_trigger[slot].ib_trigger_work)) {
+			/* Pairs with acquire in ib_trigger_get_slot */
 			smp_store_release(&ib_trigger[slot].in_use, 0);
+		}
 	}
 }
-#endif //--CONFIG_SEC_INPUT_BOOSTER
+
+#endif /* CONFIG_SEC_INPUT_BOOSTER */
