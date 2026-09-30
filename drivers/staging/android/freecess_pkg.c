@@ -21,6 +21,7 @@
 
 #define MAX_REC_UID 64
 static atomic_t uid_rec[MAX_REC_UID];
+static DEFINE_SPINLOCK(uid_rec_lock);
 extern void binders_in_transcation(int uid);
 
 static void freecess_add_uid(uid_t uid)
@@ -28,6 +29,7 @@ static void freecess_add_uid(uid_t uid)
 	int i, j;
 	uid_t inner_uid;
 
+	spin_lock_bh(&uid_rec_lock);
 	for (i = 0, j = MAX_REC_UID; i < MAX_REC_UID; i++) {
 		inner_uid = atomic_read(&uid_rec[i]);
 		if (inner_uid == 0 && j == MAX_REC_UID)
@@ -41,6 +43,7 @@ static void freecess_add_uid(uid_t uid)
 	else
 		pr_err("%s : add uid:%d failed (full)!\n", __func__, uid);
 out:
+	spin_unlock_bh(&uid_rec_lock);
 
 	return;
 }
@@ -49,6 +52,7 @@ static void freecess_del_uid(uid_t uid)
 {
 	int i;
 	uid_t inner_uid;
+	spin_lock_bh(&uid_rec_lock);
 	
 	for (i = 0; i < MAX_REC_UID; i++) {
 		inner_uid = (uid_t)atomic_read(&uid_rec[i]);
@@ -57,6 +61,7 @@ static void freecess_del_uid(uid_t uid)
 			break;
 		}
 	}
+	spin_unlock_bh(&uid_rec_lock);
 
 	return;
 }
@@ -65,9 +70,11 @@ static void freecess_clear_all(void)
 {
 	int i;
 
+	spin_lock_bh(&uid_rec_lock);
 	for (i = 0; i < MAX_REC_UID; i++) {
 		atomic_set(&uid_rec[i], 0);
 	}
+	spin_unlock_bh(&uid_rec_lock);
 
 	return;
 }
@@ -78,6 +85,7 @@ static int find_and_clear_uid(uid_t uid)
 	int i = 0;
 	uid_t inner_uid;
 
+	spin_lock_bh(&uid_rec_lock);
 	for (i = 0; i < MAX_REC_UID; i++) {
 		inner_uid = atomic_read(&uid_rec[i]);
 		if (unlikely (inner_uid == uid)) {
@@ -86,6 +94,7 @@ static int find_and_clear_uid(uid_t uid)
 			break;
 		}
 	}
+	spin_unlock_bh(&uid_rec_lock);
 
 	return found;
 }
