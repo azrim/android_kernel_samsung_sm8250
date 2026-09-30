@@ -3339,7 +3339,9 @@ static bool upgrade_fw_partial_download(struct zt_ts_info *info, const u8 *firmw
 
 	for (i = 0; i < g_fw_info.info_size; ) {
 		for (idx = 0; idx < info->tsp_page_size / nsectorsize; idx++) {
-			if (write_data(client, VCMD_UPGRADE_WRITE_FLASH, (char *)&firmware_data[i], nsectorsize) != 0) {
+			if (write_data(client, VCMD_UPGRADE_WRITE_FLASH,
+					       (char *)&firmware_data[i],
+					       nsectorsize) < 0) {
 				input_err(true, &client->dev, "%s: failed to write flash\n", __func__);
 				return false;
 			}
@@ -3359,7 +3361,9 @@ static bool upgrade_fw_partial_download(struct zt_ts_info *info, const u8 *firmw
 
 	for (i = info->tsp_page_size * erase_start_page_num; i < nmemsz; ) {
 		for (idx = 0; idx < info->tsp_page_size / nsectorsize; idx++) {
-			if (write_data(client, VCMD_UPGRADE_WRITE_FLASH, (char *)&firmware_data[i], nsectorsize) != 0) {
+			if (write_data(client, VCMD_UPGRADE_WRITE_FLASH,
+					       (char *)&firmware_data[i],
+					       nsectorsize) < 0) {
 				input_err(true, &client->dev, "%s: failed to write flash\n", __func__);
 				return false;
 			}
@@ -7459,13 +7463,25 @@ static int init_sec_factory(struct zt_ts_info *info)
 }
 
 #ifdef USE_MISC_DEVICE
+/*
+ * Lifetime gate for the misc node: the ioctl path dereferences the global
+ * misc_info throughout, so removal deregisters the node (blocking new opens)
+ * and then waits until every open fd has been released before freeing the
+ * instance.
+ */
+static atomic_t ts_misc_open_cnt = ATOMIC_INIT(0);
+static DECLARE_WAIT_QUEUE_HEAD(ts_misc_close_wq);
+
 static int ts_misc_fops_open(struct inode *inode, struct file *filp)
 {
+	atomic_inc(&ts_misc_open_cnt);
 	return 0;
 }
 
 static int ts_misc_fops_close(struct inode *inode, struct file *filp)
 {
+	atomic_dec(&ts_misc_open_cnt);
+	wake_up_all(&ts_misc_close_wq);
 	return 0;
 }
 
@@ -8570,6 +8586,16 @@ static int zt_ts_remove(struct i2c_client *client)
 	struct zt_ts_info *info = i2c_get_clientdata(client);
 	struct zt_ts_platform_data *pdata = info->pdata;
 
+#ifdef USE_MISC_DEVICE
+	/*
+	 * Block new ioctls and wait for any in-flight one to finish before
+	 * tearing the instance down; the ioctl dereferences misc_info
+	 * throughout its body.
+	 */
+	misc_deregister(&touch_misc_device);
+	wait_event(ts_misc_close_wq, atomic_read(&ts_misc_open_cnt) == 0);
+#endif
+
 	disable_irq(info->irq);
 
 	cancel_delayed_work_sync(&info->work_read_info);
@@ -8598,9 +8624,6 @@ static int zt_ts_remove(struct i2c_client *client)
 
 	if (info->irq)
 		free_irq(info->irq, info);
-#ifdef USE_MISC_DEVICE
-	misc_deregister(&touch_misc_device);
-#endif
 
 	if (gpio_is_valid(pdata->gpio_int) != 0)
 		gpio_free(pdata->gpio_int);
