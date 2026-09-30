@@ -4823,9 +4823,13 @@ static ssize_t ufshpb_attr_show(struct kobject *kobj, struct attribute *attr,
 	if (!entry->show)
 		return -EIO;
 
+	if (ufshpb_lu_get(hpb))
+		return -ENODEV;
+
 	mutex_lock(&hpb->sysfs_lock);
 	error = entry->show(hpb, page);
 	mutex_unlock(&hpb->sysfs_lock);
+	ufshpb_lu_put(hpb);
 	return error;
 }
 
@@ -4842,9 +4846,13 @@ static ssize_t ufshpb_attr_store(struct kobject *kobj, struct attribute *attr,
 	if (!entry->store)
 		return -EIO;
 
+	if (ufshpb_lu_get(hpb))
+		return -ENODEV;
+
 	mutex_lock(&hpb->sysfs_lock);
 	error = entry->store(hpb, page, len);
 	mutex_unlock(&hpb->sysfs_lock);
+	ufshpb_lu_put(hpb);
 	return error;
 }
 
