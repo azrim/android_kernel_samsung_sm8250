@@ -4377,8 +4377,9 @@ static ssize_t ufshpb_sysfs_lba_info_store(struct ufshpb_lu *hpb,
 	       return -EINVAL;
        }
 
-       if (value > hpb->lu_num_blocks * SECTORS_PER_BLOCK) {
-	       ERR_MSG("value %lu > lu_num_blocks %d error",
+       if (value >= (unsigned long long)hpb->lu_num_blocks *
+		       SECTORS_PER_BLOCK) {
+	       ERR_MSG("value %lu >= lu_num_blocks %d error",
 		       value, hpb->lu_num_blocks);
 	       return -EINVAL;
        }
@@ -4665,8 +4666,9 @@ static ssize_t ufshpb_sysfs_info_lba_store(struct ufshpb_lu *hpb,
 		return -EINVAL;
 	}
 
-	if (value > hpb->lu_num_blocks * SECTORS_PER_BLOCK) {
-		ERR_MSG("value %lu > lu_num_blocks %d error",
+	if (value >= (unsigned long long)hpb->lu_num_blocks *
+			SECTORS_PER_BLOCK) {
+		ERR_MSG("value %lu >= lu_num_blocks %d error",
 			value, hpb->lu_num_blocks);
 		return -EINVAL;
 	}
