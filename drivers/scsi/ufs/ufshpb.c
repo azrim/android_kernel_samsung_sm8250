@@ -3870,7 +3870,7 @@ static void ufshpb_destroy_region_tbl(struct ufshpb_lu *hpb)
 
 void ufshpb_release(struct ufsf_feature *ufsf, int state)
 {
-	struct ufshpb_lu *hpb;
+	struct ufshpb_lu *hpb[UFS_UPIU_MAX_GENERAL_LUN];
 	int lun;
 
 	RELEASE_INFO("start release");
@@ -3879,29 +3879,38 @@ void ufshpb_release(struct ufsf_feature *ufsf, int state)
 	RELEASE_INFO("kref count %d",
 		     atomic_read(&ufsf->ufshpb_kref.refcount.refs));
 
+	/* Unpublish every LU first so no new rsp_upiu can pick one up. */
 	seq_scan_lu(lun) {
-		hpb = ufsf->ufshpb_lup[lun];
-
-		RELEASE_INFO("lun %d %p", lun, hpb);
-
+		hpb[lun] = ufsf->ufshpb_lup[lun];
 		ufsf->ufshpb_lup[lun] = NULL;
+	}
 
-		if (!hpb)
+	/*
+	 * A response UPIU handled in interrupt context may have loaded a
+	 * ufshpb_lup[] entry just before it was cleared above.  Wait for any
+	 * such handler to drain before freeing the objects it could reach.
+	 */
+	synchronize_irq(ufsf->hba->irq);
+
+	seq_scan_lu(lun) {
+		RELEASE_INFO("lun %d %p", lun, hpb[lun]);
+
+		if (!hpb[lun])
 			continue;
 
-		ufshpb_cancel_jobs(hpb);
+		ufshpb_cancel_jobs(hpb[lun]);
 
-		ufshpb_destroy_region_tbl(hpb);
-		if (hpb->alloc_mctx != 0)
-			WARNING_MSG("warning: alloc_mctx %d", hpb->alloc_mctx);
+		ufshpb_destroy_region_tbl(hpb[lun]);
+		if (hpb[lun]->alloc_mctx != 0)
+			WARNING_MSG("warning: alloc_mctx %d", hpb[lun]->alloc_mctx);
 
-		ufshpb_map_req_mempool_remove(hpb);
+		ufshpb_map_req_mempool_remove(hpb[lun]);
 
-		ufshpb_pre_req_mempool_remove(hpb);
+		ufshpb_pre_req_mempool_remove(hpb[lun]);
 
-		ufshpb_remove_sysfs(hpb);
+		ufshpb_remove_sysfs(hpb[lun]);
 
-		kfree(hpb);
+		kfree(hpb[lun]);
 	}
 
 	ufsf->ufshpb_state = state;
