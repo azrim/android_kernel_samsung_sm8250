@@ -2895,10 +2895,13 @@ static int dwc3_msm_resume(struct dwc3_msm *mdwc)
 	 * If h/w exited LPM without any events, ensure
 	 * h/w is reset before processing any new events.
 	 */
-	if (!mdwc->vbus_active && mdwc->id_state)
-		set_bit(WAIT_FOR_LPM, &mdwc->inputs);
-
 	mutex_lock(&mdwc->suspend_resume_mutex);
+	/*
+	 * vbus_active/id_state are also updated from the extcon notifier
+	 * paths, so read them with READ_ONCE to avoid a torn/unordered read.
+	 */
+	if (!READ_ONCE(mdwc->vbus_active) && READ_ONCE(mdwc->id_state))
+		set_bit(WAIT_FOR_LPM, &mdwc->inputs);
 	if (!atomic_read(&dwc->in_lpm)) {
 		dev_dbg(mdwc->dev, "%s: Already resumed\n", __func__);
 		mutex_unlock(&mdwc->suspend_resume_mutex);
