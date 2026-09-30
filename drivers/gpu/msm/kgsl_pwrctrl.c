@@ -2595,6 +2595,8 @@ static int _init(struct kgsl_device *device)
 	case KGSL_STATE_NAP:
 		/* Force power on to do the stop */
 		status = kgsl_pwrctrl_enable(device);
+		if (status)
+			break;
 	case KGSL_STATE_ACTIVE:
 		kgsl_pwrctrl_irq(device, KGSL_PWRFLAGS_OFF);
 		del_timer_sync(&device->idle_timer);
@@ -2802,6 +2804,8 @@ _slumber(struct kgsl_device *device)
 		kgsl_pwrctrl_irq(device, KGSL_PWRFLAGS_OFF);
 		/* make sure power is on to stop the device*/
 		status = kgsl_pwrctrl_enable(device);
+		if (status)
+			break;
 		device->ftbl->suspend_context(device);
 		device->ftbl->stop(device);
 		kgsl_pwrctrl_clk_set_options(device, false);
@@ -3010,8 +3014,17 @@ int kgsl_active_count_get(struct kgsl_device *device)
 		mutex_unlock(&device->mutex);
 		wait_for_completion(&device->hwaccess_gate);
 		mutex_lock(&device->mutex);
-		device->pwrctrl.superfast = true;
-		ret = kgsl_pwrctrl_change_state(device, KGSL_STATE_ACTIVE);
+		/*
+		 * Another thread may have woken the device while we were
+		 * waiting; only drive the state machine (and mark this wake as
+		 * superfast) if it is still asleep.
+		 */
+		if (atomic_read(&device->active_cnt) == 0 &&
+		    device->state != KGSL_STATE_ACTIVE) {
+			device->pwrctrl.superfast = true;
+			ret = kgsl_pwrctrl_change_state(device,
+							KGSL_STATE_ACTIVE);
+		}
 	}
 	if (ret == 0)
 		atomic_inc(&device->active_cnt);
