@@ -319,8 +319,10 @@ int ufsf_query_ioctl(struct ufsf_feature *ufsf, int lun, void __user *buffer,
 
 		case QUERY_DESC_IDN_STRING:
 #if defined(CONFIG_UFSHPB)
-			if (!ufs_is_valid_unit_desc_lun(lun)) {
-				ERR_MSG("No unit descriptor for lun 0x%x", lun);
+			if (!ufs_is_valid_unit_desc_lun(lun) ||
+			    lun >= ARRAY_SIZE(ufsf->ufshpb_lup) ||
+			    !ufsf->ufshpb_lup[lun]) {
+				ERR_MSG("No HPB context for lun 0x%x", lun);
 				err = -EINVAL;
 				goto out_release_mem;
 			}
