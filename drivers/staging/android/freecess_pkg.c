@@ -18,52 +18,56 @@
 #include <net/inet6_hashtables.h>
 #include <linux/freecess.h>
 
-
 #define MAX_REC_UID 64
 static atomic_t uid_rec[MAX_REC_UID];
 static DEFINE_SPINLOCK(uid_rec_lock);
 extern void binders_in_transcation(int uid);
 
+/*
+ * uid_rec[] is the watch table: a slot holds the UID the daemon asked to
+ * watch, or 0 when the slot is free.  All access is serialised by
+ * uid_rec_lock, and every slot update uses atomic_cmpxchg() so a slot is
+ * never claimed twice and a concurrent delete can never be undone by a
+ * stale read-modify-write.
+ */
 static void freecess_add_uid(uid_t uid)
 {
-	int i, j;
-	uid_t inner_uid;
+	int i;
 
 	spin_lock_bh(&uid_rec_lock);
-	for (i = 0, j = MAX_REC_UID; i < MAX_REC_UID; i++) {
-		inner_uid = atomic_read(&uid_rec[i]);
-		if (inner_uid == 0 && j == MAX_REC_UID)
-			j = i;
-		else if (inner_uid == uid)
+
+	/* Never keep a UID twice. */
+	for (i = 0; i < MAX_REC_UID; i++) {
+		if (atomic_read(&uid_rec[i]) == uid)
 			goto out;
 	}
 
-	if (j < MAX_REC_UID)
-		atomic_set(&uid_rec[j], uid);
-	else
-		pr_err("%s : add uid:%d failed (full)!\n", __func__, uid);
+	/* Claim the first free slot; cmpxchg() makes the claim atomic. */
+	for (i = 0; i < MAX_REC_UID; i++) {
+		if (atomic_cmpxchg(&uid_rec[i], 0, uid) == 0)
+			goto out;
+	}
+
+	pr_err("%s: uid %d not added, table full\n", __func__, uid);
 out:
 	spin_unlock_bh(&uid_rec_lock);
-
-	return;
 }
 
 static void freecess_del_uid(uid_t uid)
 {
 	int i;
-	uid_t inner_uid;
+
 	spin_lock_bh(&uid_rec_lock);
-	
+
 	for (i = 0; i < MAX_REC_UID; i++) {
-		inner_uid = (uid_t)atomic_read(&uid_rec[i]);
-		if (inner_uid == uid) {
-			atomic_set(&uid_rec[i], 0);
+		if (atomic_read(&uid_rec[i]) == uid) {
+			/* Clear the slot only while it still holds @uid. */
+			atomic_cmpxchg(&uid_rec[i], uid, 0);
 			break;
 		}
 	}
-	spin_unlock_bh(&uid_rec_lock);
 
-	return;
+	spin_unlock_bh(&uid_rec_lock);
 }
 
 static void freecess_clear_all(void)
@@ -71,61 +75,65 @@ static void freecess_clear_all(void)
 	int i;
 
 	spin_lock_bh(&uid_rec_lock);
-	for (i = 0; i < MAX_REC_UID; i++) {
-		atomic_set(&uid_rec[i], 0);
-	}
-	spin_unlock_bh(&uid_rec_lock);
 
-	return;
+	for (i = 0; i < MAX_REC_UID; i++) {
+		uid_t uid = atomic_read(&uid_rec[i]);
+
+		if (uid)
+			atomic_cmpxchg(&uid_rec[i], uid, 0);
+	}
+
+	spin_unlock_bh(&uid_rec_lock);
 }
 
 static int find_and_clear_uid(uid_t uid)
 {
 	int found = 0;
-	int i = 0;
-	uid_t inner_uid;
+	int i;
 
 	spin_lock_bh(&uid_rec_lock);
+
 	for (i = 0; i < MAX_REC_UID; i++) {
-		inner_uid = atomic_read(&uid_rec[i]);
-		if (unlikely (inner_uid == uid)) {
+		uid_t inner_uid = atomic_read(&uid_rec[i]);
+
+		if (unlikely(inner_uid == uid)) {
+			/* Only the caller that wins the clear may report. */
 			if (atomic_cmpxchg(&uid_rec[i], uid, 0) == uid)
 				found = 1;
 			break;
 		}
 	}
+
 	spin_unlock_bh(&uid_rec_lock);
 
 	return found;
 }
 
-static void kfreecess_pkg_hook(void* data, unsigned int len)
+static void kfreecess_pkg_hook(void *data, unsigned int len)
 {
-	struct kfreecess_msg_data* payload = (struct kfreecess_msg_data*)data;
+	struct kfreecess_msg_data *payload = data;
 
 	switch (payload->pkg_info.cmd) {
-		case ADD_UID:
-			freecess_add_uid(payload->pkg_info.uid);
-			break;
-		case DEL_UID:
-			freecess_del_uid(payload->pkg_info.uid);
-			break;
-		case CLEAR_ALL_UID:
-			freecess_clear_all();
-			break;
-		default:
-			break;
+	case ADD_UID:
+		freecess_add_uid(payload->pkg_info.uid);
+		break;
+	case DEL_UID:
+		freecess_del_uid(payload->pkg_info.uid);
+		break;
+	case CLEAR_ALL_UID:
+		freecess_clear_all();
+		break;
+	default:
+		break;
 	}
-
-	return;
 }
 
-static void kfreecess_cfb_hook(void* data, unsigned int len)
+static void kfreecess_cfb_hook(void *data, unsigned int len)
 {
-	struct kfreecess_msg_data* payload = (struct kfreecess_msg_data*)data;
+	struct kfreecess_msg_data *payload = data;
 	int uid = payload->target_uid;
 
-	printk(KERN_INFO "cfb_target: uid = %d\n", uid);
+	pr_debug("cfb_target: uid = %d\n", uid);
 	binders_in_transcation(uid);
 }
 
@@ -143,38 +151,48 @@ static uid_t __sock_i_uid(struct sock *sk)
 }
 
 static unsigned int freecess_ip4_in(void *priv,
-					struct sk_buff *skb,
-					const struct nf_hook_state *state)
+				    struct sk_buff *skb,
+				    const struct nf_hook_state *state)
 {
+	struct iphdr *iph;
 	struct sock *sk;
 	uid_t uid;
 	int found;
-	int protocol;
 
-	protocol = ip_hdr(skb)->protocol;
-	if (protocol != IPPROTO_TCP)
+	/* A truncated or malformed packet has no full IP header to read. */
+	if (!pskb_may_pull(skb, sizeof(struct iphdr)))
+		return NF_ACCEPT;
+
+	iph = ip_hdr(skb);
+
+	/* Only the first fragment carries the transport header. */
+	if (iph->frag_off & htons(IP_OFFSET))
+		return NF_ACCEPT;
+
+	if (iph->protocol != IPPROTO_TCP)
 		return NF_ACCEPT;
 
 	sk = skb_to_full_sk(skb);
-	if (sk == NULL || !sk_fullsock(sk))
+	if (!sk || !sk_fullsock(sk))
 		return NF_ACCEPT;
 
 	uid = __sock_i_uid(sk);
 	if (uid < UID_MIN_VALUE)
-		return NF_ACCEPT;	
+		return NF_ACCEPT;
 
 	found = find_and_clear_uid(uid);
 	if (!found)
 		return NF_ACCEPT;
-	else if (pkg_report((int)uid) < 0)
-		pr_err("%s : up report failed!\n", __func__);
+
+	if (pkg_report((int)uid))
+		pr_err("%s: up report failed!\n", __func__);
 
 	return NF_ACCEPT;
 }
 
 static unsigned int freecess_ip6_in(void *priv,
-					struct sk_buff *skb,
-					const struct nf_hook_state *state)
+				    struct sk_buff *skb,
+				    const struct nf_hook_state *state)
 {
 	struct sock *sk;
 	unsigned int thoff = 0;
@@ -183,87 +201,92 @@ static unsigned int freecess_ip6_in(void *priv,
 	uid_t uid;
 	int found;
 
+	/* A truncated or malformed packet has no full IPv6 header to read. */
+	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr)))
+		return NF_ACCEPT;
+
 	protohdr = ipv6_find_hdr(skb, &thoff, -1, &frag_off, NULL);
 	if (protohdr != IPPROTO_TCP)
 		return NF_ACCEPT;
 
-	sk = skb_to_full_sk(skb);
-	if (sk == NULL || !sk_fullsock(sk))
+	/* Only the first fragment carries the transport header. */
+	if (frag_off)
 		return NF_ACCEPT;
 
-	uid = __sock_i_uid(sk);	
+	sk = skb_to_full_sk(skb);
+	if (!sk || !sk_fullsock(sk))
+		return NF_ACCEPT;
+
+	uid = __sock_i_uid(sk);
 	if (uid < UID_MIN_VALUE)
 		return NF_ACCEPT;
 
 	found = find_and_clear_uid(uid);
 	if (!found)
 		return NF_ACCEPT;
-	else if (pkg_report((int)uid) < 0)
-		pr_err("%s : up report failed!\n", __func__);
+
+	if (pkg_report((int)uid))
+		pr_err("%s: up report failed!\n", __func__);
 
 	return NF_ACCEPT;
 }
 
 static inline unsigned int freecess_ip4_out(void *priv,
-					struct sk_buff *skb,
-					const struct nf_hook_state *state)
-{	
+					    struct sk_buff *skb,
+					    const struct nf_hook_state *state)
+{
 	return NF_ACCEPT;
 }
 
 static inline unsigned int freecess_ip6_out(void *priv,
-					struct sk_buff *skb,
-					const struct nf_hook_state *state)
+					    struct sk_buff *skb,
+					    const struct nf_hook_state *state)
 {
 	return NF_ACCEPT;
 }
 
 static struct nf_hook_ops freecess_nf_ops[] = {
-
 	{
-		.hook 		= 	freecess_ip4_in,
-		.pf 		= 	NFPROTO_IPV4,
-		.hooknum 	= 	NF_INET_LOCAL_IN,
-		.priority 	= 	NF_IP_PRI_SELINUX_LAST + 1,
+		.hook		= freecess_ip4_in,
+		.pf		= NFPROTO_IPV4,
+		.hooknum	= NF_INET_LOCAL_IN,
+		.priority	= NF_IP_PRI_SELINUX_LAST + 1,
 	},
 	{
-		.hook 		= 	freecess_ip6_in,
-		.pf 		= 	NFPROTO_IPV6,
-		.hooknum 	= 	NF_INET_LOCAL_IN,
-		.priority 	= 	NF_IP6_PRI_SELINUX_LAST + 1,
-	},
-
-	{
-		.hook		=	freecess_ip4_out,
-		.pf		=	NFPROTO_IPV4,
-		.hooknum	=	NF_INET_LOCAL_OUT,
-		.priority	=	NF_IP_PRI_SELINUX_LAST + 1,
+		.hook		= freecess_ip6_in,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_LOCAL_IN,
+		.priority	= NF_IP6_PRI_SELINUX_LAST + 1,
 	},
 	{
-		.hook 		= 	freecess_ip6_out,
-		.pf 		= 	NFPROTO_IPV6,
-		.hooknum 	= 	NF_INET_LOCAL_OUT,
-		.priority 	= 	NF_IP6_PRI_SELINUX_LAST + 1,
+		.hook		= freecess_ip4_out,
+		.pf		= NFPROTO_IPV4,
+		.hooknum	= NF_INET_LOCAL_OUT,
+		.priority	= NF_IP_PRI_SELINUX_LAST + 1,
 	},
-
+	{
+		.hook		= freecess_ip6_out,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_LOCAL_OUT,
+		.priority	= NF_IP6_PRI_SELINUX_LAST + 1,
+	},
 };
 
 static int __init kfreecess_pkg_init(void)
 {
-	int ret;
-	int i;
 	struct net *net;
 	struct net *failed_net = NULL;
+	int ret = 0;
+	int i;
 
 	for (i = 0; i < MAX_REC_UID; i++)
 		atomic_set(&uid_rec[i], 0);
-	
+
 	rtnl_lock();
 	for_each_net(net) {
 		ret = nf_register_net_hooks(net, freecess_nf_ops,
-						ARRAY_SIZE(freecess_nf_ops));
+					    ARRAY_SIZE(freecess_nf_ops));
 		if (ret < 0) {
-			pr_err("nf_register_hooks(freecess hooks) error\n");
 			failed_net = net;
 			break;
 		}
@@ -271,9 +294,11 @@ static int __init kfreecess_pkg_init(void)
 	rtnl_unlock();
 
 	if (failed_net) {
+		pr_err("%s: nf_register_net_hooks failed: %d\n", __func__, ret);
+
 		/*
 		 * Only the namespaces iterated before the failing one were
-		 * successfully registered; unregister just those. Calling
+		 * registered successfully; unregister just those. Calling
 		 * nf_unregister_net_hooks() on the failing and later
 		 * namespaces would warn ("hook not found") for hooks that
 		 * were never registered.
@@ -286,15 +311,35 @@ static int __init kfreecess_pkg_init(void)
 						ARRAY_SIZE(freecess_nf_ops));
 		}
 		rtnl_unlock();
-		return -1;
-	}
-	
-	pr_err("nf_register_hooks(freecess hooks) success\n");
 
-	register_kfreecess_hook(MOD_PKG, kfreecess_pkg_hook);
-	register_kfreecess_hook(MOD_CFB, kfreecess_cfb_hook);
+		return ret;
+	}
+
+	ret = register_kfreecess_hook(MOD_PKG, kfreecess_pkg_hook);
+	if (ret) {
+		pr_err("%s: register MOD_PKG hook failed: %d\n", __func__, ret);
+		goto err_unreg_hooks;
+	}
+
+	ret = register_kfreecess_hook(MOD_CFB, kfreecess_cfb_hook);
+	if (ret) {
+		pr_err("%s: register MOD_CFB hook failed: %d\n", __func__, ret);
+		unregister_kfreecess_hook(MOD_PKG);
+		goto err_unreg_hooks;
+	}
+
+	pr_debug("freecess pkg hooks registered\n");
 
 	return 0;
+
+err_unreg_hooks:
+	rtnl_lock();
+	for_each_net(net)
+		nf_unregister_net_hooks(net, freecess_nf_ops,
+					ARRAY_SIZE(freecess_nf_ops));
+	rtnl_unlock();
+
+	return ret;
 }
 
 static void __exit kfreecess_pkg_exit(void)
@@ -305,13 +350,11 @@ static void __exit kfreecess_pkg_exit(void)
 	unregister_kfreecess_hook(MOD_CFB);
 
 	rtnl_lock();
-	for_each_net(net) {
+	for_each_net(net)
 		nf_unregister_net_hooks(net, freecess_nf_ops,
 					ARRAY_SIZE(freecess_nf_ops));
-	}
 	rtnl_unlock();
 }
-
 
 module_init(kfreecess_pkg_init);
 module_exit(kfreecess_pkg_exit);
