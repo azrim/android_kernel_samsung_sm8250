@@ -2845,8 +2845,8 @@ static void ufshcd_gate_work(struct work_struct *work)
 						clk_gating.gate_work);
 	unsigned long flags;
 
-	hba->clk_gating.gate_wk_in_process = true;
 	spin_lock_irqsave(hba->host->host_lock, flags);
+	hba->clk_gating.gate_wk_in_process = true;
 
 	if (hba->clk_gating.state == CLKS_OFF)
 		goto rel_lock;
@@ -8550,10 +8550,10 @@ static void ufshcd_err_handler(struct work_struct *work)
 	 * in which case the clocks could be gated or be in the
 	 * process of gating when the err handler runs.
 	 */
-	if (unlikely((hba->clk_gating.state != CLKS_ON) &&
-	    (hba->clk_gating.state == REQ_CLKS_OFF &&
-	     ufshcd_is_link_hibern8(hba)) &&
-	     ufshcd_is_auto_hibern8_enabled(hba))) {
+	if (unlikely((hba->clk_gating.state == REQ_CLKS_OFF ||
+		      hba->clk_gating.state == CLKS_OFF) &&
+		     ufshcd_is_link_hibern8(hba) &&
+		     ufshcd_is_auto_hibern8_enabled(hba))) {
 		spin_unlock_irqrestore(hba->host->host_lock, flags);
 		hba->ufs_stats.clk_hold.ctx = ERR_HNDLR_WORK;
 		ufshcd_hold(hba, false);
@@ -9466,12 +9466,22 @@ static int ufshcd_abort(struct scsi_cmnd *cmd)
 	}
 
 cleanup:
-	scsi_dma_unmap(cmd);
-
+	/*
+	 * Claim the request under host_lock before unmapping. The completion
+	 * IRQ may have finished it already, in which case
+	 * __ufshcd_transfer_req_compl() has set lrb[tag].cmd = NULL and
+	 * unmapped the DMA buffers; unmapping them again here would
+	 * double-unmap the same SG list.
+	 */
 	spin_lock_irqsave(host->host_lock, flags);
 	ufshcd_outstanding_req_clear(hba, tag);
-	hba->lrb[tag].cmd = NULL;
-	spin_unlock_irqrestore(host->host_lock, flags);
+	if (hba->lrb[tag].cmd) {
+		hba->lrb[tag].cmd = NULL;
+		spin_unlock_irqrestore(host->host_lock, flags);
+		scsi_dma_unmap(cmd);
+	} else {
+		spin_unlock_irqrestore(host->host_lock, flags);
+	}
 
 	clear_bit_unlock(tag, &hba->lrb_in_use);
 	wake_up(&hba->dev_cmd.tag_wq);
