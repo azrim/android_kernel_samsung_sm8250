@@ -24,7 +24,7 @@
 static struct sock *kfreecess_mod_sock = NULL;
 static atomic_t bind_port[MOD_END];
 static atomic_t kfreecess_init_suc;
-static int last_kill_pid = -1;
+static atomic_t last_kill_pid = ATOMIC_INIT(-1);
 
 int freecess_fw_version = 0;    // record freecess framework version
 
@@ -144,8 +144,8 @@ int sig_report(struct task_struct *p, bool report_pid)
 	if (report_pid && !p->group_leader->ptrace) {
 		data.flag = target_pid;
 	}
-	if (thread_group_is_frozen(p) && (target_pid != last_kill_pid)) {
-		last_kill_pid = target_pid;
+	if (thread_group_is_frozen(p) && (target_pid != atomic_read(&last_kill_pid))) {
+		atomic_set(&last_kill_pid, target_pid);
 		ret = mod_sendmsg(MSG_TO_USER, MOD_SIG, &data);
 	}
 
@@ -199,6 +199,7 @@ static void recv_handler(struct sk_buff *skb)
 	struct nlmsghdr *nlh = NULL;
 	unsigned int msglen  = 0;
 	uid_t uid = 0;
+	freecess_hook hook;
 
 	if (!skb) {
 		pr_err("recv_handler %s: skb is	NULL!\n", __func__);
@@ -244,13 +245,14 @@ static void recv_handler(struct sk_buff *skb)
 	switch (payload->type) {
 		case LOOPBACK_MSG:
 			atomic_set(&bind_port[payload->mod], payload->src_portid);
-			freecess_fw_version = FREECESS_PEER_VERSION(payload->version);
+			WRITE_ONCE(freecess_fw_version, FREECESS_PEER_VERSION(payload->version));
 			dump_kfreecess_msg(payload);
 			mod_sendmsg(LOOPBACK_MSG, payload->mod, NULL);
 			break;
 		case MSG_TO_KERN:
-			if (mod_recv_handler[payload->mod])
-				mod_recv_handler[payload->mod](payload, sizeof(struct kfreecess_msg_data));
+			hook = READ_ONCE(mod_recv_handler[payload->mod]);
+			if (hook)
+				hook(payload, sizeof(struct kfreecess_msg_data));
 			break;
 		default:
 			pr_err("msg type is valid %d\n", payload->type);
@@ -267,7 +269,7 @@ int register_kfreecess_hook(int mod, freecess_hook hook)
 	}
 
 	if (hook)
-		mod_recv_handler[mod] = hook;
+		WRITE_ONCE(mod_recv_handler[mod], hook);
 	return RET_OK;
 }
 
@@ -277,7 +279,7 @@ int unregister_kfreecess_hook(int mod)
 		pr_err("%s: mod type is invalid! %d\n", __func__, mod);
 		return RET_ERR;
 	}
-	mod_recv_handler[mod] = NULL;
+	WRITE_ONCE(mod_recv_handler[mod], NULL);
 	return RET_OK;
 }
 

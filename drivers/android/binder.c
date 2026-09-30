@@ -3160,11 +3160,11 @@ static void freecess_async_binder_report(struct binder_proc *proc,
 		return;
 
 	// for android P/Q/R verson, skip 8/12/16 bytes;
-	if (freecess_fw_version == 0)
+	if (READ_ONCE(freecess_fw_version) == 0)
 		skip_bytes = 8;
-	else if (freecess_fw_version == 1)
+	else if (READ_ONCE(freecess_fw_version) == 1)
 		skip_bytes = 12;
-	else if (freecess_fw_version == 2)
+	else if (READ_ONCE(freecess_fw_version) == 2)
 		skip_bytes = 16;
 
 	if ((tr->flags & TF_ONE_WAY) && target_proc
