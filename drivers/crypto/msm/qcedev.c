@@ -2056,16 +2056,26 @@ static inline long qcedev_ioctl(struct file *file,
 					pr_err(
 						"%s: err: failed to map fd(%d) - %d\n",
 						__func__, map_buf.fd[i], err);
-					goto exit_free_qcedev_areq;
+					break;
 				}
 				map_buf.buf_vaddr[i] = vaddr;
 				pr_debug("%s: info: vaddr = %llx\n",
 					__func__, vaddr);
 			}
 
-			if (copy_to_user((void __user *)arg, &map_buf,
-					sizeof(map_buf))) {
-				err = -EFAULT;
+			if (err || copy_to_user((void __user *)arg, &map_buf,
+						sizeof(map_buf))) {
+				if (!err)
+					err = -EFAULT;
+				/*
+				 * Roll back every buffer mapped in this batch so
+				 * a failed request does not leak SMMU mappings.
+				 */
+				while (i > 0) {
+					i--;
+					qcedev_check_and_unmap_buffer(handle,
+							map_buf.fd[i]);
+				}
 				goto exit_free_qcedev_areq;
 			}
 			break;
