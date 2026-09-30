@@ -2797,6 +2797,8 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 		/* lock mutex again after resp sent */
 		mutex_lock(&app_access_lock);
 		mutex_lock(&listener_access_lock);
+		/* restore signal mask */
+		sigprocmask(SIG_SETMASK, &old_sigset, NULL);
 		/*
 		 * ptr_svc stayed alive across the wait thanks to the
 		 * reference above; re-check that it is still registered
@@ -2830,8 +2832,6 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 		ptr_svc->send_resp_flag = 0;
 		qseecom.send_resp_flag = 0;
 
-		/* restore signal mask */
-		sigprocmask(SIG_SETMASK, &old_sigset, NULL);
 		if (data->abort || ptr_svc->abort) {
 			pr_err("Abort clnt %d waiting on lstnr svc %d, ret %d\n",
 				data->client.app_id, lstnr, ret);
