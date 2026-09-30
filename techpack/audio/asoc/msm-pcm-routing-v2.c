@@ -5341,6 +5341,48 @@ static int msm_pcm_routing_close(struct snd_pcm_substream *substream)
 	return 0;
 }
 
+/*
+ * Undo a partially completed prepare(): close every ADM COPP opened for this
+ * backend and clear the active flag, so a later prepare() can retry instead of
+ * silently skipping configuration. Must be called with routing_lock held.
+ */
+static void msm_pcm_routing_rollback_prepare(
+		struct msm_pcm_routing_bdai_data *bedai, int be_id, int stream)
+{
+	int i, session_type;
+
+	lockdep_assert_held(&routing_lock);
+
+	for_each_set_bit(i, &bedai->fe_sessions[0], MSM_FRONTEND_DAI_MAX) {
+		struct msm_pcm_routing_fdai_data *fdai;
+		int idx;
+
+		if (!(is_mm_lsm_fe_id(i) && route_check_fe_id_adm_support(i)))
+			continue;
+
+		session_type = (stream == SNDRV_PCM_STREAM_PLAYBACK) ?
+					SESSION_TYPE_RX : SESSION_TYPE_TX;
+		fdai = &fe_dai_map[i][session_type];
+		if (fdai->strm_id == INVALID_SESSION)
+			continue;
+
+		for (idx = 0; idx < MAX_COPPS_PER_PORT; idx++) {
+			unsigned long copp =
+				session_copp_map[i][session_type][be_id];
+
+			if (test_bit(idx, &copp)) {
+				msm_pcm_routing_close_adm_copp(i, be_id,
+						session_type, idx,
+						fdai->perf_mode,
+						fdai->passthr_mode);
+				break;
+			}
+		}
+	}
+
+	bedai->active = 0;
+}
+
 static int msm_pcm_routing_prepare(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
@@ -5394,6 +5436,8 @@ static int msm_pcm_routing_prepare(struct snd_pcm_substream *substream)
 					session_type, path_type, &topology,
 					&channels);
 			if (copp_idx < 0) {
+				msm_pcm_routing_rollback_prepare(bedai, be_id,
+						substream->stream);
 				mutex_unlock(&routing_lock);
 				return -EINVAL;
 			}
