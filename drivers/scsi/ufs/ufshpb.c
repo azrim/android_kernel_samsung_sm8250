@@ -40,6 +40,9 @@
 
 #define UFSHCD_REQ_SENSE_SIZE	18
 
+/* Max consecutive retries of a failed map request before giving up */
+#define UFSHPB_MAP_REQ_MAX_RETRY	3
+
 #define LRU_UPDATE_READ
 
 /*
@@ -2719,7 +2722,9 @@ static int ufshpb_issue_unset_rt_all_req(struct ufshpb_lu *hpb)
 static int ufshpb_issue_map_req_from_list(struct ufshpb_lu *hpb)
 {
 	struct ufshpb_subregion *srgn;
+	struct ufshpb_subregion *prev_srgn = NULL;
 	unsigned long flags;
+	int fail_cnt = 0;
 	int ret;
 
 	spin_lock_irqsave(&hpb->rsp_list_lock, flags);
@@ -2752,12 +2757,30 @@ static int ufshpb_issue_map_req_from_list(struct ufshpb_lu *hpb)
 		if (ret < 0) {
 			ERR_MSG("region %d sub %d failed with err %d",
 				srgn->rgn_idx, srgn->srgn_idx, ret);
+			/*
+			 * The failed subregion is pushed back to the head of
+			 * the list, so bound the number of retries to avoid
+			 * spinning here forever on a persistent device error.
+			 */
+			if (srgn == prev_srgn)
+				fail_cnt++;
+			else
+				fail_cnt = 1;
+			prev_srgn = srgn;
 			spin_lock_irqsave(&hpb->rsp_list_lock, flags);
 			if (list_empty(&srgn->list_act_srgn))
 				list_add(&srgn->list_act_srgn,
 					 &hpb->lh_pinned_srgn);
+			if (fail_cnt > UFSHPB_MAP_REQ_MAX_RETRY) {
+				ERR_MSG("giving up on region %d sub %d after %d retries",
+					srgn->rgn_idx, srgn->srgn_idx,
+					fail_cnt);
+				break;
+			}
 			continue;
 		}
+		prev_srgn = NULL;
+		fail_cnt = 0;
 #if defined(CONFIG_HPB_DEBUG)
 		if (hpb->debug)
 			ufshpb_check_ppn(hpb, srgn->rgn_idx, srgn->srgn_idx,
