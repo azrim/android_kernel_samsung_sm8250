@@ -538,8 +538,10 @@ struct sched_entity {
 	u64				min_vruntime;
 	u64				min_slice;
 	struct list_head		group_node;
-	unsigned int			on_rq;
+	unsigned char			on_rq;
+	unsigned char			rel_deadline;
 	unsigned char			custom_slice;
+					/* hole */
 
 	u64				exec_start;
 	u64				sum_exec_runtime;

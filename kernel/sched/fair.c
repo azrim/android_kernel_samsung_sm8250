@@ -4690,6 +4690,12 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 
 	se->vruntime = vruntime - lag;
 
+	if (sched_feat(PLACE_REL_DEADLINE) && se->rel_deadline) {
+		se->deadline += se->vruntime;
+		se->rel_deadline = 0;
+		return;
+	}
+
 #ifdef CONFIG_SCHED_WALT
 	/*
 	 * WALT fast-path: tasks that are explicitly boosted (schedtune
@@ -4846,6 +4852,8 @@ static __always_inline void return_cfs_rq_runtime(struct cfs_rq *cfs_rq);
 static void
 dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 {
+	bool sleep = flags & DEQUEUE_SLEEP;
+
 	/*
 	 * Update run-time statistics of the 'current'.
 	 */
@@ -4867,6 +4875,10 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	clear_buddies(cfs_rq, se);
 
 	update_entity_lag(cfs_rq, se);
+	if (sched_feat(PLACE_REL_DEADLINE) && !sleep) {
+		se->deadline -= se->vruntime;
+		se->rel_deadline = 1;
+	}
 
 	if (se != cfs_rq->curr)
 		__dequeue_entity(cfs_rq, se);
@@ -12645,6 +12657,14 @@ static void attach_task_cfs_rq(struct task_struct *p)
 static void switched_from_fair(struct rq *rq, struct task_struct *p)
 {
 	detach_task_cfs_rq(p);
+
+	/*
+	 * A relative deadline (set when the entity was dequeued without
+	 * sleeping, e.g. for a migration) is meaningless once the task
+	 * leaves the fair class; drop it so it cannot be misapplied if the
+	 * task is later placed back on a cfs_rq.
+	 */
+	p->se.rel_deadline = 0;
 }
 
 static void switched_to_fair(struct rq *rq, struct task_struct *p)
