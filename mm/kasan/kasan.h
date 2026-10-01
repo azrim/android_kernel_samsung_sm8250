@@ -92,6 +92,13 @@ struct kasan_track {
 
 struct kasan_alloc_meta {
 	struct kasan_track alloc_track;
+#ifdef CONFIG_KASAN_GENERIC
+	/*
+	 * The auxiliary stack is stored into struct kasan_alloc_meta.
+	 * The free stack is stored into struct kasan_free_meta.
+	 */
+	depot_stack_handle_t aux_stack[2];
+#endif
 	struct kasan_track free_track;
 };
 
@@ -109,6 +116,8 @@ struct kasan_alloc_meta *get_alloc_info(struct kmem_cache *cache,
 					const void *object);
 struct kasan_free_meta *get_free_info(struct kmem_cache *cache,
 					const void *object);
+
+depot_stack_handle_t kasan_save_stack(gfp_t flags);
 
 static inline const void *kasan_shadow_to_mem(const void *shadow_addr)
 {
