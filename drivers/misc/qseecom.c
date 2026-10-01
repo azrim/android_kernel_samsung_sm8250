@@ -2283,9 +2283,10 @@ static int __qseecom_process_incomplete_cmd(struct qseecom_dev_handle *data,
 	size_t cmd_len;
 	struct sglist_info *table = NULL;
 	struct qseecom_registered_listener_list *svc_ref_ptr = NULL;
+	bool freeze_pending = false;
 
 	qseecom.app_block_ref_cnt++;
-	while (resp->result == QSEOS_RESULT_INCOMPLETE) {
+	while (!freeze_pending && resp->result == QSEOS_RESULT_INCOMPLETE) {
 		lstnr = resp->data;
 		/*
 		 * Wake up blocking lsitener service with the lstnr id
@@ -2383,6 +2384,20 @@ static int __qseecom_process_incomplete_cmd(struct qseecom_dev_handle *data,
 						data, ptr_svc))) {
 				break;
 			}
+
+			/*
+			 * All signals are blocked here, so a non-zero return
+			 * from wait_event_interruptible() can only be the
+			 * task freezer setting TIF_SIGPENDING.  Retrying
+			 * would spin at full speed and this task would never
+			 * reach its freeze point, so stop and let the syscall
+			 * exit with -ERESTARTSYS.  Do not treat this as a
+			 * response from the listener.
+			 */
+			if (freezing(current)) {
+				freeze_pending = true;
+				break;
+			}
 		} while (1);
 		mutex_lock(&listener_access_lock);
 		/* restore signal mask */
@@ -2420,7 +2435,16 @@ static int __qseecom_process_incomplete_cmd(struct qseecom_dev_handle *data,
 				goto err_resp;
 			}
 		}
-		if (data->abort || ptr_svc->abort) {
+		if (freeze_pending) {
+			/*
+			 * The freezer interrupted the wait above.  Report
+			 * failure to TZ and hand -ERESTARTSYS back to
+			 * userspace so the syscall exits and this task
+			 * reaches its freeze point.
+			 */
+			rc = -ERESTARTSYS;
+			status = QSEOS_RESULT_FAILURE;
+		} else if (data->abort || ptr_svc->abort) {
 			pr_err("Abort clnt %d waiting on lstnr svc %d, ret %d\n",
 				data->client.app_id, lstnr, ret);
 			rc = -ENODEV;
@@ -2620,13 +2644,24 @@ static int __qseecom_process_reentrancy_blocked_on_listener(
 			ptr_app->app_blocked = true;
 			mutex_unlock(&listener_access_lock);
 			mutex_unlock(&app_access_lock);
-			wait_event_interruptible(
+			ret = wait_event_interruptible(
 				list_ptr->listener_block_app_wq,
 				!list_ptr->listener_in_use);
 			mutex_lock(&app_access_lock);
 			mutex_lock(&listener_access_lock);
 			ptr_app->app_blocked = false;
 			qseecom.app_block_ref_cnt--;
+			/*
+			 * A non-zero return means the freezer interrupted
+			 * the wait (all signals are blocked, so a real
+			 * signal cannot do it).  Bail out so the syscall
+			 * exits with -ERESTARTSYS and this task reaches its
+			 * freeze point instead of spinning here.
+			 */
+			if (ret && freezing(current)) {
+				ret = -ERESTARTSYS;
+				goto exit_locked;
+			}
 			/*
 			 * list_ptr stayed alive across the wait thanks to
 			 * the reference above; check it is still the
@@ -2720,8 +2755,11 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 	size_t cmd_len;
 	struct sglist_info *table = NULL;
 	struct qseecom_registered_listener_list *svc_ref_ptr = NULL;
+	bool freeze_pending = false;
 
 	while (ret == 0 && resp->result == QSEOS_RESULT_INCOMPLETE) {
+		if (freeze_pending)
+			break;
 		lstnr = resp->data;
 		/*
 		 * Wake up blocking lsitener service with the lstnr id
@@ -2793,6 +2831,20 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 						data, ptr_svc))) {
 				break;
 			}
+
+			/*
+			 * All signals are blocked here, so a non-zero return
+			 * from wait_event_interruptible() can only be the
+			 * task freezer setting TIF_SIGPENDING.  Retrying
+			 * would spin at full speed and this task would never
+			 * reach its freeze point, so stop and let the syscall
+			 * exit with -ERESTARTSYS.  Do not treat this as a
+			 * response from the listener.
+			 */
+			if (freezing(current)) {
+				freeze_pending = true;
+				break;
+			}
 		} while (1);
 		/* lock mutex again after resp sent */
 		mutex_lock(&app_access_lock);
@@ -2832,7 +2884,16 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 		ptr_svc->send_resp_flag = 0;
 		qseecom.send_resp_flag = 0;
 
-		if (data->abort || ptr_svc->abort) {
+		if (freeze_pending) {
+			/*
+			 * The freezer interrupted the wait above.  Report
+			 * failure to TZ and hand -ERESTARTSYS back to
+			 * userspace so the syscall exits and this task
+			 * reaches its freeze point.
+			 */
+			rc = -ERESTARTSYS;
+			status  = QSEOS_RESULT_FAILURE;
+		} else if (data->abort || ptr_svc->abort) {
 			pr_err("Abort clnt %d waiting on lstnr svc %d, ret %d\n",
 				data->client.app_id, lstnr, ret);
 			rc = -ENODEV;
@@ -2977,6 +3038,13 @@ static void __qseecom_reentrancy_check_if_no_app_blocked(uint32_t smc_id)
 			wait_event_interruptible(qseecom.app_block_wq,
 				(!qseecom.app_block_ref_cnt));
 			mutex_lock(&app_access_lock);
+			/*
+			 * The freezer's fake signal interrupts the wait;
+			 * retrying would spin.  Stop so the caller's syscall
+			 * can exit and this task can freeze.
+			 */
+			if (freezing(current))
+				break;
 		}
 	}
 }
@@ -2998,6 +3066,13 @@ static void __qseecom_reentrancy_check_if_this_app_blocked(
 				(!ptr_app->app_blocked &&
 				qseecom.app_block_ref_cnt <= 1));
 			mutex_lock(&app_access_lock);
+			/*
+			 * The freezer's fake signal interrupts the wait;
+			 * retrying would spin.  Stop so the caller's syscall
+			 * can exit and this task can freeze.
+			 */
+			if (freezing(current))
+				break;
 		}
 		ptr_app->check_block--;
 	}
