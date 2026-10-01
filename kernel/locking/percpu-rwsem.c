@@ -84,9 +84,9 @@ int __percpu_down_read(struct percpu_rw_semaphore *sem, int try)
 	/*
 	 * Avoid lockdep for the down/up_read() we already have them.
 	 */
-	__down_read(&sem->rw_sem);
+	down_read(&sem->rw_sem);
 	this_cpu_inc(*sem->read_count);
-	__up_read(&sem->rw_sem);
+	up_read(&sem->rw_sem);
 
 	preempt_disable();
 	return 1;
