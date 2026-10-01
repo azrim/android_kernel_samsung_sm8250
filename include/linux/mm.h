@@ -3001,6 +3001,7 @@ static inline void record_memsize_reserved(const char *name, phys_addr_t base,
 				    bool reusable) { }
 #endif
 extern bool ion_account_print_usage(void);
+void mem_dump_obj(void *object);
 
 #endif /* __KERNEL__ */
 #endif /* _LINUX_MM_H */
