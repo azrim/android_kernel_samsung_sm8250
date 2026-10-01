@@ -1150,6 +1150,38 @@ static bool update_deadline(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	return true;
 }
 
+static inline bool did_preempt_short(struct cfs_rq *cfs_rq, struct sched_entity *curr)
+{
+	if (!sched_feat(PREEMPT_SHORT))
+		return false;
+
+	if (curr->vlag == curr->deadline)
+		return false;
+
+	return !entity_eligible(cfs_rq, curr);
+}
+
+static inline bool do_preempt_short(struct cfs_rq *cfs_rq,
+				    struct sched_entity *pse, struct sched_entity *se)
+{
+	if (!sched_feat(PREEMPT_SHORT))
+		return false;
+
+	if (pse->slice >= se->slice)
+		return false;
+
+	if (!entity_eligible(cfs_rq, pse))
+		return false;
+
+	if (entity_before(pse, se))
+		return true;
+
+	if (!entity_eligible(cfs_rq, se))
+		return true;
+
+	return false;
+}
+
 /*
  * Update the current task's runtime statistics.
  */
@@ -1193,7 +1225,7 @@ static void update_curr(struct cfs_rq *cfs_rq)
 	if (cfs_rq->nr_running == 1)
 		return;
 
-	if (resched) {
+	if (resched || did_preempt_short(cfs_rq, curr)) {
 		resched_curr(rq);
 		clear_buddies(cfs_rq, curr);
 	}
@@ -8477,6 +8509,15 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
 
 	cfs_rq = cfs_rq_of(se);
 	update_curr(cfs_rq);
+	/*
+	 * If @p has a shorter slice than current and @p is eligible, override
+	 * current's slice protection in order to allow preemption.
+	 *
+	 * Note that even if @p does not turn out to be the most eligible
+	 * task at this moment, current's slice protection will be lost.
+	 */
+	if (do_preempt_short(cfs_rq, pse, se) && se->vlag == se->deadline)
+		se->vlag = se->deadline + 1;
 
 	/*
 	 * If @p has become the most eligible task, force preemption.
