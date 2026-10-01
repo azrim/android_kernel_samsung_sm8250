@@ -180,7 +180,7 @@ static void max77705_test_read(struct max77705_charger_data *charger)
 		offset += scnprintf(str + offset, sizeof(str) - offset,
 				    "[0x%02x]0x%02x, ", addr, data);
 	}
-	pr_info("max77705 : %s\n", str);
+	pr_debug("max77705 : %s\n", str);
 }
 
 static int max77705_get_autoibus(struct max77705_charger_data *charger)
@@ -206,17 +206,17 @@ static int max77705_get_vbus_state(struct max77705_charger_data *charger)
 
 	switch (reg_data) {
 	case 0x00:
-		pr_info("%s: VBUS is invalid. CHGIN < CHGIN_UVLO\n", __func__);
+		pr_info_ratelimited("%s: VBUS is invalid. CHGIN < CHGIN_UVLO\n", __func__);
 		break;
 	case 0x01:
-		pr_info("%s: VBUS is invalid. CHGIN < MBAT+CHGIN2SYS and CHGIN > CHGIN_UVLO\n",
+		pr_info_ratelimited("%s: VBUS is invalid. CHGIN < MBAT+CHGIN2SYS and CHGIN > CHGIN_UVLO\n",
 			__func__);
 		break;
 	case 0x02:
-		pr_info("%s: VBUS is invalid. CHGIN > CHGIN_OVLO\n", __func__);
+		pr_info_ratelimited("%s: VBUS is invalid. CHGIN > CHGIN_OVLO\n", __func__);
 		break;
 	case 0x03:
-		pr_info("%s: VBUS is valid. CHGIN < CHGIN_OVLO\n", __func__);
+		pr_info_ratelimited("%s: VBUS is valid. CHGIN < CHGIN_OVLO\n", __func__);
 		break;
 	default:
 		break;
@@ -384,30 +384,31 @@ static int max77705_get_charging_health(struct max77705_charger_data *charger)
 	pr_debug("%s: reg_data(0x%x)\n", __func__, reg_data);
 	switch (reg_data) {
 	case 0x00:
-		pr_info("%s: No battery and the charger is suspended\n", __func__);
+		pr_info_ratelimited("%s: No battery and the charger is suspended\n", __func__);
 		break;
 	case 0x01:
-		pr_info("%s: battery is okay but its voltage is low(~VPQLB)\n", __func__);
+		pr_info_ratelimited("%s: battery is okay but its voltage is low(~VPQLB)\n",
+			__func__);
 		break;
 	case 0x02:
-		pr_info("%s: battery dead\n", __func__);
+		pr_info_ratelimited("%s: battery dead\n", __func__);
 		break;
 	case 0x03:
 		break;
 	case 0x04:
-		pr_info("%s: battery is okay but its voltage is low\n", __func__);
+		pr_info_ratelimited("%s: battery is okay but its voltage is low\n", __func__);
 		break;
 	case 0x05:
-		pr_info("%s: battery ovp\n", __func__);
+		pr_info_ratelimited("%s: battery ovp\n", __func__);
 		break;
 	default:
-		pr_info("%s: battery unknown\n", __func__);
+		pr_info_ratelimited("%s: battery unknown\n", __func__);
 		break;
 	}
 
 	if (charger->is_charging) {
 		max77705_read_reg(charger->i2c, MAX77705_CHG_REG_DETAILS_00, &reg_data);
-		pr_info("%s: details00(0x%x)\n", __func__, reg_data);
+		pr_info_ratelimited("%s: details00(0x%x)\n", __func__, reg_data);
 	}
 
 	wdt_status = max77705_chg_get_wdtmr_status(charger);

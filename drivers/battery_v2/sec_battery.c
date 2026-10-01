@@ -2748,12 +2748,13 @@ static void sec_bat_swelling_check(struct sec_battery_info *battery)
 		swelling_high_recovery = battery->pdata->swelling_wc_high_temp_recov;
 		swelling_high_block = battery->pdata->swelling_wc_high_temp_block;
 	}
-	pr_info("%s: swelling highblock(%d), highrecov(%d)\n", __func__, swelling_high_block, swelling_high_recovery);
+	pr_info_ratelimited("%s: swelling highblock(%d), highrecov(%d)\n",
+		__func__, swelling_high_block, swelling_high_recovery);
 
 	psy_do_property(battery->pdata->charger_name, get,
 			POWER_SUPPLY_PROP_VOLTAGE_MAX, val);
 
-	pr_info("%s: status(%s), swell_mode(%s), chg_block(%d), low_temp_event(0x%x), vfloat(%d)mV, temp(%d)'C\n",
+	pr_info_ratelimited("%s: status(%s), swell_mode(%s), chg_block(%d), low_temp_event(0x%x), vfloat(%d)mV, temp(%d)'C\n",
 		__func__,
 		sec_bat_status_str[battery->status],
 		swelling_mode_str[battery->swelling_mode],

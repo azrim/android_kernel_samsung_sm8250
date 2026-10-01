@@ -135,17 +135,17 @@ void max77705_response_pdo_request(struct max77705_usbc_platform_data *usbc_data
 {
 	u8 result = data[1];
 
-	pr_info("%s: %s (0x%02X)\n", __func__, result ? "Error," : "Sent,", result);
+	pr_debug("%s: %s (0x%02X)\n", __func__, result ? "Error," : "Sent,", result);
 
 	switch (result) {
 	case 0x00:
 		pr_info("%s: Sent PDO Request Message to Port Partner(0x%02X)\n", __func__, result);
 		break;
 	case 0xFE:
-		pr_info("%s: Error, SinkTxNg(0x%02X)\n", __func__, result);
+		pr_debug("%s: Error, SinkTxNg(0x%02X)\n", __func__, result);
 		break;
 	case 0xFF:
-		pr_info("%s: Error, Not in SNK Ready State(0x%02X)\n", __func__, result);
+		pr_debug("%s: Error, Not in SNK Ready State(0x%02X)\n", __func__, result);
 		break;
 	default:
 		break;
