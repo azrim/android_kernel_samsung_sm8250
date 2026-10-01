@@ -22,6 +22,7 @@
 #include <linux/init.h>
 #include <linux/kasan.h>
 #include <linux/kernel.h>
+#include <linux/kfence.h>
 #include <linux/kmemleak.h>
 #include <linux/linkage.h>
 #include <linux/memblock.h>
@@ -324,3 +325,39 @@ DEFINE_ASAN_SET_SHADOW(f2);
 DEFINE_ASAN_SET_SHADOW(f3);
 DEFINE_ASAN_SET_SHADOW(f5);
 DEFINE_ASAN_SET_SHADOW(f8);
+
+void kasan_record_aux_stack(void *addr)
+{
+	struct page *page;
+	struct kmem_cache *cache;
+	struct kasan_alloc_meta *alloc_meta;
+	void *object;
+
+	if (is_kfence_address(addr) || !virt_addr_valid(addr))
+		return;
+
+	page = virt_to_head_page(addr);
+	if (!PageSlab(page))
+		return;
+
+	cache = page->slab_cache;
+	object = nearest_obj(cache, page, addr);
+	alloc_meta = get_alloc_info(cache, object);
+	if (!alloc_meta)
+		return;
+
+	alloc_meta->aux_stack[1] = alloc_meta->aux_stack[0];
+	alloc_meta->aux_stack[0] = kasan_save_stack(GFP_NOWAIT);
+}
+
+/*
+ * Note: 4.19's stack depot has no "do not allocate" mode (the depot_flags /
+ * STACK_DEPOT_FLAG_CAN_ALLOC support was added in v6.6), so this variant
+ * records the auxiliary stack exactly like kasan_record_aux_stack() does.  It
+ * is kept as a distinct entry point so that callers which must not block
+ * (e.g. RCU, irq_work) match the upstream API.
+ */
+void kasan_record_aux_stack_noalloc(void *addr)
+{
+	kasan_record_aux_stack(addr);
+}
