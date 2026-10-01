@@ -2122,6 +2122,8 @@ static void rcu_gp_cleanup(struct rcu_state *rsp)
 			dump_blkd_tasks(rsp, rnp, 10);
 		WARN_ON_ONCE(rnp->qsmask);
 		WRITE_ONCE(rnp->gp_seq, new_gp_seq);
+		if (!rnp->parent)
+			smp_mb(); // Order against failing poll_state_synchronize_rcu_full().
 		rdp = this_cpu_ptr(rsp->rda);
 		if (rnp == rdp->mynode)
 			needgp = __note_gp_changes(rsp, rnp, rdp) || needgp;
@@ -3252,6 +3254,143 @@ void cond_synchronize_rcu(unsigned long oldstate)
 		smp_mb(); /* Ensure GP ends before subsequent accesses. */
 }
 EXPORT_SYMBOL_GPL(cond_synchronize_rcu);
+
+/**
+ * poll_state_synchronize_rcu - Has the specified RCU grace period completed?
+ *
+ * @oldstate: return value from earlier call to get_state_synchronize_rcu()
+ *
+ * If a full RCU grace period has elapsed since the earlier call to
+ * get_state_synchronize_rcu(), just return.  Otherwise, invoke
+ * synchronize_rcu() to wait for a full grace period.
+ *
+ * Yes, this function does not take counter wrap into account.  But
+ * counter wrap is harmless.  If the counter wraps, we have waited for
+ * more than a billion grace periods (and way more on a 64-bit system!).
+ */
+bool poll_state_synchronize_rcu(unsigned long oldstate)
+{
+	if (oldstate == RCU_GET_STATE_COMPLETED ||
+	    rcu_seq_done(&rcu_state_p->gp_seq, oldstate)) {
+		smp_mb(); /* Ensure GP ends before subsequent accesses. */
+		return true;
+	}
+	return false;
+}
+EXPORT_SYMBOL_GPL(poll_state_synchronize_rcu);
+
+/**
+ * get_completed_synchronize_rcu_full - Return a full pre-completed polled state cookie
+ * @rgosp: Place to put state cookie
+ *
+ * Stores into @rgosp a value that will always be treated by functions
+ * like poll_state_synchronize_rcu_full() as a cookie whose grace period
+ * has already completed.
+ */
+void get_completed_synchronize_rcu_full(struct rcu_gp_oldstate *rgosp)
+{
+	rgosp->rgos_norm = RCU_GET_STATE_COMPLETED;
+	rgosp->rgos_exp = RCU_GET_STATE_COMPLETED;
+}
+EXPORT_SYMBOL_GPL(get_completed_synchronize_rcu_full);
+
+/**
+ * get_state_synchronize_rcu_full - Snapshot RCU state, both normal and expedited
+ * @rgosp: location to place combined normal/expedited grace-period state
+ *
+ * Places the normal and expedited grace-period states in @rgosp.  This
+ * state value can be passed to a later call to cond_synchronize_rcu_full()
+ * or poll_state_synchronize_rcu_full() to determine whether or not a
+ * grace period (whether normal or expedited) has elapsed in the meantime.
+ * The rcu_gp_oldstate structure takes up twice the memory of an unsigned
+ * long, but is guaranteed to see all grace periods.  In contrast, the
+ * combined state occupies less memory, but can sometimes fail to take
+ * grace periods into account.
+ *
+ * This does not guarantee that the needed grace period will actually
+ * start.
+ */
+void get_state_synchronize_rcu_full(struct rcu_gp_oldstate *rgosp)
+{
+	struct rcu_node *rnp = rcu_get_root(rcu_state_p);
+
+	/*
+	 * Any prior manipulation of RCU-protected data must happen
+	 * before the loads from ->gp_seq and ->expedited_sequence.
+	 */
+	smp_mb();  /* ^^^ */
+	rgosp->rgos_norm = rcu_seq_snap(&rnp->gp_seq);
+	rgosp->rgos_exp = rcu_seq_snap(&rcu_state_p->expedited_sequence);
+}
+EXPORT_SYMBOL_GPL(get_state_synchronize_rcu_full);
+
+/**
+ * poll_state_synchronize_rcu_full - Has the specified RCU grace period completed?
+ * @rgosp: value from get_state_synchronize_rcu_full()
+ *
+ * If a full RCU grace period has elapsed since the earlier call from
+ * which *rgosp was obtained, return @true, otherwise return @false.
+ * If @false is returned, it is the caller's responsibility to invoke this
+ * function later on until it does return @true.  Alternatively, the caller
+ * can explicitly wait for a grace period, for example, by passing @rgosp
+ * to cond_synchronize_rcu() or by directly invoking synchronize_rcu().
+ *
+ * Yes, this function does not take counter wrap into account.
+ * But counter wrap is harmless.  If the counter wraps, we have waited for
+ * more than a billion grace periods (and way more on a 64-bit system!).
+ * Those needing to keep rcu_gp_oldstate values for very long time periods
+ * (many hours even on 32-bit systems) should check them occasionally and
+ * either refresh them or set a flag indicating that the grace period has
+ * completed.  Alternatively, they can use
+ * get_completed_synchronize_rcu_full() to get a guaranteed-completed
+ * grace-period state.
+ *
+ * This function provides the same memory-ordering guarantees that would
+ * be provided by a synchronize_rcu() that was invoked at the call to
+ * the function that provided @rgosp, and that returned at the end of this
+ * function.  And this guarantee requires that the root rcu_node structure's
+ * ->gp_seq field be checked instead of that of the rcu_state structure.
+ * The problem is that the just-ending grace-period's callbacks can be
+ * invoked between the time that the root rcu_node structure's ->gp_seq
+ * field is updated and the time that the rcu_state structure's ->gp_seq
+ * field is updated.  Therefore, if a single synchronize_rcu() is to
+ * cause a subsequent poll_state_synchronize_rcu_full() to return @true,
+ * then the root rcu_node structure is the one that needs to be polled.
+ */
+bool poll_state_synchronize_rcu_full(struct rcu_gp_oldstate *rgosp)
+{
+	struct rcu_node *rnp = rcu_get_root(rcu_state_p);
+
+	smp_mb(); // Order against root rcu_node structure grace-period cleanup.
+	if (rgosp->rgos_norm == RCU_GET_STATE_COMPLETED ||
+	    rcu_seq_done(&rnp->gp_seq, rgosp->rgos_norm) ||
+	    rgosp->rgos_exp == RCU_GET_STATE_COMPLETED ||
+	    rcu_seq_done(&rcu_state_p->expedited_sequence, rgosp->rgos_exp)) {
+		smp_mb(); /* Ensure GP ends before subsequent accesses. */
+		return true;
+	}
+	return false;
+}
+EXPORT_SYMBOL_GPL(poll_state_synchronize_rcu_full);
+
+/**
+ * cond_synchronize_rcu_full - Conditionally wait for an RCU grace period
+ * @rgosp: value from get_state_synchronize_rcu_full()
+ *
+ * If a full RCU grace period has elapsed since the earlier call to
+ * get_state_synchronize_rcu_full(), just return.  Otherwise, invoke
+ * synchronize_rcu() to wait for a full grace period.
+ *
+ * Yes, this function does not take counter wrap into account.
+ * But counter wrap is harmless.  If the counter wraps, we have waited for
+ * more than a billion grace periods (and way more on a 64-bit system!).
+ */
+void cond_synchronize_rcu_full(struct rcu_gp_oldstate *rgosp)
+{
+	if (!poll_state_synchronize_rcu_full(rgosp))
+		synchronize_rcu();
+}
+EXPORT_SYMBOL_GPL(cond_synchronize_rcu_full);
 
 /**
  * get_state_synchronize_sched - Snapshot current RCU-sched state

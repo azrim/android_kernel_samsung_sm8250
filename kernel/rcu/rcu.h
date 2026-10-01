@@ -41,6 +41,9 @@
 #define RCU_SEQ_CTR_SHIFT	2
 #define RCU_SEQ_STATE_MASK	((1 << RCU_SEQ_CTR_SHIFT) - 1)
 
+/* Return value from get_state_synchronize_rcu*() for a completed GP. */
+#define RCU_GET_STATE_COMPLETED	0x1
+
 /*
  * Return the counter portion of a sequence number previously returned
  * by rcu_seq_snap() or rcu_seq_current().

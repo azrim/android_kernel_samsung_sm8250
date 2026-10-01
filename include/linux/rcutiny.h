@@ -27,6 +27,11 @@
 
 #include <linux/ktime.h>
 
+struct rcu_gp_oldstate {
+	unsigned long rgos_norm;
+	unsigned long rgos_exp;
+};
+
 struct rcu_dynticks;
 static inline int rcu_dynticks_snap(struct rcu_dynticks *rdtp)
 {
@@ -41,9 +46,36 @@ static inline unsigned long get_state_synchronize_rcu(void)
 	return 0;
 }
 
+static inline void get_state_synchronize_rcu_full(struct rcu_gp_oldstate *rgosp)
+{
+	rgosp->rgos_norm = 0;
+	rgosp->rgos_exp = 0;
+}
+
+static inline bool poll_state_synchronize_rcu(unsigned long oldstate)
+{
+	return true;
+}
+
+static inline bool poll_state_synchronize_rcu_full(struct rcu_gp_oldstate *rgosp)
+{
+	return true;
+}
+
 static inline void cond_synchronize_rcu(unsigned long oldstate)
 {
 	might_sleep();
+}
+
+static inline void cond_synchronize_rcu_full(struct rcu_gp_oldstate *rgosp)
+{
+	might_sleep();
+}
+
+static inline void get_completed_synchronize_rcu_full(struct rcu_gp_oldstate *rgosp)
+{
+	rgosp->rgos_norm = 0x1;
+	rgosp->rgos_exp = 0x1;
 }
 
 static inline unsigned long get_state_synchronize_sched(void)

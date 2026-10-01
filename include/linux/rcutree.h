@@ -72,12 +72,22 @@ static inline void synchronize_rcu_bh_expedited(void)
 	synchronize_sched_expedited();
 }
 
+struct rcu_gp_oldstate {
+	unsigned long rgos_norm;
+	unsigned long rgos_exp;
+};
+
 void rcu_barrier(void);
 void rcu_barrier_bh(void);
 void rcu_barrier_sched(void);
 bool rcu_eqs_special_set(int cpu);
 unsigned long get_state_synchronize_rcu(void);
+void get_state_synchronize_rcu_full(struct rcu_gp_oldstate *rgosp);
+bool poll_state_synchronize_rcu(unsigned long oldstate);
+bool poll_state_synchronize_rcu_full(struct rcu_gp_oldstate *rgosp);
 void cond_synchronize_rcu(unsigned long oldstate);
+void cond_synchronize_rcu_full(struct rcu_gp_oldstate *rgosp);
+void get_completed_synchronize_rcu_full(struct rcu_gp_oldstate *rgosp);
 unsigned long get_state_synchronize_sched(void);
 void cond_synchronize_sched(unsigned long oldstate);
 
