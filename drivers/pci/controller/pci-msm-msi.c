@@ -235,6 +235,9 @@ static int msm_msi_irq_domain_alloc(struct irq_domain *domain,
 	if (pos < msi->nr_irqs) {
 		bitmap_set(msi->bitmap, pos, nr_irqs);
 	} else {
+		dev_err(msi->dev,
+			"MSI: no free hwirq (want=%u, nr=%d, bitmap=%*pbl)\n",
+			nr_irqs, msi->nr_irqs, msi->nr_irqs, msi->bitmap);
 		ret = -ENOSPC;
 		goto out;
 	}
@@ -269,11 +272,24 @@ static void msm_msi_irq_domain_free(struct irq_domain *domain,
 	msi = client->msi;
 
 	mutex_lock(&msi->mutex);
-	for (i = 0; i < nr_irqs; i++)
+	/*
+	 * msi->irqs[] is indexed by controller hwirq slot, and a client's
+	 * vectors sit at whatever slot bitmap_find_next_zero_area() handed
+	 * back.  Search the whole array for the slot whose ->virq == virq;
+	 * bounding the search by nr_irqs (the count being freed) misses any
+	 * allocation that did not start at slot 0 and then clears the wrong
+	 * bits, leaking the MSI slots.
+	 */
+	for (i = 0; i < msi->nr_irqs; i++)
 		if (msi->irqs[i].virq == virq)
 			break;
 
-	bitmap_clear(msi->bitmap, i, nr_irqs);
+	if (i < msi->nr_irqs)
+		bitmap_clear(msi->bitmap, i, nr_irqs);
+	else
+		dev_err(msi->dev, "MSI: free: virq %u not found in irqs[]\n",
+			virq);
+
 	client->nr_irqs -= nr_irqs;
 
 	if (!client->nr_irqs) {
