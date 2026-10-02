@@ -283,7 +283,7 @@ MODULE_DEVICE_TABLE(pci, bnx2x_pci_tbl);
 
 /* Global resources for unloading a previously loaded device */
 #define BNX2X_PREV_WAIT_NEEDED 1
-static DEFINE_SEMAPHORE(bnx2x_prev_sem);
+static DEFINE_SEMAPHORE(bnx2x_prev_sem, 1);
 static LIST_HEAD(bnx2x_prev_list);
 
 /* Forward declaration */

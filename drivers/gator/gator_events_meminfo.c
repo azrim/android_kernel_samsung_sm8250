@@ -79,7 +79,7 @@ static void do_read(void);
 static int gator_meminfo_func(void *data);
 static bool gator_meminfo_run;
 /* Initialize semaphore unlocked to initialize memory values */
-static DEFINE_SEMAPHORE(gator_meminfo_sem);
+static DEFINE_SEMAPHORE(gator_meminfo_sem, 1);
 
 static void notify(void)
 {
