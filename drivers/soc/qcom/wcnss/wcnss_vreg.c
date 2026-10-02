@@ -19,7 +19,7 @@
 static void __iomem *msm_wcnss_base;
 static LIST_HEAD(power_on_lock_list);
 static DEFINE_MUTEX(list_lock);
-static DEFINE_SEMAPHORE(wcnss_power_on_lock);
+static DEFINE_SEMAPHORE(wcnss_power_on_lock, 1);
 static int auto_detect;
 static int is_power_on;
 

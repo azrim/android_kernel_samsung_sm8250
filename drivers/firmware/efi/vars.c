@@ -43,7 +43,7 @@ static struct efivars *__efivars;
  * 2) ->ops calls
  * 3) (un)registration of __efivars
  */
-static DEFINE_SEMAPHORE(efivars_lock);
+static DEFINE_SEMAPHORE(efivars_lock, 1);
 
 static bool efivar_wq_enabled = true;
 DECLARE_WORK(efivar_work, NULL);
