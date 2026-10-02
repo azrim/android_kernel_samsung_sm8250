@@ -18,6 +18,36 @@ static inline int rt_task(struct task_struct *p)
 	return rt_prio(p->prio);
 }
 
+static inline bool rt_or_dl_prio(int prio)
+{
+	return unlikely(prio < MAX_RT_PRIO);
+}
+
+/*
+ * Returns true if a task has a priority that belongs to RT or DL classes.
+ * PI-boosted tasks will return true. Use rt_or_dl_task_policy() to ignore
+ * PI-boosted tasks.
+ */
+static inline bool rt_or_dl_task(struct task_struct *p)
+{
+	return rt_or_dl_prio(p->prio);
+}
+
+/*
+ * Returns true if a task has a policy that belongs to RT or DL classes.
+ * PI-boosted tasks will return false.
+ */
+static inline bool rt_or_dl_task_policy(struct task_struct *tsk)
+{
+	int policy = tsk->policy;
+
+	if (policy == SCHED_FIFO || policy == SCHED_RR)
+		return true;
+	if (policy == SCHED_DEADLINE)
+		return true;
+	return false;
+}
+
 static inline bool task_is_realtime(struct task_struct *tsk)
 {
 	int policy = tsk->policy;
