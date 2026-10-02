@@ -395,7 +395,7 @@ extern void rcu_init_geometry(void);
 #define rcu_for_each_node_breadth_first(rnp) \
 	_rcu_for_each_node_breadth_first(&rcu_state, rnp)
 #define srcu_for_each_node_breadth_first(ssp, rnp) \
-	_rcu_for_each_node_breadth_first(ssp, rnp)
+	_rcu_for_each_node_breadth_first(ssp->srcu_sup, rnp)
 
 /*
  * Scan the leaves of the rcu_node hierarchy for the rcu_state structure.
