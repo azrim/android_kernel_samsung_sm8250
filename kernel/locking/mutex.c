@@ -30,6 +30,9 @@
 #include <linux/osq_lock.h>
 #include <linux/delay.h>
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/lock.h>
+
 #ifdef CONFIG_DEBUG_MUTEXES
 # include "mutex-debug.h"
 #else
