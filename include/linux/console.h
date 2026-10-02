@@ -229,4 +229,12 @@ extern void console_init(void);
 void dummycon_register_output_notifier(struct notifier_block *nb);
 void dummycon_unregister_output_notifier(struct notifier_block *nb);
 
+/*
+ * 4.19 has no nbcon (non-blocking console) ownership model.  The v6.12
+ * RCU stall code brackets its reports with these; provide no-ops so that
+ * 4.19 keeps its existing printk behaviour.
+ */
+static inline void nbcon_cpu_emergency_enter(void) { }
+static inline void nbcon_cpu_emergency_exit(void) { }
+
 #endif /* _LINUX_CONSOLE_H */

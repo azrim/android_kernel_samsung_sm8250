@@ -155,7 +155,8 @@ static inline int srcu_read_lock_held(const struct srcu_struct *sp)
  * lockdep_is_held() calls.
  */
 #define srcu_dereference_check(p, sp, c) \
-	__rcu_dereference_check((p), (c) || srcu_read_lock_held(sp), __rcu)
+	__rcu_dereference_check((p), __UNIQUE_ID(rcu), \
+				(c) || srcu_read_lock_held(sp), __rcu)
 
 /**
  * srcu_dereference - fetch SRCU-protected pointer for later dereferencing

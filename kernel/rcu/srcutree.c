@@ -105,7 +105,7 @@ static void init_srcu_struct_nodes(struct srcu_struct *sp, bool is_static)
 	rcu_init_levelspread(levelspread, num_rcu_lvl);
 
 	/* Each pass through this loop initializes one srcu_node structure. */
-	rcu_for_each_node_breadth_first(sp, snp) {
+	srcu_for_each_node_breadth_first(sp, snp) {
 		spin_lock_init(&ACCESS_PRIVATE(snp, lock));
 		WARN_ON_ONCE(ARRAY_SIZE(snp->srcu_have_cbs) !=
 			     ARRAY_SIZE(snp->srcu_data_have_cbs));
@@ -563,7 +563,7 @@ static void srcu_gp_end(struct srcu_struct *sp)
 
 	/* Initiate callback invocation as needed. */
 	idx = rcu_seq_ctr(gpseq) % ARRAY_SIZE(snp->srcu_have_cbs);
-	rcu_for_each_node_breadth_first(sp, snp) {
+	srcu_for_each_node_breadth_first(sp, snp) {
 		spin_lock_irq_rcu_node(snp);
 		cbs = false;
 		last_lvl = snp >= sp->level[rcu_num_lvls - 1];
@@ -869,7 +869,7 @@ void __call_srcu(struct srcu_struct *sp, struct rcu_head *rhp,
 	local_irq_save(flags);
 	sdp = this_cpu_ptr(sp->sda);
 	spin_lock_rcu_node(sdp);
-	rcu_segcblist_enqueue(&sdp->srcu_cblist, rhp, false);
+	rcu_segcblist_enqueue(&sdp->srcu_cblist, rhp);
 	rcu_segcblist_advance(&sdp->srcu_cblist,
 			      rcu_seq_current(&sp->srcu_gp_seq));
 	s = rcu_seq_snap(&sp->srcu_gp_seq);
@@ -1067,7 +1067,7 @@ void srcu_barrier(struct srcu_struct *sp)
 		sdp->srcu_barrier_head.func = srcu_barrier_cb;
 		debug_rcu_head_queue(&sdp->srcu_barrier_head);
 		if (!rcu_segcblist_entrain(&sdp->srcu_cblist,
-					   &sdp->srcu_barrier_head, 0)) {
+					   &sdp->srcu_barrier_head)) {
 			debug_rcu_head_unqueue(&sdp->srcu_barrier_head);
 			atomic_dec(&sp->srcu_barrier_cpu_cnt);
 		}
@@ -1252,12 +1252,9 @@ static void process_srcu(struct work_struct *work)
 	srcu_reschedule(sp, srcu_get_delay(sp));
 }
 
-void srcutorture_get_gp_data(enum rcutorture_type test_type,
-			     struct srcu_struct *sp, int *flags,
+void srcutorture_get_gp_data(struct srcu_struct *sp, int *flags,
 			     unsigned long *gp_seq)
 {
-	if (test_type != SRCU_FLAVOR)
-		return;
 	*flags = 0;
 	*gp_seq = rcu_seq_current(&sp->srcu_gp_seq);
 }
@@ -1294,7 +1291,7 @@ void srcu_torture_stats_print(struct srcu_struct *sp, char *tt, char *tf)
 		c0 = l0 - u0;
 		c1 = l1 - u1;
 		pr_cont(" %d(%ld,%ld %1p)",
-			cpu, c0, c1, rcu_segcblist_head(&sdp->srcu_cblist));
+			cpu, c0, c1, rcu_segcblist_first_cb(&sdp->srcu_cblist));
 		s0 += c0;
 		s1 += c1;
 	}

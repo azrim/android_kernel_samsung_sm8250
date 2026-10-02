@@ -391,4 +391,13 @@ static inline void *offset_to_ptr(const int *off)
  */
 #define prevent_tail_call_optimization()	mb()
 
+/*
+ * data_race(): tell the tooling (KCSAN, when present) that a concurrent data
+ * access is intentional and should not be reported.  This 4.19 tree has no
+ * KCSAN, so this is simply the wrapped expression.
+ */
+#ifndef data_race
+#define data_race(expr)	(expr)
+#endif
+
 #endif /* __LINUX_COMPILER_H */

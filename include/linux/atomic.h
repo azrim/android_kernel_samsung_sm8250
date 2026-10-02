@@ -491,6 +491,23 @@
 #define atomic_try_cmpxchg_release	atomic_try_cmpxchg
 #endif /* atomic_try_cmpxchg */
 
+/*
+ * Generic non-atomic-type try_cmpxchg(), backported for the v6.12 RCU
+ * core (rcu_barrier_throttled()).  On failure @_po is updated with the
+ * current value, matching the upstream semantics.
+ */
+#ifndef try_cmpxchg
+#define try_cmpxchg(_p, _po, _n)					\
+({									\
+	typeof(_po) __po = (_po);					\
+	typeof(*(_po)) __r, __o = *__po;				\
+	__r = cmpxchg((_p), __o, (_n));					\
+	if (unlikely(__r != __o))					\
+		*__po = __r;						\
+	likely(__r == __o);						\
+})
+#endif /* try_cmpxchg */
+
 /* cmpxchg_relaxed */
 #ifndef cmpxchg_relaxed
 #define  cmpxchg_relaxed		cmpxchg

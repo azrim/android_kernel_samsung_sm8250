@@ -50,6 +50,7 @@ DECLARE_PER_CPU(struct kernel_cpustat, kernel_cpustat);
 #define kcpustat_cpu(cpu) per_cpu(kernel_cpustat, cpu)
 
 extern unsigned long long nr_context_switches(void);
+extern unsigned long long nr_context_switches_cpu(int cpu);
 
 extern unsigned int kstat_irqs_cpu(unsigned int irq, int cpu);
 extern void kstat_incr_irq_this_cpu(unsigned int irq);
@@ -62,6 +63,32 @@ static inline void kstat_incr_softirqs_this_cpu(unsigned int irq)
 static inline unsigned int kstat_softirqs_cpu(unsigned int irq, int cpu)
 {
        return kstat_cpu(cpu).softirqs[irq];
+}
+
+/*
+ * Number of softirqs per cpu, since bootup.  Backported for the v6.12
+ * RCU stall-diagnosis snapshot.
+ */
+static inline unsigned int kstat_cpu_softirqs_sum(int cpu)
+{
+	int i;
+	unsigned int sum = 0;
+
+	for (i = 0; i < NR_SOFTIRQS; i++)
+		sum += kstat_softirqs_cpu(i, cpu);
+
+	return sum;
+}
+
+/*
+ * Return the per-CPU (or, with CONFIG_VIRT_CPU_ACCOUNTING_GEN, the
+ * per-task) accumulated time for the given accounting field.  This 4.19
+ * tree uses tick-based accounting, so the per-CPU value is authoritative.
+ */
+static inline u64 kcpustat_field(struct kernel_cpustat *kcpustat,
+				 enum cpu_usage_stat usage, int cpu)
+{
+	return kcpustat->cpustat[usage];
 }
 
 /*

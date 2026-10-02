@@ -506,6 +506,8 @@ struct lockdep_map { };
 
 #define lockdep_is_held_type(l, r)		(1)
 
+#define lockdep_is_held(l)			(1)
+
 #define lockdep_assert_held(l)			do { (void)(l); } while (0)
 #define lockdep_assert_held_exclusive(l)	do { (void)(l); } while (0)
 #define lockdep_assert_held_read(l)		do { (void)(l); } while (0)
