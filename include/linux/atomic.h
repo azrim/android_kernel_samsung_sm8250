@@ -687,6 +687,31 @@ static inline bool atomic_add_negative(int i, atomic_t *v)
 }
 #endif
 
+/*
+ * atomic_add_negative_{relaxed,acquire,release} - v6.12 additions used by
+ * lib/rcuref.c; 4.19 only provides the fully-ordered atomic_add_negative().
+ */
+#ifndef atomic_add_negative_relaxed
+static __always_inline bool atomic_add_negative_relaxed(int i, atomic_t *v)
+{
+	return atomic_fetch_add_relaxed(i, v) + i < 0;
+}
+#endif
+
+#ifndef atomic_add_negative_acquire
+static __always_inline bool atomic_add_negative_acquire(int i, atomic_t *v)
+{
+	return atomic_fetch_add_acquire(i, v) + i < 0;
+}
+#endif
+
+#ifndef atomic_add_negative_release
+static __always_inline bool atomic_add_negative_release(int i, atomic_t *v)
+{
+	return atomic_fetch_add_release(i, v) + i < 0;
+}
+#endif
+
 #ifndef atomic_inc_unless_negative
 static inline bool atomic_inc_unless_negative(atomic_t *v)
 {
