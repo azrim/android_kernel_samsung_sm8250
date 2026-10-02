@@ -36,11 +36,12 @@
 
 /*
  * Dynticks per-CPU state.
+ *
+ * The extended-quiescent-state state itself (the RCU_WATCHING counter and the
+ * nesting counters) now lives in struct context_tracking; what is left here is
+ * the RCU-internal force-quiescent-state bookkeeping.
  */
 struct rcu_dynticks {
-	long dynticks_nesting;      /* Track process nesting level. */
-	long dynticks_nmi_nesting;  /* Track irq/NMI nesting level. */
-	atomic_t dynticks;	    /* Even value for idle, else odd. */
 	bool rcu_need_heavy_qs;     /* GP old, need heavy quiescent state. */
 	unsigned long rcu_qs_ctr;   /* Light universal quiescent state ctr. */
 	bool rcu_urgent_qs;	    /* GP old need light quiescent state. */
@@ -214,7 +215,6 @@ struct rcu_data {
 	long		blimit;		/* Upper limit on a processed batch */
 
 	/* 3) dynticks interface. */
-	struct rcu_dynticks *dynticks;	/* Shared per-CPU dynticks state. */
 	int dynticks_snap;		/* Per-GP tracking for dynticks. */
 
 	/* 4) reasons this CPU needed to be kicked by force_quiescent_state */
@@ -420,7 +420,7 @@ extern struct rcu_state rcu_bh_state;
 extern struct rcu_state rcu_preempt_state;
 #endif /* #ifdef CONFIG_PREEMPT_RCU */
 
-int rcu_dynticks_snap(struct rcu_dynticks *rdtp);
+int rcu_dynticks_snap(int cpu);
 
 #ifdef CONFIG_RCU_BOOST
 DECLARE_PER_CPU(unsigned int, rcu_cpu_kthread_status);
@@ -459,8 +459,6 @@ static int rcu_spawn_one_boost_kthread(struct rcu_state *rsp,
 #endif /* #ifdef CONFIG_RCU_BOOST */
 static void __init rcu_spawn_boost_kthreads(void);
 static void rcu_prepare_kthreads(int cpu);
-static void rcu_cleanup_after_idle(void);
-static void rcu_prepare_for_idle(void);
 static void rcu_idle_count_callbacks_posted(void);
 static bool rcu_preempt_has_tasks(struct rcu_node *rnp);
 static bool rcu_preempt_need_deferred_qs(struct task_struct *t);
@@ -489,8 +487,6 @@ static void __init rcu_organize_nocb_kthreads(struct rcu_state *rsp);
 static bool init_nocb_callback_list(struct rcu_data *rdp);
 static void rcu_bind_gp_kthread(void);
 static bool rcu_nohz_full_cpu(struct rcu_state *rsp);
-static void rcu_dynticks_task_enter(void);
-static void rcu_dynticks_task_exit(void);
 
 #ifdef CONFIG_SRCU
 void srcu_online_cpu(unsigned int cpu);

@@ -21,6 +21,7 @@
 #include <linux/freezer.h>
 #include <linux/kthread.h>
 #include <linux/rcupdate.h>
+#include <linux/context_tracking_irq.h>
 #include <linux/ftrace.h>
 #include <linux/smp.h>
 #include <linux/smpboot.h>
@@ -352,7 +353,7 @@ asmlinkage __visible void do_softirq(void)
  */
 void irq_enter(void)
 {
-	rcu_irq_enter();
+	ct_irq_enter();
 	if (is_idle_task(current) && !in_interrupt()) {
 		/*
 		 * Prevent raise_softirq from needlessly waking up ksoftirqd
@@ -418,7 +419,7 @@ void irq_exit(void)
 		invoke_softirq();
 
 	tick_irq_exit();
-	rcu_irq_exit();
+	ct_irq_exit();
 	trace_hardirq_exit(); /* must be last! */
 }
 
