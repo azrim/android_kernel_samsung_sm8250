@@ -32,24 +32,9 @@
 #ifndef CONFIG_PREEMPT_RT
 
 /*
- * 4.19 compat helpers. Upstream moved owner_on_cpu() to
- * include/linux/sched.h and added rt_or_dl_task()/wake_q_add_safe();
- * this tree predates those, so provide local equivalents.
+ * 4.19 compat helper. Upstream added wake_q_add_safe(); this tree
+ * predates it, so provide a local equivalent.
  */
-static inline bool owner_on_cpu(struct task_struct *owner)
-{
-	/*
-	 * As lock holder preemption issue, we both skip spinning if
-	 * task is not on cpu or its cpu is preempted
-	 */
-	return owner->on_cpu && !vcpu_is_preempted(task_cpu(owner));
-}
-
-static inline bool rt_or_dl_task(struct task_struct *p)
-{
-	return rt_task(p) || dl_task(p);
-}
-
 static inline void wake_q_add_safe(struct wake_q_head *head, struct task_struct *task)
 {
 	/*
