@@ -418,6 +418,8 @@ int msi_domain_alloc_irqs(struct irq_domain *domain, struct device *dev,
 					       dev_to_node(dev), &arg, false,
 					       desc->affinity);
 		if (virq < 0) {
+			pr_err("msi_domain_alloc_irqs: __irq_domain_alloc_irqs failed: %d (nvec=%d)\n",
+			       virq, desc->nvec_used);
 			ret = -ENOSPC;
 			if (ops->handle_error)
 				ret = ops->handle_error(domain, desc, ret);
