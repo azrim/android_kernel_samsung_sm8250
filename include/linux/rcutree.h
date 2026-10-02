@@ -75,18 +75,10 @@ static inline void synchronize_rcu_bh_expedited(void)
 void rcu_barrier(void);
 void rcu_barrier_bh(void);
 void rcu_barrier_sched(void);
-bool rcu_eqs_special_set(int cpu);
 unsigned long get_state_synchronize_rcu(void);
 void cond_synchronize_rcu(unsigned long oldstate);
 unsigned long get_state_synchronize_sched(void);
 void cond_synchronize_sched(unsigned long oldstate);
-
-void rcu_idle_enter(void);
-void rcu_idle_exit(void);
-void rcu_irq_enter(void);
-void rcu_irq_exit(void);
-void rcu_irq_enter_irqson(void);
-void rcu_irq_exit_irqson(void);
 
 void exit_rcu(void);
 
@@ -98,6 +90,18 @@ void rcu_all_qs(void);
 
 /* Called from context tracking's extended quiescent state transitions. */
 void rcu_preempt_deferred_qs(struct task_struct *t);
+
+/*
+ * This 4.19 tree still has CONFIG_RCU_FAST_NO_HZ and CONFIG_RCU_NOCB_CPU,
+ * whose idle state machine used to be driven from RCU's own extended
+ * quiescent state entry/exit code.  That code now lives in
+ * kernel/context_tracking.c, so these helpers are also called from context
+ * tracking's EQS transitions, preserving the 4.19 behavior.  (v6.12 dropped
+ * RCU_FAST_NO_HZ and therefore has no equivalent calls.)
+ */
+void rcu_nocb_deferred_wakeup(void);
+void rcu_prepare_for_idle(void);
+void rcu_cleanup_after_idle(void);
 
 /* RCUtree hotplug events */
 int rcutree_prepare_cpu(unsigned int cpu);

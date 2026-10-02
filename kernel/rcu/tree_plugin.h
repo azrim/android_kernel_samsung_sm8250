@@ -1504,7 +1504,7 @@ int rcu_needs_cpu(u64 basemono, u64 *nextevt)
  * Because we do not have RCU_FAST_NO_HZ, don't bother cleaning up
  * after it.
  */
-static void rcu_cleanup_after_idle(void)
+void rcu_cleanup_after_idle(void)
 {
 }
 
@@ -1512,7 +1512,7 @@ static void rcu_cleanup_after_idle(void)
  * Do the idle-entry grace-period work, which, because CONFIG_RCU_FAST_NO_HZ=n,
  * is nothing.
  */
-static void rcu_prepare_for_idle(void)
+void rcu_prepare_for_idle(void)
 {
 }
 
@@ -1649,7 +1649,7 @@ int rcu_needs_cpu(u64 basemono, u64 *nextevt)
  *
  * The caller must have disabled interrupts.
  */
-static void rcu_prepare_for_idle(void)
+void rcu_prepare_for_idle(void)
 {
 	bool needwake;
 	struct rcu_data *rdp;
@@ -1711,7 +1711,7 @@ static void rcu_prepare_for_idle(void)
  * any grace periods that elapsed while the CPU was idle, and if any
  * callbacks are now ready to invoke, initiate invocation.
  */
-static void rcu_cleanup_after_idle(void)
+void rcu_cleanup_after_idle(void)
 {
 	lockdep_assert_irqs_disabled();
 	if (rcu_is_nocb_cpu(smp_processor_id()))
@@ -1862,7 +1862,6 @@ static void print_cpu_stall_info(struct rcu_state *rsp, int cpu)
 	unsigned long delta;
 	char fast_no_hz[72];
 	struct rcu_data *rdp = per_cpu_ptr(rsp->rda, cpu);
-	struct rcu_dynticks *rdtp = rdp->dynticks;
 	char *ticks_title;
 	unsigned long ticks_value;
 
@@ -1890,8 +1889,8 @@ static void print_cpu_stall_info(struct rcu_state *rsp, int cpu)
 			rdp->rcu_iw_pending ? (int)min(delta, 9UL) + '0' :
 				"!."[!delta],
 	       ticks_value, ticks_title,
-	       rcu_dynticks_snap(rdtp) & 0xfff,
-	       rdtp->dynticks_nesting, rdtp->dynticks_nmi_nesting,
+	       rcu_dynticks_snap(cpu) & 0xfff,
+	       ct_nesting_cpu(cpu), ct_nmi_nesting_cpu(cpu),
 	       rdp->softirq_snap, kstat_softirqs_cpu(RCU_SOFTIRQ, cpu),
 	       READ_ONCE(rsp->n_force_qs) - rsp->n_force_qs_gpstart,
 	       fast_no_hz);
@@ -2753,20 +2752,4 @@ static void rcu_bind_gp_kthread(void)
 	if (!tick_nohz_full_enabled())
 		return;
 	housekeeping_affine(current, HK_FLAG_RCU);
-}
-
-/* Record the current task on dyntick-idle entry. */
-static void rcu_dynticks_task_enter(void)
-{
-#if defined(CONFIG_TASKS_RCU) && defined(CONFIG_NO_HZ_FULL)
-	WRITE_ONCE(current->rcu_tasks_idle_cpu, smp_processor_id());
-#endif /* #if defined(CONFIG_TASKS_RCU) && defined(CONFIG_NO_HZ_FULL) */
-}
-
-/* Record no current task on dyntick-idle exit. */
-static void rcu_dynticks_task_exit(void)
-{
-#if defined(CONFIG_TASKS_RCU) && defined(CONFIG_NO_HZ_FULL)
-	WRITE_ONCE(current->rcu_tasks_idle_cpu, -1);
-#endif /* #if defined(CONFIG_TASKS_RCU) && defined(CONFIG_NO_HZ_FULL) */
 }

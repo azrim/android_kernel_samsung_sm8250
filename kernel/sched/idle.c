@@ -56,7 +56,7 @@ static noinline int __cpuidle cpu_idle_poll(void)
 {
 	trace_cpu_idle(0, smp_processor_id());
 	stop_critical_timings();
-	rcu_idle_enter();
+	ct_idle_enter();
 	local_irq_enable();
 
 	while (!tif_need_resched() &&
@@ -64,7 +64,7 @@ static noinline int __cpuidle cpu_idle_poll(void)
 		is_reserved(smp_processor_id())))
 		cpu_relax();
 
-	rcu_idle_exit();
+	ct_idle_exit();
 	start_critical_timings();
 	trace_cpu_idle(PWR_EVENT_EXIT, smp_processor_id());
 
@@ -93,9 +93,9 @@ void __cpuidle default_idle_call(void)
 		local_irq_enable();
 	} else {
 		stop_critical_timings();
-		rcu_idle_enter();
+		ct_idle_enter();
 		arch_cpu_idle();
-		rcu_idle_exit();
+		ct_idle_exit();
 		start_critical_timings();
 	}
 }

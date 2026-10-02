@@ -266,7 +266,7 @@ static inline cfi_check_fn find_cfi_check(void *ptr)
 
 	rcu = rcu_is_watching();
 	if (!rcu)
-		rcu_nmi_enter();
+		ct_nmi_enter();
 
 #ifdef CONFIG_CFI_CLANG_SHADOW
 	/* Look up the __cfi_check function to use */
@@ -288,7 +288,7 @@ static inline cfi_check_fn find_cfi_check(void *ptr)
 
 out:
 	if (!rcu)
-		rcu_nmi_exit();
+		ct_nmi_exit();
 
 	return f;
 }

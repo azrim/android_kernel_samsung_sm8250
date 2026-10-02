@@ -40,6 +40,7 @@
 #include <linux/preempt.h>
 #include <linux/bottom_half.h>
 #include <linux/lockdep.h>
+#include <linux/context_tracking_irq.h>
 #include <asm/processor.h>
 #include <linux/cpumask.h>
 
@@ -115,14 +116,6 @@ static inline void rcu_sysrq_start(void) { }
 static inline void rcu_sysrq_end(void) { }
 #endif /* #else #ifdef CONFIG_RCU_STALL_COMMON */
 
-#ifdef CONFIG_NO_HZ_FULL
-void rcu_user_enter(void);
-void rcu_user_exit(void);
-#else
-static inline void rcu_user_enter(void) { }
-static inline void rcu_user_exit(void) { }
-#endif /* CONFIG_NO_HZ_FULL */
-
 #ifdef CONFIG_RCU_NOCB_CPU
 void rcu_init_nohz(void);
 #else /* #ifdef CONFIG_RCU_NOCB_CPU */
@@ -134,8 +127,8 @@ static inline void rcu_init_nohz(void) { }
  * @a: Code that RCU needs to pay attention to.
  *
  * RCU, RCU-bh, and RCU-sched read-side critical sections are forbidden
- * in the inner idle loop, that is, between the rcu_idle_enter() and
- * the rcu_idle_exit() -- RCU will happily ignore any such read-side
+ * in the inner idle loop, that is, between the ct_idle_enter() and
+ * the ct_idle_exit() -- RCU will happily ignore any such read-side
  * critical sections.  However, things like powertop need tracepoints
  * in the inner idle loop.
  *
@@ -150,9 +143,9 @@ static inline void rcu_init_nohz(void) { }
  */
 #define RCU_NONIDLE(a) \
 	do { \
-		rcu_irq_enter_irqson(); \
+		ct_irq_enter_irqson(); \
 		do { a; } while (0); \
-		rcu_irq_exit_irqson(); \
+		ct_irq_exit_irqson(); \
 	} while (0)
 
 /*

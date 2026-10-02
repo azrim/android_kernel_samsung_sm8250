@@ -6,26 +6,12 @@
 #include <linux/lockdep.h>
 #include <linux/ftrace_irq.h>
 #include <linux/vtime.h>
+#include <linux/context_tracking_irq.h>
 #include <asm/hardirq.h>
 
 
 extern void synchronize_irq(unsigned int irq);
 extern bool synchronize_hardirq(unsigned int irq);
-
-#if defined(CONFIG_TINY_RCU)
-
-static inline void rcu_nmi_enter(void)
-{
-}
-
-static inline void rcu_nmi_exit(void)
-{
-}
-
-#else
-extern void rcu_nmi_enter(void);
-extern void rcu_nmi_exit(void);
-#endif
 
 /*
  * It is safe to do non-atomic ops on ->hardirq_context,
@@ -73,14 +59,14 @@ extern void irq_exit(void);
 		ftrace_nmi_enter();				\
 		BUG_ON(in_nmi());				\
 		preempt_count_add(NMI_OFFSET + HARDIRQ_OFFSET);	\
-		rcu_nmi_enter();				\
+		ct_nmi_enter();					\
 		trace_hardirq_enter();				\
 	} while (0)
 
 #define nmi_exit()						\
 	do {							\
 		trace_hardirq_exit();				\
-		rcu_nmi_exit();					\
+		ct_nmi_exit();					\
 		BUG_ON(!in_nmi());				\
 		preempt_count_sub(NMI_OFFSET + HARDIRQ_OFFSET);	\
 		ftrace_nmi_exit();				\

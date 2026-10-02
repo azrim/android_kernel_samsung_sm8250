@@ -402,14 +402,13 @@ static void sync_rcu_exp_select_node_cpus(struct work_struct *wp)
 	for_each_leaf_node_cpu_mask(rnp, cpu, rnp->expmask) {
 		unsigned long mask = leaf_node_cpu_bit(rnp, cpu);
 		struct rcu_data *rdp = per_cpu_ptr(rsp->rda, cpu);
-		struct rcu_dynticks *rdtp = per_cpu_ptr(&rcu_dynticks, cpu);
 		int snap;
 
 		if (raw_smp_processor_id() == cpu ||
 		    !(rnp->qsmaskinitnext & mask)) {
 			mask_ofl_test |= mask;
 		} else {
-			snap = rcu_dynticks_snap(rdtp);
+			snap = rcu_dynticks_snap(cpu);
 			if (rcu_dynticks_in_eqs(snap))
 				mask_ofl_test |= mask;
 			else
@@ -435,7 +434,7 @@ static void sync_rcu_exp_select_node_cpus(struct work_struct *wp)
 		if (!(mask_ofl_ipi & mask))
 			continue;
 retry_ipi:
-		if (rcu_dynticks_in_eqs_since(rdp->dynticks,
+		if (rcu_dynticks_in_eqs_since(rdp->cpu,
 					      rdp->exp_dynticks_snap)) {
 			mask_ofl_test |= mask;
 			continue;
@@ -751,7 +750,7 @@ static void sync_rcu_exp_handler(void *info)
 	 */
 	if (!t->rcu_read_lock_nesting) {
 		if (!(preempt_count() & (PREEMPT_MASK | SOFTIRQ_MASK)) ||
-		    rcu_dynticks_curr_cpu_in_eqs()) {
+		    !rcu_is_watching_curr_cpu()) {
 			rcu_report_exp_rdp(rsp, rdp, true);
 		} else {
 			rdp->deferred_qs = true;
@@ -798,7 +797,7 @@ static void sync_rcu_exp_handler(void *info)
 	 */
 	rdp->deferred_qs = true;
 	if (!(preempt_count() & (PREEMPT_MASK | SOFTIRQ_MASK)) ||
-	    WARN_ON_ONCE(rcu_dynticks_curr_cpu_in_eqs()))
+	    WARN_ON_ONCE(!rcu_is_watching_curr_cpu()))
 		rcu_preempt_deferred_qs(t);
 	else
 		resched_cpu(rdp->cpu);

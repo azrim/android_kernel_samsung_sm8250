@@ -425,44 +425,6 @@ TRACE_EVENT(rcu_fqs,
 #endif /* #if defined(CONFIG_TREE_RCU) || defined(CONFIG_PREEMPT_RCU) */
 
 /*
- * Tracepoint for dyntick-idle entry/exit events.  These take a string
- * as argument: "Start" for entering dyntick-idle mode, "Startirq" for
- * entering it from irq/NMI, "End" for leaving it, "Endirq" for leaving it
- * to irq/NMI, "--=" for events moving towards idle, and "++=" for events
- * moving away from idle.
- *
- * These events also take a pair of numbers, which indicate the nesting
- * depth before and after the event of interest, and a third number that is
- * the ->dynticks counter.  Note that task-related and interrupt-related
- * events use two separate counters, and that the "++=" and "--=" events
- * for irq/NMI will change the counter by two, otherwise by one.
- */
-TRACE_EVENT(rcu_dyntick,
-
-	TP_PROTO(const char *polarity, long oldnesting, long newnesting, atomic_t dynticks),
-
-	TP_ARGS(polarity, oldnesting, newnesting, dynticks),
-
-	TP_STRUCT__entry(
-		__field(const char *, polarity)
-		__field(long, oldnesting)
-		__field(long, newnesting)
-		__field(int, dynticks)
-	),
-
-	TP_fast_assign(
-		__entry->polarity = polarity;
-		__entry->oldnesting = oldnesting;
-		__entry->newnesting = newnesting;
-		__entry->dynticks = atomic_read(&dynticks);
-	),
-
-	TP_printk("%s %lx %lx %#3x", __entry->polarity,
-		  __entry->oldnesting, __entry->newnesting,
-		  __entry->dynticks & 0xfff)
-);
-
-/*
  * Tracepoint for RCU watching events.  These take a string
  * as argument:
  * polarity: "Start", "End", "StillWatching" for entering, exiting or still not
@@ -807,7 +769,6 @@ TRACE_EVENT(rcu_barrier,
 					 grplo, grphi, gp_tasks) do { } \
 	while (0)
 #define trace_rcu_fqs(rcuname, gp_seq, cpu, qsevent) do { } while (0)
-#define trace_rcu_dyntick(polarity, oldnesting, newnesting, dyntick) do { } while (0)
 #define trace_rcu_watching(polarity, oldnesting, newnesting, counter) do { } while (0)
 #define trace_rcu_callback(rcuname, rhp, qlen_lazy, qlen) do { } while (0)
 #define trace_rcu_kfree_callback(rcuname, rhp, offset, qlen_lazy, qlen) \
