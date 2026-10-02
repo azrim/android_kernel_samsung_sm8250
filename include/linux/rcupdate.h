@@ -98,15 +98,6 @@ static inline int rcu_preempt_depth(void)
 
 #endif /* #else #ifdef CONFIG_PREEMPT_RCU */
 
-#ifdef CONFIG_RCU_LAZY
-void call_rcu_hurry(struct rcu_head *head, rcu_callback_t func);
-#else
-static inline void call_rcu_hurry(struct rcu_head *head, rcu_callback_t func)
-{
-	call_rcu(head, func);
-}
-#endif
-
 /* Internal to kernel */
 void rcu_init(void);
 extern int rcu_scheduler_active __read_mostly;
@@ -892,14 +883,23 @@ static inline notrace void rcu_read_unlock_sched_notrace(void)
 
 /*
  * Does the specified offset indicate that the corresponding rcu_head
- * structure can be handled by kvfree_rcu()?
+ * structure can be handled by kfree_rcu()?
  */
-#define __is_kvfree_rcu_offset(offset) ((offset) < 4096)
+#define __is_kfree_rcu_offset(offset) ((offset) < 4096)
+
+/*
+ * Helper macro for kfree_rcu() to prevent argument-expansion eyestrain.
+ */
+#define __kfree_rcu(head, offset) \
+	do { \
+		BUILD_BUG_ON(!__is_kfree_rcu_offset(offset)); \
+		kfree_call_rcu(head, (rcu_callback_t)(unsigned long)(offset)); \
+	} while (0)
 
 /**
  * kfree_rcu() - kfree an object after a grace period.
- * @ptr: pointer to kfree for double-argument invocations.
- * @rhf: the name of the struct rcu_head within the type of @ptr.
+ * @ptr:	pointer to kfree
+ * @rcu_head:	the name of the struct rcu_head within the type of @ptr.
  *
  * Many rcu callbacks functions just call kfree() on the base structure.
  * These functions are trivial, but their size adds up, and furthermore
@@ -912,58 +912,18 @@ static inline notrace void rcu_read_unlock_sched_notrace(void)
  * Because the functions are not allowed in the low-order 4096 bytes of
  * kernel virtual memory, offsets up to 4095 bytes can be accommodated.
  * If the offset is larger than 4095 bytes, a compile-time error will
- * be generated in kvfree_rcu_arg_2(). If this error is triggered, you can
+ * be generated in __kfree_rcu().  If this error is triggered, you can
  * either fall back to use of call_rcu() or rearrange the structure to
  * position the rcu_head structure into the first 4096 bytes.
  *
- * The object to be freed can be allocated either by kmalloc() or
- * kmem_cache_alloc().
- *
- * Note that the allowable offset might decrease in the future.
+ * Note that the allowable offset might decrease in the future, for example,
+ * to allow something like kmem_cache_free_rcu().
  *
  * The BUILD_BUG_ON check must not involve any function calls, hence the
  * checks are done in macros here.
  */
-#define kfree_rcu(ptr, rhf) kvfree_rcu_arg_2(ptr, rhf)
-#define kvfree_rcu(ptr, rhf) kvfree_rcu_arg_2(ptr, rhf)
-
-/**
- * kfree_rcu_mightsleep() - kfree an object after a grace period.
- * @ptr: pointer to kfree for single-argument invocations.
- *
- * When it comes to head-less variant, only one argument
- * is passed and that is just a pointer which has to be
- * freed after a grace period. Therefore the semantic is
- *
- *     kfree_rcu_mightsleep(ptr);
- *
- * where @ptr is the pointer to be freed by kvfree().
- *
- * Please note, head-less way of freeing is permitted to
- * use from a context that has to follow might_sleep()
- * annotation. Otherwise, please switch and embed the
- * rcu_head structure within the type of @ptr.
- */
-#define kfree_rcu_mightsleep(ptr) kvfree_rcu_arg_1(ptr)
-#define kvfree_rcu_mightsleep(ptr) kvfree_rcu_arg_1(ptr)
-
-#define kvfree_rcu_arg_2(ptr, rhf)					\
-do {									\
-	typeof(ptr) ___p = (ptr);					\
-									\
-	if (___p) {									\
-		BUILD_BUG_ON(!__is_kvfree_rcu_offset(offsetof(typeof(*(ptr)), rhf)));	\
-		kvfree_call_rcu(&((___p)->rhf), (void *) (___p));			\
-	}										\
-} while (0)
-
-#define kvfree_rcu_arg_1(ptr)					\
-do {								\
-	typeof(ptr) ___p = (ptr);				\
-								\
-	if (___p)						\
-		kvfree_call_rcu(NULL, (void *) (___p));		\
-} while (0)
+#define kfree_rcu(ptr, rcu_head)					\
+	__kfree_rcu(&((ptr)->rcu_head), offsetof(typeof(*(ptr)), rcu_head))
 
 
 /*

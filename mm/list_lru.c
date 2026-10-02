@@ -389,6 +389,14 @@ static void memcg_destroy_list_lru_node(struct list_lru_node *nlru)
 	kvfree(memcg_lrus);
 }
 
+static void kvfree_rcu(struct rcu_head *head)
+{
+	struct list_lru_memcg *mlru;
+
+	mlru = container_of(head, struct list_lru_memcg, rcu);
+	kvfree(mlru);
+}
+
 static int memcg_update_list_lru_node(struct list_lru_node *nlru,
 				      int old_size, int new_size)
 {
@@ -420,7 +428,7 @@ static int memcg_update_list_lru_node(struct list_lru_node *nlru,
 	rcu_assign_pointer(nlru->memcg_lrus, new);
 	spin_unlock_irq(&nlru->lock);
 
-	kvfree_rcu(old, rcu);
+	call_rcu(&old->rcu, kvfree_rcu);
 	return 0;
 }
 

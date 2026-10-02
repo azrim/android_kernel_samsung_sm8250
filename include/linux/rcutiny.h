@@ -116,25 +116,10 @@ static inline void synchronize_sched_expedited(void)
 	synchronize_sched();
 }
 
-/*
- * Add one more declaration of kvfree() here. It is
- * not so straight forward to just include <linux/mm.h>
- * where it is defined due to getting many compile
- * errors caused by that include.
- */
-extern void kvfree(const void *addr);
-
-static inline void kvfree_call_rcu(struct rcu_head *head, void *ptr)
+static inline void kfree_call_rcu(struct rcu_head *head,
+				  rcu_callback_t func)
 {
-	if (head) {
-		call_rcu(head, (rcu_callback_t)((void *)head - ptr));
-		return;
-	}
-
-	// kvfree_rcu(one_arg) call.
-	might_sleep();
-	synchronize_rcu();
-	kvfree(ptr);
+	call_rcu(head, func);
 }
 
 static inline void rcu_softirq_qs(void)

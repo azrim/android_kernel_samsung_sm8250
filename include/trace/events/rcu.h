@@ -621,50 +621,6 @@ TRACE_EVENT(rcu_invoke_kfree_callback,
 		  __entry->rcuname, __entry->rhp, __entry->offset)
 );
 
-TRACE_EVENT(rcu_invoke_kvfree_callback,
-
-	TP_PROTO(const char *rcuname, struct rcu_head *rhp, unsigned long offset),
-
-	TP_ARGS(rcuname, rhp, offset),
-
-	TP_STRUCT__entry(
-		__field(const char *, rcuname)
-		__field(void *, rhp)
-		__field(unsigned long, offset)
-	),
-
-	TP_fast_assign(
-		__entry->rcuname = rcuname;
-		__entry->rhp = rhp;
-		__entry->offset	= offset;
-	),
-
-	TP_printk("%s rhp=%p func=%ld",
-		  __entry->rcuname, __entry->rhp, __entry->offset)
-);
-
-TRACE_EVENT(rcu_invoke_kfree_bulk_callback,
-
-	TP_PROTO(const char *rcuname, unsigned long nr_records, void **p),
-
-	TP_ARGS(rcuname, nr_records, p),
-
-	TP_STRUCT__entry(
-		__field(const char *, rcuname)
-		__field(unsigned long, nr_records)
-		__field(void **, p)
-	),
-
-	TP_fast_assign(
-		__entry->rcuname = rcuname;
-		__entry->nr_records = nr_records;
-		__entry->p = p;
-	),
-
-	TP_printk("%s bulk=0x%p nr_records=%lu",
-		__entry->rcuname, __entry->p, __entry->nr_records)
-);
-
 /*
  * Tracepoint for exiting rcu_do_batch after RCU callbacks have been
  * invoked.  The first argument is the name of the RCU flavor,
@@ -820,8 +776,6 @@ TRACE_EVENT(rcu_barrier,
 	do { } while (0)
 #define trace_rcu_invoke_callback(rcuname, rhp) do { } while (0)
 #define trace_rcu_invoke_kfree_callback(rcuname, rhp, offset) do { } while (0)
-#define trace_rcu_invoke_kvfree_callback(rcuname, rhp, offset) do { } while (0)
-#define trace_rcu_invoke_kfree_bulk_callback(rcuname, nr_records, p) do { } while (0)
 #define trace_rcu_batch_end(rcuname, callbacks_invoked, cb, nr, iit, risk) \
 	do { } while (0)
 #define trace_rcu_torture_read(rcutorturename, rhp, secs, c_old, c) \
