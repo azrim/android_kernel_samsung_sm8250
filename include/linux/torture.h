@@ -49,6 +49,21 @@
 #define VERBOSE_TOROUT_ERRSTRING(s) \
 	do { if (verbose) pr_alert("%s" TORTURE_FLAG "!!! %s\n", torture_type, s); } while (0)
 
+/*
+ * Report a torture-test initialization failure.  This 4.19 tree lacks the
+ * upstream v6.12 helper, so provide it here for the v6.12 rcuscale/refscale
+ * ports (rcutorture.c still uses its own local error handling).
+ */
+#define torture_init_error(firsterr)						\
+({										\
+	int ___firsterr = (firsterr);						\
+										\
+	WARN_ONCE(!IS_MODULE(CONFIG_RCU_TORTURE_TEST) && ___firsterr < 0,	\
+		  "Torture-test initialization failed with error code %d\n",	\
+		  ___firsterr);							\
+	___firsterr < 0;							\
+})
+
 /* Definitions for online/offline exerciser. */
 bool torture_offline(int cpu, long *n_onl_attempts, long *n_onl_successes,
 		     unsigned long *sum_offl, int *min_onl, int *max_onl);

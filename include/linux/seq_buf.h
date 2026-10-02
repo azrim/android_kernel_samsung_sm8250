@@ -72,6 +72,35 @@ static inline unsigned int seq_buf_used(struct seq_buf *s)
 }
 
 /**
+ * seq_buf_str - get NUL-terminated C string from seq_buf
+ * @s: the seq_buf handle
+ *
+ * This makes sure that the buffer in @s is NUL-terminated and
+ * safe to read as a string.
+ *
+ * Note, if this is called when the buffer has overflowed, then
+ * the last byte of the buffer is zeroed, and the len will still
+ * point passed it.
+ *
+ * After this function is called, s->buffer is safe to use
+ * in string operations.
+ *
+ * Returns: @s->buf after making sure it is terminated.
+ */
+static inline const char *seq_buf_str(struct seq_buf *s)
+{
+	if (WARN_ON(s->size == 0))
+		return "";
+
+	if (seq_buf_buffer_left(s))
+		s->buffer[s->len] = 0;
+	else
+		s->buffer[s->size - 1] = 0;
+
+	return s->buffer;
+}
+
+/**
  * seq_buf_get_buf - get buffer to write arbitrary data to
  * @s: the seq_buf handle
  * @bufp: the beginning of the buffer is stored here
