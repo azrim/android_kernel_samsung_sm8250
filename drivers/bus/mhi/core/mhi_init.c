@@ -410,6 +410,14 @@ void mhi_deinit_free_irq(struct mhi_controller *mhi_cntrl)
 	int i;
 	struct mhi_event *mhi_event = mhi_cntrl->mhi_event;
 
+	/*
+	 * mhi_cntrl->irq is allocated only after MSI setup succeeds.  If the
+	 * modem failed to come up and the MSI (re-)allocation failed, the IRQ
+	 * array was never allocated -- there is nothing to free in that case.
+	 */
+	if (!mhi_cntrl->irq)
+		return;
+
 	for (i = 0; i < mhi_cntrl->total_ev_rings; i++, mhi_event++) {
 		if (!mhi_event->request_irq)
 			continue;
@@ -469,6 +477,18 @@ void mhi_deinit_dev_ctxt(struct mhi_controller *mhi_cntrl)
 	struct mhi_cmd *mhi_cmd;
 	struct mhi_event *mhi_event;
 	struct mhi_ring *ring;
+
+	/*
+	 * mhi_cntrl->mhi_ctxt is assigned only at the very end of a successful
+	 * mhi_init_dev_ctxt(); every earlier failure path frees what it
+	 * allocated and leaves this NULL.  So a NULL here means the device
+	 * context was never set up -- nothing to tear down.  This happens when
+	 * a modem subsystem restart (SSR) fails to power the modem back up,
+	 * e.g. because pci_alloc_irq_vectors() came back -ENOSPC.  Bail out
+	 * instead of dereferencing the NULL mhi_ctxt.
+	 */
+	if (!mhi_ctxt)
+		return;
 
 	mhi_cmd = mhi_cntrl->mhi_cmd;
 	for (i = 0; i < NR_OF_CMD_RINGS; i++, mhi_cmd++) {
