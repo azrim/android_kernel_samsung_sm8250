@@ -433,6 +433,27 @@ void wake_q_add(struct wake_q_head *head, struct task_struct *task)
 	head->lastp = &node->next;
 }
 
+/*
+ * wake_q_add_safe() - safely queue a wakeup for 'later' waking.
+ * @head: the wake_q_head to add @task to
+ * @task: the task to queue for 'later' wakeup
+ *
+ * This function is essentially a task-safe equivalent to wake_q_add().
+ * Callers that already hold a reference to @task can call the 'safe'
+ * version and trust wake_q to do the right thing depending whether or
+ * not the @task is already queued for wakeup.
+ *
+ * wake_q_add() takes its own reference on success, so dropping the
+ * caller's reference here leaves exactly one reference owned by the
+ * wake queue; if the task was already queued wake_q_add() is a no-op
+ * and this simply drops the caller's reference.
+ */
+void wake_q_add_safe(struct wake_q_head *head, struct task_struct *task)
+{
+	wake_q_add(head, task);
+	put_task_struct(task);
+}
+
 static int
 try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags,
 	       int sibling_count_hint);
