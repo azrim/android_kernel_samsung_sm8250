@@ -32,20 +32,6 @@
 #ifndef CONFIG_PREEMPT_RT
 
 /*
- * 4.19 compat helper. Upstream added wake_q_add_safe(); this tree
- * predates it, so provide a local equivalent.
- */
-static inline void wake_q_add_safe(struct wake_q_head *head, struct task_struct *task)
-{
-	/*
-	 * wake_q_add() takes its own reference and is a no-op if @task is
-	 * already queued, so drop the caller's reference either way.
-	 */
-	wake_q_add(head, task);
-	put_task_struct(task);
-}
-
-/*
  * The least significant 2 bits of the owner value has the following
  * meanings when set.
  *  - Bit 0: RWSEM_READER_OWNED - rwsem may be owned by readers (just a hint)
