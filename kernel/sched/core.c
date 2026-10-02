@@ -3083,6 +3083,116 @@ out:
 	raw_spin_unlock(&p->pi_lock);
 }
 
+static bool __task_needs_rq_lock(struct task_struct *p)
+{
+	unsigned int state = READ_ONCE(p->state);
+
+	/*
+	 * Since pi->lock blocks try_to_wake_up(), we don't need rq->lock when
+	 * the task is blocked. Make sure to check @state since ttwu() can drop
+	 * locks at the end, see ttwu_queue_wakelist().
+	 */
+	if (state == TASK_RUNNING || state == TASK_WAKING)
+		return true;
+
+	/*
+	 * Ensure we load p->on_rq after p->state, otherwise it would be
+	 * possible to, falsely, observe p->on_rq == 0.
+	 *
+	 * See try_to_wake_up() for a longer comment.
+	 */
+	smp_rmb();
+	if (p->on_rq)
+		return true;
+
+#ifdef CONFIG_SMP
+	/*
+	 * Ensure the task has finished __schedule() and will not be referenced
+	 * anymore. Again, see try_to_wake_up() for a longer comment.
+	 */
+	smp_rmb();
+	smp_cond_load_acquire(&p->on_cpu, !VAL);
+#endif
+
+	return false;
+}
+
+/**
+ * task_call_func - Invoke a function on task in fixed state
+ * @p: Process for which the function is to be invoked, can be @current.
+ * @func: Function to invoke.
+ * @arg: Argument to function.
+ *
+ * Fix the task in it's current state by avoiding wakeups and or rq operations
+ * and call @func(@arg) on it.  This function can use task_curr() to work out
+ * what the state is, if required.  Given that @func can be invoked with a
+ * runqueue lock held, it had better be quite lightweight.
+ *
+ * Returns:
+ *   Whatever @func returns
+ */
+int task_call_func(struct task_struct *p, task_call_f func, void *arg)
+{
+	struct rq *rq = NULL;
+	struct rq_flags rf;
+	int ret;
+
+	raw_spin_lock_irqsave(&p->pi_lock, rf.flags);
+
+	if (__task_needs_rq_lock(p))
+		rq = __task_rq_lock(p, &rf);
+
+	/*
+	 * At this point the task is pinned; either:
+	 *  - blocked and we're holding off wakeups	 (pi->lock)
+	 *  - woken, and we're holding off enqueue	 (rq->lock)
+	 *  - queued, and we're holding off schedule	 (rq->lock)
+	 *  - running, and we're holding off de-schedule (rq->lock)
+	 *
+	 * The called function (@func) can use: task_curr(), p->on_rq and
+	 * p->state to differentiate between these states.
+	 */
+	ret = func(p, arg);
+
+	if (rq)
+		rq_unlock(rq, &rf);
+
+	raw_spin_unlock_irqrestore(&p->pi_lock, rf.flags);
+	return ret;
+}
+
+/**
+ * cpu_curr_snapshot - Return a snapshot of the currently running task
+ * @cpu: The CPU on which to snapshot the task.
+ *
+ * Returns the task_struct pointer of the task "currently" running on
+ * the specified CPU.
+ *
+ * If the specified CPU was offline, the return value is whatever it
+ * is, perhaps a pointer to the task_struct structure of that CPU's idle
+ * task, but there is no guarantee.  Callers wishing a useful return
+ * value must take some action to ensure that the specified CPU remains
+ * online throughout.
+ *
+ * This function executes full memory barriers before and after fetching
+ * the pointer, which permits the caller to confine this function's fetch
+ * with respect to the caller's accesses to other shared variables.
+ */
+struct task_struct *cpu_curr_snapshot(int cpu)
+{
+	struct rq *rq = cpu_rq(cpu);
+	struct task_struct *t;
+	struct rq_flags rf;
+
+	rq_lock_irqsave(rq, &rf);
+	smp_mb__after_spinlock(); /* Pairing determined by caller's synchronization design. */
+	t = rcu_dereference(cpu_curr(cpu));
+	rq_unlock_irqrestore(rq, &rf);
+	smp_mb(); /* Pairing determined by caller's synchronization design. */
+
+	return t;
+}
+
 /**
  * wake_up_process - Wake up a specific process
  * @p: The process to be woken up.
@@ -3864,6 +3974,11 @@ bool single_task_running(void)
 	return raw_rq()->nr_running == 1;
 }
 EXPORT_SYMBOL(single_task_running);
+
+unsigned long long nr_context_switches_cpu(int cpu)
+{
+	return cpu_rq(cpu)->nr_switches;
+}
 
 unsigned long long nr_context_switches(void)
 {
@@ -6346,7 +6461,15 @@ int __sched _cond_resched(void)
 		preempt_schedule_common();
 		return 1;
 	}
-	rcu_all_qs();
+	/*
+	 * In preemptible kernels, ->rcu_read_lock_nesting tells the tick
+	 * whether the current CPU is in an RCU read-side critical section,
+	 * so the tick can report quiescent states itself.  Moreover, a
+	 * preemptible kernel can do a resched in the middle of an RCU
+	 * read-side critical section, so rcu_all_qs() cannot be called here.
+	 */
+	if (!IS_ENABLED(CONFIG_PREEMPTION))
+		rcu_all_qs();
 	return 0;
 }
 EXPORT_SYMBOL(_cond_resched);

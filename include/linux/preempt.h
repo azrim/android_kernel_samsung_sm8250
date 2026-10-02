@@ -99,6 +99,7 @@
  *       should not be used in new code.
  */
 #define in_irq()		(hardirq_count())
+#define in_hardirq()		(hardirq_count())
 #define in_softirq()		(softirq_count())
 #define in_interrupt()		(irq_count())
 #define in_serving_softirq()	(softirq_count() & SOFTIRQ_OFFSET)

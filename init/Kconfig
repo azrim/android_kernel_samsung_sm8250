@@ -1810,6 +1810,7 @@ config BPF_SYSCALL
 	bool "Enable bpf() system call"
 	select BPF
 	select IRQ_WORK
+	select NEED_TASKS_RCU
 	select TASKS_TRACE_RCU
 	select NET_SOCK_MSG if INET
 	default n

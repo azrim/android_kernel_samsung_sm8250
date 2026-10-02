@@ -221,4 +221,11 @@ int smpcfd_prepare_cpu(unsigned int cpu);
 int smpcfd_dead_cpu(unsigned int cpu);
 int smpcfd_dying_cpu(unsigned int cpu);
 
+/*
+ * 4.19 has no CSD-lock deadlock detector (CONFIG_CSD_LOCK_WAIT_DEBUG).
+ * The v6.12 RCU stall code consults csd_lock_is_stuck() only when the
+ * rcutree.csd_lock_suppress_rcu_stall knob is enabled; report "not stuck".
+ */
+static inline bool csd_lock_is_stuck(void) { return false; }
+
 #endif /* __LINUX_SMP_H */

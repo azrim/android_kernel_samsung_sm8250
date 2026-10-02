@@ -330,6 +330,13 @@ void lockdep_assert_cpus_held(void)
 	percpu_rwsem_assert_held(&cpu_hotplug_lock);
 }
 
+#ifdef CONFIG_LOCKDEP
+int lockdep_is_cpus_held(void)
+{
+	return percpu_rwsem_is_held(&cpu_hotplug_lock);
+}
+#endif
+
 static void lockdep_acquire_cpus_lock(void)
 {
 	rwsem_acquire(&cpu_hotplug_lock.rw_sem.dep_map, 0, 0, _THIS_IP_);
@@ -995,10 +1002,10 @@ void cpuhp_report_idle_dead(void)
 	struct cpuhp_cpu_state *st = this_cpu_ptr(&cpuhp_state);
 
 	BUG_ON(st->state != CPUHP_AP_OFFLINE);
-	rcu_report_dead(smp_processor_id());
+	rcutree_report_cpu_dead();
 	st->state = CPUHP_AP_IDLE_DEAD;
 	/*
-	 * We cannot call complete after rcu_report_dead() so we delegate it
+	 * We cannot call complete after rcutree_report_cpu_dead() so we delegate it
 	 * to an online cpu.
 	 */
 	smp_call_function_single(cpumask_first(cpu_online_mask),
@@ -1163,7 +1170,7 @@ void notify_cpu_starting(unsigned int cpu)
 	enum cpuhp_state target = min((int)st->target, CPUHP_AP_ONLINE);
 	int ret;
 
-	rcu_cpu_starting(cpu);	/* Enables RCU usage on this CPU. */
+	rcutree_report_cpu_starting(cpu);	/* Enables RCU usage on this CPU. */
 	st->booted_once = true;
 	while (st->state < target) {
 		st->state++;

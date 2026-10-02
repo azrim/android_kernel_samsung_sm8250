@@ -6,19 +6,14 @@
 
 /*
  * rcuwait provides a way of blocking and waking up a single
- * task in an rcu-safe manner; where it is forbidden to use
- * after exit_notify(). task_struct is not properly rcu protected,
- * unless dealing with rcu-aware lists, ie: find_task_by_*().
+ * task in an rcu-safe manner.
  *
- * Alternatively we have task_rcu_dereference(), but the return
- * semantics have different implications which would break the
- * wakeup side. The only time @task is non-nil is when a user is
- * blocked (or checking if it needs to) on a condition, and reset
- * as soon as we know that the condition has succeeded and are
- * awoken.
+ * The only time @task is non-nil is when a user is blocked (or
+ * checking if it needs to) on a condition, and reset as soon as we
+ * know that the condition has succeeded and are awoken.
  */
 struct rcuwait {
-	struct task_struct *task;
+	struct task_struct __rcu *task;
 };
 
 #define __RCUWAIT_INITIALIZER(name)		\
@@ -29,36 +24,73 @@ static inline void rcuwait_init(struct rcuwait *w)
 	w->task = NULL;
 }
 
-extern void rcuwait_wake_up(struct rcuwait *w);
+/*
+ * Note: this provides no serialization and, just as with waitqueues,
+ * requires care to estimate as to whether or not the wait is active.
+ */
+static inline int rcuwait_active(struct rcuwait *w)
+{
+	return !!rcu_access_pointer(w->task);
+}
+
+extern int rcuwait_wake_up(struct rcuwait *w);
 
 /*
  * The caller is responsible for locking around rcuwait_wait_event(),
- * such that writes to @task are properly serialized.
+ * and [prepare_to/finish]_rcuwait() such that writes to @task are
+ * properly serialized.
+ *
+ * Deviations from v6.12, adapted to 4.19:
+ * - v6.12 includes <linux/sched/signal.h> for signal_pending_state() and
+ *   bails out with -EINTR on a pending signal.  In this 4.19 tree
+ *   sched/signal.h pulls in mm.h -> huge_mm.h -> fs.h, which cycles back
+ *   through percpu-rwsem.h -> rcuwait.h and breaks the build.  Every
+ *   rcuwait_wait_event() caller here passes TASK_UNINTERRUPTIBLE or
+ *   TASK_IDLE, for which signal_pending_state() is always false, so the
+ *   check (and the include) is simply omitted.
  */
-#define rcuwait_wait_event(w, condition)				\
+
+static inline void prepare_to_rcuwait(struct rcuwait *w)
+{
+	rcu_assign_pointer(w->task, current);
+}
+
+extern void finish_rcuwait(struct rcuwait *w);
+
+#define ___rcuwait_wait_event(w, condition, state, ret, cmd)		\
 ({									\
-	/*								\
-	 * Complain if we are called after do_exit()/exit_notify(),     \
-	 * as we cannot rely on the rcu critical region for the		\
-	 * wakeup side.							\
-	 */                                                             \
-	WARN_ON(current->exit_state);                                   \
-									\
-	rcu_assign_pointer((w)->task, current);				\
+	long __ret = ret;						\
+	prepare_to_rcuwait(w);						\
 	for (;;) {							\
 		/*							\
 		 * Implicit barrier (A) pairs with (B) in		\
 		 * rcuwait_wake_up().					\
 		 */							\
-		set_current_state(TASK_UNINTERRUPTIBLE);		\
+		set_current_state(state);				\
 		if (condition)						\
 			break;						\
 									\
-		schedule();						\
+		cmd;							\
 	}								\
-									\
-	WRITE_ONCE((w)->task, NULL);					\
-	__set_current_state(TASK_RUNNING);				\
+	finish_rcuwait(w);						\
+	__ret;								\
+})
+
+#define rcuwait_wait_event(w, condition, state)				\
+	___rcuwait_wait_event(w, condition, state, 0, schedule())
+
+#define __rcuwait_wait_event_timeout(w, condition, state, timeout)	\
+	___rcuwait_wait_event(w, ___wait_cond_timeout(condition),	\
+			      state, timeout,				\
+			      __ret = schedule_timeout(__ret))
+
+#define rcuwait_wait_event_timeout(w, condition, state, timeout)	\
+({									\
+	long __ret = timeout;						\
+	if (!___wait_cond_timeout(condition))				\
+		__ret = __rcuwait_wait_event_timeout(w, condition,	\
+						     state, timeout);	\
+	__ret;								\
 })
 
 #endif /* _LINUX_RCUWAIT_H_ */

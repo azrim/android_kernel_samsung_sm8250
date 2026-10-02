@@ -41,6 +41,14 @@ void init_irq_work(struct irq_work *work, void (*func)(struct irq_work *))
 		.func  = (_f)					\
 }
 
+#define __IRQ_WORK_INIT(_func, _flags) ((struct irq_work){	\
+	.flags = ATOMIC_INIT(_flags),				\
+	.func = (_func),					\
+})
+
+#define IRQ_WORK_INIT(_func) __IRQ_WORK_INIT(_func, 0)
+#define IRQ_WORK_INIT_HARD(_func) __IRQ_WORK_INIT(_func, IRQ_WORK_HARD_IRQ)
+
 
 bool irq_work_queue(struct irq_work *work);
 bool irq_work_queue_on(struct irq_work *work, int cpu);

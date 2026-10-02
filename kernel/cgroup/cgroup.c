@@ -5794,12 +5794,6 @@ int __init cgroup_init(void)
 
 	cgroup_rstat_boot();
 
-	/*
-	 * The latency of the synchronize_sched() is too high for cgroups,
-	 * avoid it at the cost of forcing all readers into the slow path.
-	 */
-	rcu_sync_enter_start(&cgroup_threadgroup_rwsem.rss);
-
 	get_user_ns(init_cgroup_ns.user_ns);
 
 	mutex_lock(&cgroup_mutex);

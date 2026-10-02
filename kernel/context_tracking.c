@@ -118,13 +118,6 @@ static void noinstr ct_kernel_exit(bool user, int offset)
 	lockdep_assert_irqs_disabled();
 	trace_rcu_watching(TPS("End"), ct_nesting(), 0, ct_rcu_watching());
 	WARN_ON_ONCE(IS_ENABLED(CONFIG_RCU_EQS_DEBUG) && !user && !is_idle_task(current));
-	/*
-	 * 4.19 RCU idle-entry bookkeeping, formerly the first half of
-	 * rcu_eqs_enter().  v6.12 dropped CONFIG_RCU_FAST_NO_HZ and the
-	 * no-CBs deferred wakeups here, but this tree still has both.
-	 */
-	rcu_nocb_deferred_wakeup();
-	rcu_prepare_for_idle();
 	rcu_preempt_deferred_qs(current);
 
 	WRITE_ONCE(ct->nesting, 0); /* Avoid irq-access tearing. */
@@ -159,12 +152,6 @@ static void noinstr ct_kernel_enter(bool user, int offset)
 	// RCU is not watching here ...
 	ct_kernel_enter_state(offset);
 	// ... but is watching here.
-
-	/*
-	 * 4.19 RCU idle-exit bookkeeping, formerly part of rcu_eqs_exit().
-	 * v6.12 dropped this along with CONFIG_RCU_FAST_NO_HZ.
-	 */
-	rcu_cleanup_after_idle();
 
 	trace_rcu_watching(TPS("Start"), ct_nesting(), 1, ct_rcu_watching());
 	WARN_ON_ONCE(IS_ENABLED(CONFIG_RCU_EQS_DEBUG) && !user && !is_idle_task(current));
@@ -331,12 +318,6 @@ noinstr void ct_irq_enter(void)
 {
 	lockdep_assert_irqs_disabled();
 	ct_nmi_enter();
-	/*
-	 * If this IRQ interrupted an RCU-idle CPU, do the 4.19 idle-exit
-	 * bookkeeping that rcu_irq_enter() used to perform.
-	 */
-	if (ct_nmi_nesting() == 1)
-		rcu_cleanup_after_idle();
 }
 
 /**
@@ -361,12 +342,6 @@ noinstr void ct_irq_enter(void)
 noinstr void ct_irq_exit(void)
 {
 	lockdep_assert_irqs_disabled();
-	/*
-	 * If this IRQ is returning toward RCU-idle, do the 4.19 idle-entry
-	 * bookkeeping that rcu_irq_exit() used to perform.
-	 */
-	if (ct_nmi_nesting() == 1)
-		rcu_prepare_for_idle();
 	ct_nmi_exit();
 }
 

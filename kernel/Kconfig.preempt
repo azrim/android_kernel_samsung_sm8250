@@ -37,7 +37,7 @@ config PREEMPT_VOLUNTARY
 config PREEMPT
 	bool "Preemptible Kernel (Low-Latency Desktop)"
 	depends on !ARCH_NO_PREEMPT
-	select PREEMPT_COUNT
+	select PREEMPTION
 	select UNINLINE_SPIN_UNLOCK if !ARCH_INLINE_SPIN_UNLOCK
 	help
 	  This option reduces the latency of the kernel by making
@@ -58,3 +58,7 @@ endchoice
 
 config PREEMPT_COUNT
        bool
+
+config PREEMPTION
+       bool
+       select PREEMPT_COUNT
