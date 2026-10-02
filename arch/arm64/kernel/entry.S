@@ -42,14 +42,14 @@
  * between user and kernel mode.
  */
 	.macro ct_user_exit
-#ifdef CONFIG_CONTEXT_TRACKING
-	bl	context_tracking_user_exit
+#ifdef CONFIG_CONTEXT_TRACKING_USER
+	bl	user_exit_callable
 #endif
 	.endm
 
 	.macro ct_user_enter
-#ifdef CONFIG_CONTEXT_TRACKING
-	bl	context_tracking_user_enter
+#ifdef CONFIG_CONTEXT_TRACKING_USER
+	bl	user_enter_callable
 #endif
 	.endm
 

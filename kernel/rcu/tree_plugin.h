@@ -612,7 +612,7 @@ static bool rcu_preempt_need_deferred_qs(struct task_struct *t)
  * evaluate safety in terms of interrupt, softirq, and preemption
  * disabling.
  */
-static void rcu_preempt_deferred_qs(struct task_struct *t)
+void rcu_preempt_deferred_qs(struct task_struct *t)
 {
 	unsigned long flags;
 	bool couldrecurse = t->rcu_read_lock_nesting >= 0;
@@ -1018,7 +1018,7 @@ static bool rcu_preempt_need_deferred_qs(struct task_struct *t)
 {
 	return false;
 }
-static void rcu_preempt_deferred_qs(struct task_struct *t) { }
+void rcu_preempt_deferred_qs(struct task_struct *t) { }
 
 /*
  * Because preemptible RCU does not exist, we never have to check for
