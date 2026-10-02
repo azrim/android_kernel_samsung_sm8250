@@ -96,6 +96,9 @@ void rcu_end_inkernel_boot(void);
 bool rcu_is_watching(void);
 void rcu_all_qs(void);
 
+/* Called from context tracking's extended quiescent state transitions. */
+void rcu_preempt_deferred_qs(struct task_struct *t);
+
 /* RCUtree hotplug events */
 int rcutree_prepare_cpu(unsigned int cpu);
 int rcutree_online_cpu(unsigned int cpu);

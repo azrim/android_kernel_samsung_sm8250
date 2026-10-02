@@ -463,6 +463,45 @@ TRACE_EVENT(rcu_dyntick,
 );
 
 /*
+ * Tracepoint for RCU watching events.  These take a string
+ * as argument:
+ * polarity: "Start", "End", "StillWatching" for entering, exiting or still not
+ *            being in EQS mode.
+ * context: "USER" or "IDLE" or "IRQ".
+ * NMIs nested in IRQs are inferred with nesting > 1 in IRQ context.
+ *
+ * These events also take a pair of numbers, which indicate the nesting
+ * depth before and after the event of interest, and a third number that is
+ * the RCU_WATCHING counter.  Note that task-related and interrupt-related
+ * events use two separate counters, and that the "++=" and "--=" events
+ * for irq/NMI will change the counter by two, otherwise by one.
+ */
+TRACE_EVENT(rcu_watching,
+
+	TP_PROTO(const char *polarity, long oldnesting, long newnesting, int counter),
+
+	TP_ARGS(polarity, oldnesting, newnesting, counter),
+
+	TP_STRUCT__entry(
+		__field(const char *, polarity)
+		__field(long, oldnesting)
+		__field(long, newnesting)
+		__field(int, counter)
+	),
+
+	TP_fast_assign(
+		__entry->polarity = polarity;
+		__entry->oldnesting = oldnesting;
+		__entry->newnesting = newnesting;
+		__entry->counter = counter;
+	),
+
+	TP_printk("%s %lx %lx %#3x", __entry->polarity,
+		  __entry->oldnesting, __entry->newnesting,
+		  __entry->counter & 0xfff)
+);
+
+/*
  * Tracepoint for the registration of a single RCU callback function.
  * The first argument is the type of RCU, the second argument is
  * a pointer to the RCU callback itself, the third element is the
@@ -769,6 +808,7 @@ TRACE_EVENT(rcu_barrier,
 	while (0)
 #define trace_rcu_fqs(rcuname, gp_seq, cpu, qsevent) do { } while (0)
 #define trace_rcu_dyntick(polarity, oldnesting, newnesting, dyntick) do { } while (0)
+#define trace_rcu_watching(polarity, oldnesting, newnesting, counter) do { } while (0)
 #define trace_rcu_callback(rcuname, rhp, qlen_lazy, qlen) do { } while (0)
 #define trace_rcu_kfree_callback(rcuname, rhp, offset, qlen_lazy, qlen) \
 	do { } while (0)
