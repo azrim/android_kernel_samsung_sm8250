@@ -1088,8 +1088,28 @@ static int sec_audio_dolby_atmos_put(struct snd_kcontrol *kcontrol,
 	mutex_lock(&asm_lock);
 	msm_pcm_routing_get_fedai_info(SEC_ADAPTATAION_AUDIO_PORT,
 			SESSION_TYPE_RX, &fe_dai_map);
+
+	/*
+	 * This control can be written at any time, including while no RX
+	 * session is routed to the port (e.g. during media teardown). There
+	 * is then nothing to configure, so skip the lookup instead of
+	 * querying an invalid session id and logging spurious errors
+	 * ("invalid session: -1" / "Audio client is NULL").
+	 */
+	if (fe_dai_map.strm_id <= 0) {
+		ret = -EINVAL;
+		goto unlock;
+	}
+
 	ac = q6asm_get_audio_client(fe_dai_map.strm_id);
+	if (!ac) {
+		ret = -EINVAL;
+		goto unlock;
+	}
+
 	ret = q6asm_set_dolby_atmos(ac, (long *)ucontrol->value.integer.value);
+
+unlock:
 	mutex_unlock(&asm_lock);
 
 	return ret;
