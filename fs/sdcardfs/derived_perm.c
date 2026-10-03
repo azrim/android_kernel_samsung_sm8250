@@ -253,8 +253,8 @@ void fixup_lower_ownership(struct dentry *dentry, const char *name)
 	if (d_inode(path.dentry)->i_gid.val != gid || d_inode(path.dentry)->i_uid.val != uid) {
 retry_deleg:
 		newattrs.ia_valid = ATTR_GID | ATTR_UID | ATTR_FORCE;
-		newattrs.ia_uid = make_kuid(current_user_ns(), uid);
-		newattrs.ia_gid = make_kgid(current_user_ns(), gid);
+		newattrs.ia_uid = make_kuid(&init_user_ns, uid);
+		newattrs.ia_gid = make_kgid(&init_user_ns, gid);
 		if (!S_ISDIR(inode->i_mode))
 			newattrs.ia_valid |=
 				ATTR_KILL_SUID | ATTR_KILL_SGID | ATTR_KILL_PRIV;
