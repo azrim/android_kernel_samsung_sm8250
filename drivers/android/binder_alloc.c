@@ -1200,7 +1200,15 @@ enum lru_status binder_alloc_free_page(struct list_head *item,
 
 	if (!mmap_read_trylock(mm))
 		goto err_mmap_read_lock_failed;
+	/*
+	 * find_vma() returns the first VMA that ends past page_addr, which
+	 * may be an unrelated mapping when userspace punched a hole in the
+	 * binder range. Match vma_lookup() semantics and only accept a VMA
+	 * that actually covers page_addr.
+	 */
 	vma = find_vma(mm, page_addr);
+	if (vma && vma->vm_start > page_addr)
+		vma = NULL;
 
 	if (!mutex_trylock(&alloc->mutex))
 		goto err_get_alloc_mutex_failed;
