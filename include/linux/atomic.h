@@ -515,6 +515,31 @@
 #endif
 #endif /* cmpxchg_relaxed */
 
+/*
+ * try_cmpxchg() and its relaxed/acquire/release variants.
+ *
+ * Generic fallback implemented in terms of the cmpxchg() family above. On
+ * success the operation returns true and @_po is left unmodified; on failure
+ * false is returned and @_po is updated with the current value, allowing the
+ * caller to retry. Architectures may provide their own versions, in which case
+ * this fallback is not used.
+ */
+#ifndef try_cmpxchg
+#define __try_cmpxchg_generic(_p, _po, _n, _cmpxchg)			\
+({									\
+	typeof(*(_p)) __old = *(_po);					\
+	typeof(*(_p)) __ret = _cmpxchg((_p), __old, (_n));		\
+	if (unlikely(__ret != __old))					\
+		*(_po) = __ret;						\
+	likely(__ret == __old);						\
+})
+
+#define try_cmpxchg(_p, _po, _n)	__try_cmpxchg_generic(_p, _po, _n, cmpxchg)
+#define try_cmpxchg_relaxed(_p, _po, _n) __try_cmpxchg_generic(_p, _po, _n, cmpxchg_relaxed)
+#define try_cmpxchg_acquire(_p, _po, _n) __try_cmpxchg_generic(_p, _po, _n, cmpxchg_acquire)
+#define try_cmpxchg_release(_p, _po, _n) __try_cmpxchg_generic(_p, _po, _n, cmpxchg_release)
+#endif /* try_cmpxchg */
+
 /* cmpxchg64_relaxed */
 #ifndef cmpxchg64_relaxed
 #define  cmpxchg64_relaxed		cmpxchg64

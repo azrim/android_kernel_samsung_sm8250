@@ -209,7 +209,7 @@ struct futex_pi_state {
 	/*
 	 * The PI object:
 	 */
-	struct rt_mutex pi_mutex;
+	struct rt_mutex_base pi_mutex;
 
 	struct task_struct *owner;
 	atomic_t refcount;
@@ -1572,10 +1572,11 @@ static int wake_futex_pi(u32 __user *uaddr, u32 uval, struct futex_pi_state *pi_
 	u32 curval, newval;
 	struct task_struct *new_owner;
 	bool postunlock = false;
-	DEFINE_WAKE_Q(wake_q);
+	DEFINE_RT_WAKE_Q(wake_q);
 	int ret = 0;
 
-	new_owner = rt_mutex_next_owner(&pi_state->pi_mutex);
+	new_owner = rt_mutex_has_waiters(&pi_state->pi_mutex) ?
+			rt_mutex_top_waiter(&pi_state->pi_mutex)->task : NULL;
 	if (WARN_ON_ONCE(!new_owner)) {
 		/*
 		 * As per the comment in futex_unlock_pi() this should not happen.
@@ -3410,7 +3411,7 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
 			ret = ret < 0 ? ret : 0;
 		}
 	} else {
-		struct rt_mutex *pi_mutex;
+		struct rt_mutex_base *pi_mutex;
 
 		/*
 		 * We have been woken up by futex_unlock_pi(), a timeout, or a
