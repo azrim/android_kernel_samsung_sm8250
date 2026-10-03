@@ -410,7 +410,8 @@ int is_obbpath_invalid(struct dentry *dent)
 				pr_err("sdcardfs: fail to allocate path_buf in %s.\n", __func__);
 			} else {
 				obbpath_s = d_path(&di->lower_path, path_buf, PATH_MAX);
-				if (d_unhashed(di->lower_path.dentry) ||
+				if (IS_ERR(obbpath_s) ||
+					d_unhashed(di->lower_path.dentry) ||
 					!str_case_eq(sbi->obbpath_s, obbpath_s)) {
 					ret = 1;
 				}
