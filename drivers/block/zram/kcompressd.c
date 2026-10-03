@@ -277,8 +277,15 @@ int schedule_bio_write(void *mem, struct page *page, u32 index, int offset,
 		 * worker could re-check an empty fifo and go to sleep forever,
 		 * leaving this entry stranded.
 		 */
-		if (atomic_read(&kcompress[idx].running) == KCOMPRESSD_SLEEPING)
-			wake_up_interruptible(&kcompress[idx].kcompressd_wait);
+		/*
+		 * Wake unconditionally.  Gating on KCOMPRESSD_SLEEPING races
+		 * with the worker setting it (there is no barrier between the
+		 * fifo enqueue above and the state store in
+		 * kcompressd_try_to_sleep()), which can lose the wakeup and
+		 * strand the entry.  A spurious wakeup is harmless - the worker
+		 * re-checks the fifo.
+		 */
+		wake_up_interruptible(&kcompress[idx].kcompressd_wait);
 
 		ret = 0;
 		break;
