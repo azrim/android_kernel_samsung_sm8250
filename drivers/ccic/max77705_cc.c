@@ -821,7 +821,12 @@ static void max77705_ccstat_irq_handler(void *data, int irq)
 				val.intval = 1;
 				psy_do_property("max77705-charger", set, POWER_SUPPLY_EXT_PROP_CHGINSEL, val);
 			} else {
-				pr_err("%s: Fail to get psy charger\n", __func__);
+				/*
+				 * The charger supply can be registered after the
+				 * first CC interrupt; skip the CHGINSEL update
+				 * quietly in that case.
+				 */
+				pr_debug("%s: psy charger not ready yet\n", __func__);
 			}
 			max77705_notify_rp_current_level(usbc_data);
 #if defined(CONFIG_SEC_FACTORY)
