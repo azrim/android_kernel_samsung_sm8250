@@ -38,7 +38,12 @@
 #define __zalloc_auto(size) \
 	kzalloc(size, __can_sleep() ? GFP_KERNEL : GFP_ATOMIC)
 
-#define __free(ptr) kfree(ptr)
+/*
+ * Renamed from __free(): that name is now a kernel-wide macro from
+ * <linux/cleanup.h> (pulled in via <linux/mutex.h>), and redefining it
+ * here is a -Werror,-Wmacro-redefined failure.
+ */
+#define __qdf_kfree(ptr) kfree(ptr)
 
 #define __alloc_size(ptr) ksize(ptr)
 
