@@ -611,6 +611,7 @@ int synx_release(s32 synx_obj)
 
 	if (!entry) {
 		pr_err("synx already released: 0x%x\n", synx_obj);
+		synx_release_handle(row);
 		return -EINVAL;
 	}
 
