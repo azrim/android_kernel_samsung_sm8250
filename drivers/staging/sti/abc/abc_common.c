@@ -406,6 +406,8 @@ static void sec_abc_work_func(struct work_struct *work)
 
 	/* Parse uevent string */
 	while ((c = strsep(&p, "@")) != NULL) {
+		if (idx >= ABC_UEVENT_MAX - 2)
+			break;
 		uevent_str[idx] = c;
 		idx++;
 	}
