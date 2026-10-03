@@ -626,7 +626,7 @@ static inline int check_min_free_space(struct dentry *dentry, size_t size, int d
 			goto out_nospc;
 
 		/* enough space */
-		if ((avail - size) > (sbi->options.reserved_mb * 1024 * 1024))
+		if ((avail - size) > ((u64)sbi->options.reserved_mb * 1024 * 1024))
 			return 1;
 
 		goto out_nospc;

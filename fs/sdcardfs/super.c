@@ -73,7 +73,7 @@ static int sdcardfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	int err;
 	struct path lower_path;
-	u32 min_blocks;
+	u64 min_blocks;
 	struct sdcardfs_sb_info *sbi = SDCARDFS_SB(dentry->d_sb);
 
 	sdcardfs_get_lower_path(dentry, &lower_path);
@@ -92,7 +92,8 @@ static int sdcardfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 			return -EINVAL;
 		}
 
-		min_blocks = ((sbi->options.reserved_mb * 1024 * 1024)/buf->f_bsize);
+		min_blocks = ((u64)sbi->options.reserved_mb * 1024 * 1024) /
+				buf->f_bsize;
 		buf->f_blocks -= min_blocks;
 
 		if (buf->f_bavail > min_blocks)
