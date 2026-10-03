@@ -10590,7 +10590,8 @@ static int ufs_init_serial(struct ufs_hba *hba)
 	u8 desc_buf[QUERY_DESC_DEVICE_DEF_SIZE];
 
 	err = ufshcd_read_device_desc(hba, desc_buf,
-				      QUERY_DESC_DEVICE_DEF_SIZE);
+				      min_t(u32, hba->desc_size.dev_desc,
+					    QUERY_DESC_DEVICE_DEF_SIZE));
 	if (err) {
 		dev_err(hba->dev, "read device_desc failed\n");
 		goto out;
