@@ -634,7 +634,9 @@ int synx_release(s32 synx_obj)
 int synx_wait(s32 synx_obj, u64 timeout_ms)
 {
 	unsigned long timeleft;
+	s32 idx;
 	struct synx_table_row *row = NULL;
+	struct dma_fence *fence;
 
 	pr_debug("Enter %s\n", __func__);
 
@@ -644,17 +646,25 @@ int synx_wait(s32 synx_obj, u64 timeout_ms)
 		return -EINVAL;
 	}
 
-	mutex_lock(&synx_dev->row_locks[row->index]);
-	if (!row->index) {
-		mutex_unlock(&synx_dev->row_locks[row->index]);
-		pr_err("object already cleaned up at %d\n",
-			row->index);
+	/*
+	 * A concurrent release of a merged object wipes the row
+	 * (synx_deinit_object()), so cache the index and the fence while
+	 * holding the row lock and hand the cached fence to
+	 * dma_fence_wait_timeout() rather than re-reading row->fence after
+	 * the lock has been dropped.
+	 */
+	idx = row->index;
+	mutex_lock(&synx_dev->row_locks[idx]);
+	fence = row->fence;
+	if (!idx || !fence) {
+		mutex_unlock(&synx_dev->row_locks[idx]);
+		pr_err("object already cleaned up at %d\n", idx);
 		synx_release_handle(row);
 		return -EINVAL;
 	}
-	mutex_unlock(&synx_dev->row_locks[row->index]);
+	mutex_unlock(&synx_dev->row_locks[idx]);
 
-	timeleft = dma_fence_wait_timeout(row->fence, (bool) 0,
+	timeleft = dma_fence_wait_timeout(fence, (bool) 0,
 					msecs_to_jiffies(timeout_ms));
 	if (timeleft <= 0) {
 		pr_err("timed out for synx obj 0x%x\n", synx_obj);
