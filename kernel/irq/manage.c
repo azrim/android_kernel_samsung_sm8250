@@ -1301,7 +1301,7 @@ static void affine_one_perf_thread(struct irqaction *action)
 {
 	const struct cpumask *mask;
 
-	if (!action->thread)
+	if (!action || !action->thread)
 		return;
 
 	if (action->flags & IRQF_PERF_AFFINE) {
@@ -1317,7 +1317,7 @@ static void affine_one_perf_thread(struct irqaction *action)
 
 static void unaffine_one_perf_thread(struct irqaction *action)
 {
-	if (!action->thread)
+	if (!action || !action->thread)
 		return;
 
 	action->thread->pc_flags &= ~PC_PERF_AFFINE;
