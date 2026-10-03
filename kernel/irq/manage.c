@@ -1727,8 +1727,13 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
 				irq, omsk, nmsk);
 	}
 
-	if (!irqd_has_set(&desc->irq_data, IRQD_PERF_CRITICAL))
-		*old_ptr = new;
+	/*
+	 * Always link the new action. Guarding this on IRQD_PERF_CRITICAL would
+	 * silently drop the action whenever the line already carries a
+	 * perf-critical one (shared lines) or when the flag was left set by a
+	 * previously freed perf-critical action.
+	 */
+	*old_ptr = new;
 
 	irq_pm_install_action(desc, new);
 
@@ -1887,6 +1892,12 @@ static struct irqaction *__free_irq(struct irq_desc *desc, void *dev_id)
 		irq_settings_clr_disable_unlazy(desc);
 		/* Only shutdown. Deactivate after synchronize_hardirq() */
 		irq_shutdown(desc);
+		/*
+		 * The line is no longer perf-critical once its last action is
+		 * gone. Clear the flag so a later request_irq() on this IRQ
+		 * number is not silently rejected from the action list.
+		 */
+		irqd_clear(&desc->irq_data, IRQD_PERF_CRITICAL);
 	}
 
 #ifdef CONFIG_SMP
