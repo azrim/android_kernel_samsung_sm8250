@@ -1184,8 +1184,8 @@ static int __init pm_init(void)
 		return error;
 	pm_print_times_init();
 #ifdef CONFIG_SEC_PM
-	msm_drm_register_notifier_client(&fb_block);
 	INIT_DELAYED_WORK(&ws_work, handle_ws_work);
+	msm_drm_register_notifier_client(&fb_block);
 #endif	
 	return pm_autosleep_init();
 }
