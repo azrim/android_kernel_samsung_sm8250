@@ -2116,6 +2116,10 @@ static int max77705_fg_get_property(struct power_supply *psy,
 	union power_supply_propval value;
 
 	switch (psp) {
+	case POWER_SUPPLY_PROP_ONLINE:
+		val->intval = fuelgauge->cable_type;
+		return 0;
+
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 	case POWER_SUPPLY_PROP_VOLTAGE_AVG:
 		return max77705_fg_get_voltage_prop(fuelgauge, psp, val);
