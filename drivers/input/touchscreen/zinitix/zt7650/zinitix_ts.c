@@ -6692,7 +6692,13 @@ static int tsp_vbus_notification(struct notifier_block *nb,
 				g_ta_connected = false;
 		}
 	} else {
-		input_err(true, &info->client->dev, "%s: Fail to get psy battery\n", __func__);
+		/*
+		 * The "otg" supply is registered by the charger driver, which
+		 * can probe after the first vbus notification; a missing supply
+		 * here is a normal transient condition, not an error.
+		 */
+		input_dbg(true, &info->client->dev,
+				"%s: psy otg not ready yet\n", __func__);
 	}
 
 #ifdef CONFIG_INPUT_SEC_SECURE_TOUCH
