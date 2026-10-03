@@ -47,6 +47,7 @@
 #include <uapi/linux/sched/types.h>
 
 #include "zram_drv.h"
+#include <linux/major.h>
 #include "../loop.h"
 
 #define NON_LRU_SWAPPINESS 99
@@ -449,8 +450,14 @@ static int init_lru_writeback(struct zram *zram)
 		ret = -ENOMEM;
 		return ret;
 	}
-	/* bitmap for 2MB block */
-	bitmap_sz = (BITS_TO_LONGS(zram->nr_pages) * sizeof(long)) / NR_FALLOC_PAGES;
+	/*
+	 * Bitmap for the 2MB fallocate blocks: one bit per NR_FALLOC_PAGES
+	 * pages.  Size it from the block count - dividing the full per-page
+	 * bitmap size by NR_FALLOC_PAGES under-allocates whenever nr_pages is
+	 * not a multiple of BITS_PER_LONG * NR_FALLOC_PAGES.
+	 */
+	bitmap_sz = BITS_TO_LONGS(DIV_ROUND_UP(zram->nr_pages, NR_FALLOC_PAGES)) *
+			sizeof(long);
 	zram->blk_bitmap = kvzalloc(bitmap_sz, GFP_KERNEL);
 	if (!zram->blk_bitmap) {
 		ret = -ENOMEM;
@@ -461,12 +468,9 @@ static int init_lru_writeback(struct zram *zram)
 		goto out;
 	}
 
-	bitmap_sz = BITS_TO_LONGS(zram->nr_pages) * sizeof(long) / NR_ZWBS;
-	/* backing dev should be large enough for chunk writeback */
-	if (!bitmap_sz) {
-		ret = -EINVAL;
-		goto out;
-	}
+	/* Chunk bitmap: one bit per NR_ZWBS pages. */
+	bitmap_sz = BITS_TO_LONGS(DIV_ROUND_UP(zram->nr_pages, NR_ZWBS)) *
+			sizeof(long);
 	zram->chunk_bitmap = kvzalloc(bitmap_sz, GFP_KERNEL);
 	if (!zram->chunk_bitmap) {
 		ret = -ENOMEM;
@@ -620,6 +624,15 @@ static void reset_bdev(struct zram *zram)
 	if (!zram->backing_dev)
 		return;
 
+#ifdef CONFIG_ZRAM_LRU_WRITEBACK
+	/*
+	 * Stop the LRU writeback thread before tearing down bdev, the backing
+	 * file and the bitmap: zram_wbd uses all of them, and it was
+	 * otherwise only stopped at the end of this function, after they had
+	 * already been freed.
+	 */
+	deinit_lru_writeback(zram);
+#endif
 	bdev = zram->bdev;
 	if (zram->old_block_size)
 		set_blocksize(bdev, zram->old_block_size);
@@ -633,9 +646,6 @@ static void reset_bdev(struct zram *zram)
 				ZRAM_SYNC_IO_CAPS;
 	kvfree(zram->bitmap);
 	zram->bitmap = NULL;
-#ifdef CONFIG_ZRAM_LRU_WRITEBACK
-	deinit_lru_writeback(zram);
-#endif
 }
 
 static ssize_t backing_dev_show(struct device *dev,
@@ -714,6 +724,17 @@ static ssize_t backing_dev_store(struct device *dev,
 		err = -ENOTBLK;
 		goto out;
 	}
+#ifdef CONFIG_ZRAM_LRU_WRITEBACK
+	/*
+	 * The LRU writeback helpers (zram_pin_backing_file(),
+	 * fallocate_block(), is_bdev_avail()) treat bd_disk->private_data as a
+	 * struct loop_device, so reject anything that is not a loop device.
+	 */
+	if (MAJOR(inode->i_rdev) != LOOP_MAJOR) {
+		err = -EINVAL;
+		goto out;
+	}
+#endif
 
 	bdev = bdgrab(I_BDEV(inode));
 	err = blkdev_get(bdev, FMODE_READ | FMODE_WRITE | FMODE_EXCL, zram);
@@ -893,8 +914,15 @@ static void free_block_bdev(struct zram *zram, unsigned long blk_idx, bool ppr)
 	unsigned long flags;
 
 	spin_lock_irqsave(&zram->wb_table_lock, flags);
-	if (!zram->wb_table || zram->wb_table[blk_idx] == 0)
-		goto out;
+	/*
+	 * No reference to this block: it is already free (freeing it again
+	 * would clear the bitmap twice and underflow the counters), or the
+	 * writeback tables are gone.  Nothing to do in either case.
+	 */
+	if (!zram->wb_table || zram->wb_table[blk_idx] == 0) {
+		spin_unlock_irqrestore(&zram->wb_table_lock, flags);
+		return;
+	}
 	zram->wb_table[blk_idx]--;
 	atomic64_dec(&zram->stats.bd_objcnt);
 	count_vm_events(SQZR_OBJCNT, -1);
@@ -904,7 +932,6 @@ static void free_block_bdev(struct zram *zram, unsigned long blk_idx, bool ppr)
 		spin_unlock_irqrestore(&zram->wb_table_lock, flags);
 		return;
 	}
-out:
 	spin_unlock_irqrestore(&zram->wb_table_lock, flags);
 	was_set = test_and_clear_bit(blk_idx, zram->bitmap);
 	WARN_ON_ONCE(!was_set);
@@ -4030,19 +4057,22 @@ out_error:
 #ifdef CONFIG_KCOMPRESSD_ZRAM
 	kcompressd_exit();
 #endif
+#ifdef CONFIG_ZRAM_LRU_WRITEBACK
+	am_app_launch_notifier_unregister(&zram_app_launch_nb);
+#endif
 	destroy_devices();
 	return ret;
 }
 
 static void __exit zram_exit(void)
 {
+#ifdef CONFIG_ZRAM_LRU_WRITEBACK
+	am_app_launch_notifier_unregister(&zram_app_launch_nb);
+#endif
 #ifdef CONFIG_KCOMPRESSD_ZRAM
 	kcompressd_exit();
 #endif
 	destroy_devices();
-#ifdef CONFIG_ZRAM_LRU_WRITEBACK
-	am_app_launch_notifier_unregister(&zram_app_launch_nb);
-#endif
 }
 
 module_init(zram_init);
