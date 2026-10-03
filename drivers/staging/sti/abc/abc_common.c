@@ -303,7 +303,7 @@ static ssize_t show_abc_log(struct device *dev,
 	mutex_lock(&pinfo->log_mutex);
 
 	list_for_each_entry(abc_log, &pinfo->log_list, node) {
-		count += snprintf(buf + count, PAGE_SIZE - count, "%s\n", abc_log->abc_log_str);
+		count += scnprintf(buf + count, PAGE_SIZE - count, "%s\n", abc_log->abc_log_str);
 	}
 
 	mutex_unlock(&pinfo->log_mutex);
