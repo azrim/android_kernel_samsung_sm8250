@@ -254,7 +254,7 @@ static int create_cpu_lvl_nodes(struct lpm_cluster *p, struct kobject *parent)
 			 */
 			for (i = 1; i < lpm_cpu->nlevels; i++) {
 				level_list[i].exit_latency =
-					p->levels[i].pwr.exit_latency;
+					lpm_cpu->levels[i].pwr.exit_latency;
 				ret = create_lvl_avail_nodes(
 						lpm_cpu->levels[i].name,
 						cpu_kobj[cpu_idx],
