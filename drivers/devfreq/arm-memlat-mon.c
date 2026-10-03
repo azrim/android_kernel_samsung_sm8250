@@ -145,12 +145,31 @@ struct memlat_mon_spec {
 	enum mon_type type;
 };
 
+/*
+ * Map a CPU to its dense index within @mask. The per-CPU arrays are sized
+ * by cpumask_weight(), so a raw (cpu - first_cpu) offset overflows them
+ * whenever the mask is not contiguous.
+ */
+static inline unsigned int memlat_cpu_idx(const struct cpumask *mask,
+					  unsigned int cpu)
+{
+	unsigned int idx = 0, c;
+
+	for_each_cpu(c, mask) {
+		if (c == cpu)
+			break;
+		idx++;
+	}
+
+	return idx;
+}
+
 #define to_cpu_data(cpu_grp, cpu) \
-	(&cpu_grp->cpus_data[cpu - cpumask_first(&cpu_grp->cpus)])
+	(&cpu_grp->cpus_data[memlat_cpu_idx(&cpu_grp->cpus, cpu)])
 #define to_common_evs(cpu_grp, cpu) \
-	(cpu_grp->cpus_data[cpu - cpumask_first(&cpu_grp->cpus)].common_evs)
+	(cpu_grp->cpus_data[memlat_cpu_idx(&cpu_grp->cpus, cpu)].common_evs)
 #define to_devstats(mon, cpu) \
-	(&mon->hw.core_stats[cpu - cpumask_first(&mon->cpus)])
+	(&mon->hw.core_stats[memlat_cpu_idx(&mon->cpus, cpu)])
 #define to_mon(hwmon) container_of(hwmon, struct memlat_mon, hw)
 
 static struct workqueue_struct *memlat_wq;
@@ -205,7 +224,7 @@ static void update_counts(struct memlat_cpu_grp *cpu_grp)
 
 		for_each_cpu(cpu, &mon->cpus) {
 			unsigned int mon_idx =
-				cpu - cpumask_first(&mon->cpus);
+				memlat_cpu_idx(&mon->cpus, cpu);
 			read_event(&mon->miss_ev[mon_idx]);
 
 			if (mon->wb_ev_id && mon->access_ev_id) {
@@ -226,7 +245,7 @@ static unsigned long get_cnt(struct memlat_hwmon *hw)
 		struct cpu_data *cpu_data = to_cpu_data(cpu_grp, cpu);
 		struct event_data *common_evs = cpu_data->common_evs;
 		unsigned int mon_idx =
-			cpu - cpumask_first(&mon->cpus);
+			memlat_cpu_idx(&mon->cpus, cpu);
 		struct dev_stats *devstats = to_devstats(mon, cpu);
 
 		devstats->freq = cpu_data->freq;
