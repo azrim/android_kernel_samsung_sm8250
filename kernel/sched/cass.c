@@ -248,8 +248,12 @@ static int cass_best_cpu(struct task_struct *p, int prev_cpu, bool sync, bool rt
 		struct cpuidle_state *idle_state;
 		struct rq *rq = cpu_rq(cpu);
 
-		/* Get the original, maximum _possible_ capacity of this CPU */
-		curr->cap_orig = arch_scale_cpu_capacity(cpu);
+		/*
+		 * Get the original, maximum _possible_ capacity of this CPU.
+		 * Keep it at least 1: cap_no_therm is a divisor in
+		 * cass_cpu_util() and would otherwise underflow to 0.
+		 */
+		curr->cap_orig = max(arch_scale_cpu_capacity(cpu), 1UL);
 
 		/*
 		 * Get the _current_, throttled maximum capacity of this CPU.
