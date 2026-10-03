@@ -16,7 +16,8 @@
 #define __ADSP_FT_COMMON_H__
 
 #define PID 20000
-#define NETLINK_ADSP_FAC 23
+/* 23 is NETLINK_SOCKEV (Qualcomm, uapi); use a free id to avoid the clash */
+#define NETLINK_ADSP_FAC 24
 #define MAX_REG_NUM 128
 
 /* max size of each sensor's msg_buf */
