@@ -25,9 +25,13 @@ struct cdspl3 {
 };
 
 static struct cdspl3 p_me;
+static DEFINE_MUTEX(cdsp_l3_lock);
 
 static int cdsp_l3_request_callback(unsigned int freq_khz)
 {
+	int ret = 0;
+
+	mutex_lock(&cdsp_l3_lock);
 	if (p_me.df) {
 		mutex_lock(&p_me.df->lock);
 		p_me.l3_freq_hz = freq_khz * 1000;
@@ -35,9 +39,11 @@ static int cdsp_l3_request_callback(unsigned int freq_khz)
 		mutex_unlock(&p_me.df->lock);
 	} else {
 		pr_err("CDSP L3 request for %dKHz not served\n", freq_khz);
-		return -ENODEV;
+		ret = -ENODEV;
 	}
-	return 0;
+	mutex_unlock(&cdsp_l3_lock);
+
+	return ret;
 }
 
 static struct cdsprm_l3 cdsprm = {
@@ -80,12 +86,16 @@ static int gov_start(struct devfreq *df)
 
 static int gov_stop(struct devfreq *df)
 {
-	p_me.df = 0;
-	p_me.l3_freq_hz = 0;
 	/*
-	 * Send governor stop message to CDSP RM driver
+	 * Stop new requests first, then take the lock the request callback
+	 * holds while it dereferences p_me.df, so an in-flight callback can't
+	 * observe a torn/stale devfreq pointer.
 	 */
 	cdsprm_unregister_cdspl3gov();
+	mutex_lock(&cdsp_l3_lock);
+	p_me.df = 0;
+	p_me.l3_freq_hz = 0;
+	mutex_unlock(&cdsp_l3_lock);
 	return 0;
 }
 
