@@ -160,7 +160,8 @@ int fuse_open_backing(struct fuse_bpf_args *fa,
 		return -EINVAL;
 	}
 
-	retval = inode_permission(get_fuse_inode(inode)->backing_inode, mask);
+	retval = inode_permission2(fd->backing_path.mnt,
+				   get_fuse_inode(inode)->backing_inode, mask);
 	if (retval)
 		return retval;
 
@@ -2470,9 +2471,29 @@ int fuse_access_backing(struct fuse_bpf_args *fa, struct inode *inode, int mask)
 {
 	struct fuse_inode *fi = get_fuse_inode(inode);
 	const struct fuse_access_in *fai = fa->in_args[0].value;
+	struct dentry *dentry;
+	struct fuse_dentry *fd;
+	int err;
 
-	return inode_permission(/* For mainline: init_user_ns,*/
-				fi->backing_inode, fai->mask);
+	/*
+	 * The backing inode can live on a filesystem (e.g. sdcardfs) whose
+	 * permission hook is inode_permission2() and therefore needs the
+	 * mount context.  inode_permission() passes a NULL mount, which such
+	 * filesystems reject.  The backing path is only recorded on the fuse
+	 * dentry, so recover it from one of this inode's aliases and use its
+	 * mount.  Fall back to the mount-less variant if unavailable.
+	 */
+	dentry = d_find_alias(inode);
+	fd = dentry ? get_fuse_dentry(dentry) : NULL;
+	if (fd && fd->backing_path.mnt)
+		err = inode_permission2(fd->backing_path.mnt,
+					fi->backing_inode, fai->mask);
+	else
+		err = inode_permission(fi->backing_inode, fai->mask);
+	if (dentry)
+		dput(dentry);
+
+	return err;
 }
 
 void *fuse_access_finalize(struct fuse_bpf_args *fa, struct inode *inode, int mask)
