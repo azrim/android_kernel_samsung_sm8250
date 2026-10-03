@@ -6,7 +6,8 @@ DEVICE="${1:-r8q}"
 DEVICE2="$2"
 DEVICE3="$3"
 BUILD_START=$(date +%s)
-ZIP_NAME="Solvege-${DEVICE}-$(date +%Y%m%d-%H%M).zip"
+BUILD_TAG="$(date +%Y%m%d-%H%M)"
+ZIP_NAME="Solvege-${DEVICE}-${BUILD_TAG}.zip"
 
 # Load Telegram environment variables if exists
 if [ -f "$KERNEL_DIR/.env" ]; then
@@ -177,27 +178,78 @@ upload_telegram() {
         return 1
     fi
 
+    # ---- metadata for the caption ------------------------------------------
+    case "$DEVICE" in
+        r8q|r8qxx|r8qxxx) DEVICE_NAME="Galaxy S20 FE 5G" ;;
+        c1q)              DEVICE_NAME="Galaxy Note 20 Ultra" ;;
+        c2q)              DEVICE_NAME="Galaxy Note 20" ;;
+        f2q)              DEVICE_NAME="Galaxy Z Fold2" ;;
+        x1q)              DEVICE_NAME="Galaxy S20" ;;
+        y2q)              DEVICE_NAME="Galaxy S20+" ;;
+        z3q)              DEVICE_NAME="Galaxy S20 Ultra" ;;
+        *)                DEVICE_NAME="$DEVICE" ;;
+    esac
+
+    KREL="$(cat "$KERNEL_DIR/out/include/config/kernel.release" 2>/dev/null)"
+    [ -n "$KREL" ] || KREL="4.19.325"
+
+    BRANCH="$(git -C "$KERNEL_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    [ -n "$BRANCH" ] || BRANCH="detached"
+    COMMIT_SHA="$(git -C "$KERNEL_DIR" rev-parse HEAD 2>/dev/null)"
+    COMMIT_SHORT="$(git -C "$KERNEL_DIR" rev-parse --short HEAD 2>/dev/null)"
+    COMMIT_SUBJECT="$(git -C "$KERNEL_DIR" log -1 --pretty=%s 2>/dev/null)"
+    REPO_URL="https://github.com/azrim/android_kernel_samsung_sm8250"
+    COMMIT_URL="${REPO_URL}/commit/${COMMIT_SHA}"
+
+    COMPILER="$(clang --version 2>/dev/null | head -n1 | sed -e 's/ (.*//')"
+    [ -n "$COMPILER" ] || COMPILER="clang"
+    CPUS="$(nproc)"
+
     echo "-----------------------------------------------"
     echo "Uploading $ZIP_NAME to Telegram..."
     echo "-----------------------------------------------"
 
-    CAPTION="<b>✨ Solvege Kernel Build Complete</b>
-━━━━━━━━━━━━━━━━━
-📱 <b>Device:</b> Galaxy S20 FE 5G (<code>${DEVICE}</code>)
-🐧 <b>Linux Version:</b> <code>4.19.325</code>
-⚡ <b>Compiler:</b> <code>Neutron Clang (ThinLTO)</code>
-🛡️ <b>Features:</b> <code>KernelSU | Simple LMK | Enforcing</code>
-🕒 <b>Build Duration:</b> <code>${DURATION}</code>
-📅 <b>Date:</b> <code>$(date +"%Y-%m-%d %H:%M:%S")</code>
-━━━━━━━━━━━━━━━━━"
-
+    # Caption is built in python from the environment so that commit subjects
+    # (which may contain quotes / angle brackets) can never break the shell.
+    TG_DEVICE="$DEVICE" \
+    TG_DEVICE_NAME="$DEVICE_NAME" \
+    TG_KREL="$KREL" \
+    TG_BRANCH="$BRANCH" \
+    TG_COMPILER="$COMPILER" \
+    TG_CPUS="$CPUS" \
+    TG_DURATION="$DURATION" \
+    TG_CLOCK="$(date +'%Y-%m-%d %H:%M %Z')" \
+    TG_TAG="$BUILD_TAG" \
+    TG_SHA_SHORT="$COMMIT_SHORT" \
+    TG_SUBJECT="$COMMIT_SUBJECT" \
+    TG_COMMIT_URL="$COMMIT_URL" \
+    TG_REPO_URL="$REPO_URL" \
     python3 -c "
-import os, sys, requests
+import os, sys, html, requests
 
 token = os.environ.get('TG_BOT_TOKEN', '')
 chat_id = os.environ.get('TG_CHAT_ID', '')
 zip_file = '$ZIP_FILE'
-caption = '''$CAPTION'''
+
+def e(key):
+    return html.escape(os.environ.get(key, ''))
+
+caption = (
+    '<b>🔨 Solvege Kernel</b> — build complete\n'
+    '\n'
+    '<b>Compiler:</b> ' + e('TG_COMPILER') + ' · ThinLTO\n'
+    '<b>Device:</b> ' + e('TG_DEVICE_NAME') + ' (' + e('TG_DEVICE') + ')\n'
+    '<b>Kernel:</b> Solvege <code>' + e('TG_KREL') + '</code>\n'
+    '<b>Version:</b> <code>' + e('TG_TAG') + '</code>\n'
+    '<b>Branch:</b> <code>' + e('TG_BRANCH') + '</code>\n'
+    '<b>CPUs:</b> <code>' + e('TG_CPUS') + '</code> · <b>Build time:</b> <code>' + e('TG_DURATION') + '</code>\n'
+    '<b>Clocked at:</b> ' + e('TG_CLOCK') + '\n'
+    '\n'
+    '<b>Latest commit:</b>\n'
+    '<a href=\"' + e('TG_COMMIT_URL') + '\">' + e('TG_SHA_SHORT') + '</a> ' + e('TG_SUBJECT') + '\n'
+    '\n'
+    '<a href=\"' + e('TG_REPO_URL') + '\">' + e('TG_REPO_URL') + '</a>'
+)
 
 if not token or not chat_id:
     print('⚠️ Notice: TG_BOT_TOKEN or TG_CHAT_ID is not configured. Skipping Telegram upload.')
@@ -212,8 +264,8 @@ try:
             print('✅ Upload to Telegram successful!')
         else:
             print('❌ Upload failed:', res.get('description', res))
-except Exception as e:
-    print('❌ Upload error:', str(e))
+except Exception as exc:
+    print('❌ Upload error:', str(exc))
 "
 }
 
