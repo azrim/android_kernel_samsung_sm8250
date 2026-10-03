@@ -1441,6 +1441,14 @@ static int msm_vidc_comm_update_ctrl(struct msm_vidc_inst *inst,
 	if (ctrl->type == V4L2_CTRL_TYPE_MENU)
 		is_menu = true;
 
+	/*
+	 * A control the firmware does not expose comes back as an all-zero
+	 * capability (e.g. LTR count on some sessions). There is no range to
+	 * apply then, and the zero step would be rejected below.
+	 */
+	if (!is_menu && !cap->min && !cap->max && !cap->step_size)
+		return 0;
+
 	/**
 	 * For menu controls the step value is interpreted
 	 * as a menu_skip_mask.
