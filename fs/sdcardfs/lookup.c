@@ -78,9 +78,21 @@ static int sdcardfs_inode_test(struct inode *inode, void *candidate_data/*void *
 		return 0; /* no match */
 }
 
-static int sdcardfs_inode_set(struct inode *inode, void *lower_inode)
+static int sdcardfs_inode_set(struct inode *inode, void *opaque)
 {
-	/* we do actual inode initialization in sdcardfs_iget */
+	struct inode_data *data = opaque;
+
+	/*
+	 * sdcardfs_inode_test() keys on the lower inode and the userid, but
+	 * both are only assigned later in sdcardfs_iget(). A concurrent
+	 * iget5_locked() could therefore observe this inode in the hash while
+	 * its fields are still zeroed, fail to match it and allocate a
+	 * duplicate inode for the same lower file. Fill them in here, while
+	 * inode_hash_lock is held and before the inode is hashed, so the
+	 * values are visible to any concurrent lookup.
+	 */
+	sdcardfs_set_lower_inode(inode, data->lower_inode);
+	SDCARDFS_I(inode)->data->userid = data->id;
 	return 0;
 }
 
