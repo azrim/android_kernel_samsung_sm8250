@@ -455,6 +455,10 @@ static void packagelist_destroy(void)
 		hash_del_rcu(&hash_cur->hlist);
 		hlist_add_head(&hash_cur->dlist, &free_list);
 	}
+	hash_for_each_rcu(ext_to_groupid, i, hash_cur, hlist) {
+		hash_del_rcu(&hash_cur->hlist);
+		hlist_add_head(&hash_cur->dlist, &free_list);
+	}
 	synchronize_rcu();
 	hlist_for_each_entry_safe(hash_cur, h_t, &free_list, dlist)
 		free_hashtable_entry(hash_cur);
