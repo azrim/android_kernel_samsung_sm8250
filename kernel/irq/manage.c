@@ -28,6 +28,7 @@ struct irq_desc_list {
 	struct list_head list;
 	struct irq_desc *desc;
 	unsigned int perf_flag;
+	struct rcu_head rcu;
 };
 
 static LIST_HEAD(perf_crit_irqs);
@@ -1293,7 +1294,7 @@ static void add_desc_to_perf_list(struct irq_desc *desc, unsigned int perf_flag)
 	item->perf_flag = perf_flag;
 
 	raw_spin_lock(&perf_irqs_lock);
-	list_add(&item->list, &perf_crit_irqs);
+	list_add_rcu(&item->list, &perf_crit_irqs);
 	raw_spin_unlock(&perf_irqs_lock);
 }
 
@@ -1393,7 +1394,18 @@ void unaffine_perf_irqs(void)
 
 	raw_spin_lock_irqsave(&perf_irqs_lock, flags);
 	perf_crit_suspended = true;
-	list_for_each_entry(data, &perf_crit_irqs, list) {
+	raw_spin_unlock_irqrestore(&perf_irqs_lock, flags);
+
+	/*
+	 * Walk the list under RCU without holding perf_irqs_lock, so that
+	 * taking desc->lock below can never nest perf_irqs_lock ->
+	 * desc->lock. That would invert the desc->lock -> perf_irqs_lock
+	 * order used by __free_irq() and setup_perf_irq_locked() and
+	 * deadlock against them. IRQ descriptors are released with
+	 * call_rcu(), so the descriptor stays alive for this section.
+	 */
+	rcu_read_lock();
+	list_for_each_entry_rcu(data, &perf_crit_irqs, list) {
 		struct irq_desc *desc = data->desc;
 
 		raw_spin_lock(&desc->lock);
@@ -1401,7 +1413,7 @@ void unaffine_perf_irqs(void)
 		unaffine_one_perf_thread(desc->action);
 		raw_spin_unlock(&desc->lock);
 	}
-	raw_spin_unlock_irqrestore(&perf_irqs_lock, flags);
+	rcu_read_unlock();
 }
 
 void reaffine_perf_irqs(bool from_hotplug)
@@ -1411,20 +1423,28 @@ void reaffine_perf_irqs(bool from_hotplug)
 
 	raw_spin_lock_irqsave(&perf_irqs_lock, flags);
 	/* Don't allow hotplug to reaffine IRQs when resuming from suspend */
-	if (!from_hotplug || !perf_crit_suspended) {
-		perf_crit_suspended = false;
-		perf_cpu_index = -1;
-		prime_cpu_index = -1;
-		list_for_each_entry(data, &perf_crit_irqs, list) {
-			struct irq_desc *desc = data->desc;
-
-			raw_spin_lock(&desc->lock);
-			affine_one_perf_irq(desc, data->perf_flag);
-			affine_one_perf_thread(desc->action);
-			raw_spin_unlock(&desc->lock);
-		}
+	if (from_hotplug && perf_crit_suspended) {
+		raw_spin_unlock_irqrestore(&perf_irqs_lock, flags);
+		return;
 	}
+	perf_crit_suspended = false;
+	perf_cpu_index = -1;
+	prime_cpu_index = -1;
 	raw_spin_unlock_irqrestore(&perf_irqs_lock, flags);
+
+	/* See the comment in unaffine_perf_irqs() about the lock order. */
+	rcu_read_lock();
+	list_for_each_entry_rcu(data, &perf_crit_irqs, list) {
+		struct irq_desc *desc = data->desc;
+
+		raw_spin_lock(&desc->lock);
+		raw_spin_lock(&perf_irqs_lock);
+		affine_one_perf_irq(desc, data->perf_flag);
+		raw_spin_unlock(&perf_irqs_lock);
+		affine_one_perf_thread(desc->action);
+		raw_spin_unlock(&desc->lock);
+	}
+	rcu_read_unlock();
 }
 
 /*
@@ -1876,8 +1896,8 @@ static struct irqaction *__free_irq(struct irq_desc *desc, void *dev_id)
 		raw_spin_lock(&perf_irqs_lock);
 		list_for_each_entry(data, &perf_crit_irqs, list) {
 			if (data->desc == desc) {
-				list_del(&data->list);
-				kfree(data);
+				list_del_rcu(&data->list);
+				kfree_rcu(data, rcu);
 				break;
 			}
 		}
