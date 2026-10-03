@@ -95,6 +95,7 @@ static struct uid_entry *find_or_register_uid_locked(uid_t uid)
 	struct uid_entry *uid_entry, *temp;
 	struct concurrent_times *times;
 	unsigned int max_state = READ_ONCE(next_offset);
+	unsigned int old_max_state;
 	size_t alloc_size = sizeof(*uid_entry) + max_state *
 		sizeof(uid_entry->time_in_state[0]);
 
@@ -105,12 +106,13 @@ static struct uid_entry *find_or_register_uid_locked(uid_t uid)
 		/* uid_entry->time_in_state is too small to track all freqs, so
 		 * expand it.
 		 */
+		old_max_state = uid_entry->max_state;
 		temp = __krealloc(uid_entry, alloc_size, GFP_ATOMIC);
 		if (!temp)
 			return uid_entry;
 		temp->max_state = max_state;
-		memset(temp->time_in_state + uid_entry->max_state, 0,
-		       (max_state - uid_entry->max_state) *
+		memset(temp->time_in_state + old_max_state, 0,
+		       (max_state - old_max_state) *
 		       sizeof(uid_entry->time_in_state[0]));
 		if (temp != uid_entry) {
 			hlist_replace_rcu(&uid_entry->hash, &temp->hash);
