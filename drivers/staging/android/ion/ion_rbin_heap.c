@@ -352,8 +352,12 @@ static int ion_rbin_heap_prereclaim(void *data)
 	unsigned long jiffies_bstop;
 
 	set_cpus_allowed_ptr(current, &rbin_cpumask);
-	while (true) {
-		wait_event_freezable(rbin_heap->waitqueue, rbin_heap->task_run);
+	while (!kthread_should_stop()) {
+		wait_event_freezable(rbin_heap->waitqueue,
+				     rbin_heap->task_run ||
+				     kthread_should_stop());
+		if (kthread_should_stop())
+			break;
 		jiffies_bstop = jiffies + (HZ / 10);
 #if defined(CONFIG_TRACING) && defined(DEBUG)
 		trace_printk("%s\n", "start");
@@ -400,8 +404,12 @@ static int ion_rbin_heap_shrink(void *data)
 	struct page *page;
 
 	set_cpus_allowed_ptr(current, &rbin_cpumask);
-	while (true) {
-		wait_event_freezable(rbin_heap->waitqueue, rbin_heap->shrink_run);
+	while (!kthread_should_stop()) {
+		wait_event_freezable(rbin_heap->waitqueue,
+				     rbin_heap->shrink_run ||
+				     kthread_should_stop());
+		if (kthread_should_stop())
+			break;
 #if defined(CONFIG_TRACING) && defined(DEBUG)
 		trace_printk("%s\n", "start");
 #endif
