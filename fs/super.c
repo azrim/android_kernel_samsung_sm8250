@@ -1715,7 +1715,7 @@ static void lockdep_sb_freeze_release(struct super_block *sb)
 	int level;
 
 	for (level = SB_FREEZE_LEVELS - 1; level >= 0; level--)
-		percpu_rwsem_release(sb->s_writers.rw_sem + level, 0, _THIS_IP_);
+		percpu_rwsem_release(sb->s_writers.rw_sem + level, _THIS_IP_);
 }
 
 /*
