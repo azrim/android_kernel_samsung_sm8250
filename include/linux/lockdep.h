@@ -10,6 +10,8 @@
 #ifndef __LINUX_LOCKDEP_H
 #define __LINUX_LOCKDEP_H
 
+#include <linux/lockdep_types.h>
+
 struct task_struct;
 struct lockdep_map;
 
@@ -17,174 +19,12 @@ struct lockdep_map;
 extern int prove_locking;
 extern int lock_stat;
 
-#define MAX_LOCKDEP_SUBCLASSES		8UL
-
-#include <linux/types.h>
-
-enum lockdep_wait_type {
-	LD_WAIT_INV = 0,	/* not checked, catch all */
-
-	LD_WAIT_FREE,		/* wait free, rcu etc.. */
-	LD_WAIT_SPIN,		/* spin loops, raw_spinlock_t etc.. */
-
-#ifdef CONFIG_PROVE_RAW_LOCK_NESTING
-	LD_WAIT_CONFIG,		/* CONFIG_PREEMPT_LOCK, spinlock_t etc.. */
-#else
-	LD_WAIT_CONFIG = LD_WAIT_SPIN,
-#endif
-	LD_WAIT_SLEEP,		/* sleeping locks, mutex_t etc.. */
-
-	LD_WAIT_MAX,		/* must be last */
-};
-
 #ifdef CONFIG_LOCKDEP
 
 #include <linux/linkage.h>
 #include <linux/list.h>
 #include <linux/debug_locks.h>
 #include <linux/stacktrace.h>
-
-/*
- * We'd rather not expose kernel/lockdep_states.h this wide, but we do need
- * the total number of states... :-(
- */
-#define XXX_LOCK_USAGE_STATES		(1+2*4)
-
-/*
- * NR_LOCKDEP_CACHING_CLASSES ... Number of classes
- * cached in the instance of lockdep_map
- *
- * Currently main class (subclass == 0) and signle depth subclass
- * are cached in lockdep_map. This optimization is mainly targeting
- * on rq->lock. double_rq_lock() acquires this highly competitive with
- * single depth.
- */
-#define NR_LOCKDEP_CACHING_CLASSES	2
-
-/*
- * A lockdep key is associated with each lock object. For static locks we use
- * the lock address itself as the key. Dynamically allocated lock objects can
- * have a statically or dynamically allocated key. Dynamically allocated lock
- * keys must be registered before being used and must be unregistered before
- * the key memory is freed.
- */
-struct lockdep_subclass_key {
-	char __one_byte;
-} __attribute__ ((__packed__));
-
-/* hash_entry is used to keep track of dynamically allocated keys. */
-struct lock_class_key {
-	struct hlist_node		hash_entry;
-	struct lockdep_subclass_key	subkeys[MAX_LOCKDEP_SUBCLASSES];
-};
-
-extern struct lock_class_key __lockdep_no_validate__;
-
-#define LOCKSTAT_POINTS		4
-
-/*
- * The lock-class itself:
- */
-struct lock_class {
-	/*
-	 * class-hash:
-	 */
-	struct hlist_node		hash_entry;
-
-	/*
-	 * global list of all lock-classes:
-	 */
-	struct list_head		lock_entry;
-
-	struct lockdep_subclass_key	*key;
-	unsigned int			subclass;
-	unsigned int			dep_gen_id;
-
-	/*
-	 * IRQ/softirq usage tracking bits:
-	 */
-	unsigned long			usage_mask;
-	struct stack_trace		usage_traces[XXX_LOCK_USAGE_STATES];
-
-	/*
-	 * These fields represent a directed graph of lock dependencies,
-	 * to every node we attach a list of "forward" and a list of
-	 * "backward" graph nodes.
-	 */
-	struct list_head		locks_after, locks_before;
-
-	/*
-	 * Generation counter, when doing certain classes of graph walking,
-	 * to ensure that we check one node only once:
-	 */
-	unsigned int			version;
-
-	/*
-	 * Statistics counter:
-	 */
-	unsigned long			ops;
-
-	const char			*name;
-	int				name_version;
-
-	short				wait_type_inner;
-	short				wait_type_outer;
-
-#ifdef CONFIG_LOCK_STAT
-	unsigned long			contention_point[LOCKSTAT_POINTS];
-	unsigned long			contending_point[LOCKSTAT_POINTS];
-#endif
-};
-
-#ifdef CONFIG_LOCK_STAT
-struct lock_time {
-	s64				min;
-	s64				max;
-	s64				total;
-	unsigned long			nr;
-};
-
-enum bounce_type {
-	bounce_acquired_write,
-	bounce_acquired_read,
-	bounce_contended_write,
-	bounce_contended_read,
-	nr_bounce_types,
-
-	bounce_acquired = bounce_acquired_write,
-	bounce_contended = bounce_contended_write,
-};
-
-struct lock_class_stats {
-	unsigned long			contention_point[LOCKSTAT_POINTS];
-	unsigned long			contending_point[LOCKSTAT_POINTS];
-	struct lock_time		read_waittime;
-	struct lock_time		write_waittime;
-	struct lock_time		read_holdtime;
-	struct lock_time		write_holdtime;
-	unsigned long			bounces[nr_bounce_types];
-};
-
-struct lock_class_stats lock_stats(struct lock_class *class);
-void clear_lock_stats(struct lock_class *class);
-#endif
-
-/*
- * Map the lock object (the lock instance) to the lock-class object.
- * This is embedded into specific lock instances:
- */
-struct lockdep_map {
-	struct lock_class_key		*key;
-	struct lock_class		*class_cache[NR_LOCKDEP_CACHING_CLASSES];
-	const char			*name;
-	short				wait_type_outer; /* can be taken in this context */
-	short				wait_type_inner; /* presents this context */
-#ifdef CONFIG_LOCK_STAT
-	int				cpu;
-	unsigned long			ip;
-	unsigned long			ip_caller;
-#endif
-};
 
 static inline void lockdep_copy_map(struct lockdep_map *to,
 				    struct lockdep_map *from)
@@ -426,6 +266,10 @@ extern void lock_unpin_lock(struct lockdep_map *lock, struct pin_cookie);
 		WARN_ON(debug_locks && !lockdep_is_held(l));	\
 	} while (0)
 
+#define lockdep_assert_not_held(l)	do {			\
+		WARN_ON(debug_locks && lockdep_is_held(l));	\
+	} while (0)
+
 #define lockdep_assert_held_exclusive(l)	do {			\
 		WARN_ON(debug_locks && !lockdep_is_held_type(l, 0));	\
 	} while (0)
@@ -488,10 +332,6 @@ static inline void lockdep_on(void)
 # define lockdep_reset()		do { debug_locks = 1; } while (0)
 # define lockdep_free_key_range(start, size)	do { } while (0)
 # define lockdep_sys_exit() 			do { } while (0)
-/*
- * The class key takes no space if lockdep is disabled:
- */
-struct lock_class_key { };
 
 static inline void lockdep_register_key(struct lock_class_key *key)
 {
@@ -501,11 +341,6 @@ static inline void lockdep_unregister_key(struct lock_class_key *key)
 {
 }
 
-/*
- * The lockdep_map takes no space if lockdep is disabled:
- */
-struct lockdep_map { };
-
 #define lockdep_depth(tsk)	(0)
 
 #define lockdep_is_held_type(l, r)		(1)
@@ -513,6 +348,7 @@ struct lockdep_map { };
 #define lockdep_is_held(l)			(1)
 
 #define lockdep_assert_held(l)			do { (void)(l); } while (0)
+#define lockdep_assert_not_held(l)		do { (void)(l); } while (0)
 #define lockdep_assert_held_exclusive(l)	do { (void)(l); } while (0)
 #define lockdep_assert_held_write(l)		do { (void)(l); } while (0)
 #define lockdep_assert_held_read(l)		do { (void)(l); } while (0)
