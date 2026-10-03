@@ -709,7 +709,7 @@ static ssize_t store_##file_name					\
 	int ret;							\
 									\
 	ret = kstrtouint(buf, 0, &param.object);			\
-	if (ret != 1)							\
+	if (ret)							\
 		return -EINVAL;						\
 									\
 	return count;							\
@@ -793,7 +793,7 @@ static ssize_t store_ltl_divider(struct kobject *a, struct kobj_attribute *b,
 	int ret;
 
 	ret = kstrtouint(buf, 0, &input);
-	if (ret != 1)
+	if (ret)
 		return -EINVAL;
 
 	if (input >= MAX_ATTRIBUTE_NUM)
