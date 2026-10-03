@@ -71,12 +71,12 @@ __ww_mutex_has_waiters(struct mutex *lock)
 
 static inline void lock_wait_lock(struct mutex *lock)
 {
-	spin_lock(&lock->wait_lock);
+	raw_spin_lock(&lock->wait_lock);
 }
 
 static inline void unlock_wait_lock(struct mutex *lock)
 {
-	spin_unlock(&lock->wait_lock);
+	raw_spin_unlock(&lock->wait_lock);
 }
 
 static inline void lockdep_assert_wait_lock_held(struct mutex *lock)
