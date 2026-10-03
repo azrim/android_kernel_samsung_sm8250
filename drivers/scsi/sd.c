@@ -3839,7 +3839,14 @@ static void sd_shutdown(struct device *dev)
 		sd_start_stop_device(sdkp, 0);
 	}
 
-	if (sdp->host->by_ufs) {
+	/*
+	 * __blk_drain_queue() is the legacy single-queue drain path and must
+	 * not be used on a blk-mq queue: with q->mq_ops set it ends up in
+	 * blk_get_flush_queue(q, NULL), dereferencing a NULL blk_mq_ctx
+	 * (ctx->cpu at offset 0x40) and oopsing on every shutdown.  UFS is
+	 * always blk-mq here, so skip the drain in that case.
+	 */
+	if (sdp->host->by_ufs && !q->mq_ops) {
 		spin_lock_irqsave(q->queue_lock, flags);
 		queue_flag_set(QUEUE_FLAG_DYING, q);
 		__blk_drain_queue(q, true);
