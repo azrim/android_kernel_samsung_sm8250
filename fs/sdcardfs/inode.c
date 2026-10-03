@@ -54,6 +54,10 @@ void revert_fsids(const struct cred *old_cred)
 {
 	const struct cred *cur_cred;
 
+	/* override_fsids() returns NULL if prepare_creds() failed */
+	if (!old_cred)
+		return;
+
 	cur_cred = current->cred;
 	revert_creds(old_cred);
 	put_cred(cur_cred);
