@@ -3477,6 +3477,15 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 
 	init_new_task_load(p);
 	__sched_fork(clone_flags, p);
+#ifdef CONFIG_SEC_PERF_MANAGER
+	/*
+	 * Don't let a forked child inherit the parent's perf_mgr drawing
+	 * state: it would bypass the cpus_allowed check in is_cpu_allowed()
+	 * and corrupt the per-CPU FPS boost accounting until it registers.
+	 */
+	p->drawing_flag = 0;
+	p->drawing_mig_boost = 0;
+#endif
 	/*
 	 * We mark the process as NEW here. This guarantees that
 	 * nobody will actually run it, and a signal or other external
