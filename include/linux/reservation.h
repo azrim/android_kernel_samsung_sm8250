@@ -158,7 +158,7 @@ reservation_object_lock_interruptible(struct reservation_object *obj,
 static inline bool __must_check
 reservation_object_trylock(struct reservation_object *obj)
 {
-	return ww_mutex_trylock(&obj->lock);
+	return ww_mutex_trylock(&obj->lock, NULL);
 }
 
 /**

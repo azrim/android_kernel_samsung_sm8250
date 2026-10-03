@@ -49,7 +49,7 @@ static void test_mutex_work(struct work_struct *work)
 	wait_for_completion(&mtx->go);
 
 	if (mtx->flags & TEST_MTX_TRY) {
-		while (!ww_mutex_trylock(&mtx->mutex))
+		while (!ww_mutex_trylock(&mtx->mutex, NULL))
 			cond_resched();
 	} else {
 		ww_mutex_lock(&mtx->mutex, NULL);
@@ -133,7 +133,7 @@ static int test_aa(void)
 
 	ww_mutex_lock(&mutex, &ctx);
 
-	if (ww_mutex_trylock(&mutex))  {
+	if (ww_mutex_trylock(&mutex, NULL))  {
 		pr_err("%s: trylocked itself!\n", __func__);
 		ww_mutex_unlock(&mutex);
 		ret = -EINVAL;
