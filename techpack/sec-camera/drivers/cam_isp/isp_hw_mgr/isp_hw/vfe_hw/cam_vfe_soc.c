@@ -147,7 +147,13 @@ int cam_vfe_init_soc_resources(struct cam_hw_soc_info *soc_info,
 	rc = cam_soc_util_get_option_clk_by_name(soc_info,
 		CAM_VFE_DSP_CLK_NAME, &soc_private->dsp_clk,
 		&soc_private->dsp_clk_index, &soc_private->dsp_clk_rate);
-	if (rc)
+	/*
+	 * ife_dsp_clk is optional and is not described on every target (e.g.
+	 * kona). cam_soc_util_get_option_clk_by_name() already reports a
+	 * missing clock at info level, so -EINVAL ("not described") is not an
+	 * error here; only a real lookup failure is worth a warning.
+	 */
+	if (rc && rc != -EINVAL)
 		CAM_WARN(CAM_ISP, "Option clk get failed with rc %d", rc);
 
 	rc = cam_vfe_request_platform_resource(soc_info, vfe_irq_handler,
