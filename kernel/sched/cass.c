@@ -112,7 +112,14 @@ bool cass_cpu_better(const struct cass_cpu_cand *a,
 		     int this_cpu, int prev_cpu, bool sync,
 		     struct task_struct *p)
 {
-#define cass_cmp(a, b) ({ res = (a) - (b); })
+/*
+ * Operands are promoted to long before subtracting. Several fields are
+ * unsigned int (nr_running, exit_lat); a plain unsigned subtraction would
+ * wrap and then zero-extend into the 64-bit long, so the sign of the
+ * difference would be lost and every "different" comparison would read as
+ * positive.
+ */
+#define cass_cmp(a, b) ({ res = (long)(a) - (long)(b); })
 #define cass_eq(a, b) ({ res = (a) == (b); })
 	long res;
 	bool low_util, boosted;
