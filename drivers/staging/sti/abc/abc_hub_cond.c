@@ -249,6 +249,7 @@ int abc_detect_conn_irq_enable(struct abc_hub_info *pinfo, bool enable, int pin)
 			if (pinfo->pdata->cond_pdata.irq_enabled[i]) {
 				disable_irq(pinfo->pdata->cond_pdata.irq_number[i]);
 				free_irq(pinfo->pdata->cond_pdata.irq_number[i], pinfo);
+				pinfo->pdata->cond_pdata.irq_enabled[i] = false;
 			}
 		}
 		detect_conn_enabled = 0;
