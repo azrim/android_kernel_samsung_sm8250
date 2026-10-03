@@ -6286,7 +6286,7 @@ static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 			list_for_each_entry(rq_task, &(rq->cfs_tasks), se.group_node) {
 				if (rq_task != p && rq_task->drawing_flag &&
 						(get_max_fps_util(rq_task->drawing_flag) > next_fps_boosted_util)) {
-					next_fps_boosted_util = get_max_fps_util(p->drawing_flag);
+					next_fps_boosted_util = get_max_fps_util(rq_task->drawing_flag);
 					next_group_id = rq_task->drawing_flag;
 				}
 			}
