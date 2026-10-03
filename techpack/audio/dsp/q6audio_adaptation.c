@@ -733,9 +733,14 @@ static int sec_audio_sound_alive_put(struct snd_kcontrol *kcontrol,
 	mutex_lock(&asm_lock);
 	msm_pcm_routing_get_fedai_info(SEC_ADAPTATAION_AUDIO_PORT,
 			SESSION_TYPE_RX, &fe_dai_map);
+	if (fe_dai_map.strm_id <= 0) {
+		ret = -EINVAL;
+		goto done;
+	}
 	ac = q6asm_get_audio_client(fe_dai_map.strm_id);
 	ret = q6asm_set_sound_alive(ac,
 		(long *)ucontrol->value.integer.value);
+done:
 	mutex_unlock(&asm_lock);
 
 	return ret;
@@ -854,11 +859,16 @@ static int sec_audio_sa_listenback_rx_data_put(struct snd_kcontrol *kcontrol,
 
 	msm_pcm_routing_get_fedai_info(MSM_FRONTEND_DAI_MULTIMEDIA6,
 				SESSION_TYPE_RX, &fe_dai_map);
+	if (fe_dai_map.strm_id <= 0) {
+		ret = -EINVAL;
+		goto done;
+	}
 	pr_info("%s: stream id %d\n", __func__, fe_dai_map.strm_id);
 
 	ac = q6asm_get_audio_client(fe_dai_map.strm_id);
 	ret = q6asm_set_sa_listenback(ac, (long *)ucontrol->value.integer.value);
 
+done:
 	mutex_unlock(&asm_lock);
 
 	return ret;
@@ -874,9 +884,14 @@ static int sec_audio_play_speed_put(struct snd_kcontrol *kcontrol,
 	mutex_lock(&asm_lock);
 	msm_pcm_routing_get_fedai_info(SEC_ADAPTATAION_AUDIO_PORT,
 			SESSION_TYPE_RX, &fe_dai_map);
+	if (fe_dai_map.strm_id <= 0) {
+		ret = -EINVAL;
+		goto done;
+	}
 	ac = q6asm_get_audio_client(fe_dai_map.strm_id);
 	ret = q6asm_set_play_speed(ac,
 		(long *)ucontrol->value.integer.value);
+done:
 	mutex_unlock(&asm_lock);
 
 	return ret;
@@ -892,9 +907,14 @@ static int sec_audio_adaptation_sound_put(struct snd_kcontrol *kcontrol,
 	mutex_lock(&asm_lock);
 	msm_pcm_routing_get_fedai_info(SEC_ADAPTATAION_AUDIO_PORT,
 			SESSION_TYPE_RX, &fe_dai_map);
+	if (fe_dai_map.strm_id <= 0) {
+		ret = -EINVAL;
+		goto done;
+	}
 	ac = q6asm_get_audio_client(fe_dai_map.strm_id);
 	ret = q6asm_set_adaptation_sound(ac,
 		(long *)ucontrol->value.integer.value);
+done:
 	mutex_unlock(&asm_lock);
 	return ret;
 }
@@ -909,9 +929,14 @@ static int sec_audio_sound_balance_put(struct snd_kcontrol *kcontrol,
 	mutex_lock(&asm_lock);
 	msm_pcm_routing_get_fedai_info(SEC_ADAPTATAION_AUDIO_PORT,
 			SESSION_TYPE_RX, &fe_dai_map);
+	if (fe_dai_map.strm_id <= 0) {
+		ret = -EINVAL;
+		goto done;
+	}
 	ac = q6asm_get_audio_client(fe_dai_map.strm_id);
 	ret = q6asm_set_sound_balance(ac,
 		(long *)ucontrol->value.integer.value);
+done:
 	mutex_unlock(&asm_lock);
 	return ret;
 }
@@ -933,8 +958,13 @@ static int sec_audio_myspace_put(struct snd_kcontrol *kcontrol,
 	mutex_lock(&asm_lock);
 	msm_pcm_routing_get_fedai_info(SEC_ADAPTATAION_AUDIO_PORT,
 			SESSION_TYPE_RX, &fe_dai_map);
+	if (fe_dai_map.strm_id <= 0) {
+		ret = -EINVAL;
+		goto done;
+	}
 	ac = q6asm_get_audio_client(fe_dai_map.strm_id);
 	ret = q6asm_set_myspace(ac, (long *)ucontrol->value.integer.value);
+done:
 	mutex_unlock(&asm_lock);
 	return ret;
 }
@@ -980,8 +1010,13 @@ static int sec_audio_upscaler_put(struct snd_kcontrol *kcontrol,
 	mutex_lock(&asm_lock);
 	msm_pcm_routing_get_fedai_info(SEC_ADAPTATAION_AUDIO_PORT,
 			SESSION_TYPE_RX, &fe_dai_map);
+	if (fe_dai_map.strm_id <= 0) {
+		ret = -EINVAL;
+		goto done;
+	}
 	ac = q6asm_get_audio_client(fe_dai_map.strm_id);
 	ret = q6asm_set_upscaler(ac, (long *)ucontrol->value.integer.value);
+done:
 	mutex_unlock(&asm_lock);
 
 	return ret;
