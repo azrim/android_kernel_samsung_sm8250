@@ -4870,6 +4870,38 @@ asmlinkage __visible void __sched schedule(void)
 }
 EXPORT_SYMBOL(schedule);
 
+#ifdef CONFIG_RT_MUTEXES
+/*
+ * Would be more useful with typeof()/auto_type but they don't mix with
+ * bit-fields. Since it's a local thing, use int. Keep the generic sounding
+ * name such that if someone were to implement this function we get to compare
+ * notes.
+ */
+#define fetch_and_set(x, v) ({ int _x = (x); (x) = (v); _x; })
+
+void rt_mutex_pre_schedule(void)
+{
+	lockdep_assert(!fetch_and_set(current->sched_rt_mutex, 1));
+	sched_submit_work(current);
+}
+
+void rt_mutex_schedule(void)
+{
+	lockdep_assert(current->sched_rt_mutex);
+
+	do {
+		preempt_disable();
+		__schedule(false);
+		sched_preempt_enable_no_resched();
+	} while (need_resched());
+}
+
+void rt_mutex_post_schedule(void)
+{
+	lockdep_assert(fetch_and_set(current->sched_rt_mutex, 0));
+}
+#endif
+
 /*
  * synchronize_rcu_tasks() makes sure that no task is stuck in preempted
  * state (have scheduled out non-voluntarily) by making sure that all

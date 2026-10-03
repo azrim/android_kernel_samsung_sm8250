@@ -262,6 +262,9 @@ extern void lock_unpin_lock(struct lockdep_map *lock, struct pin_cookie);
 
 #define lockdep_depth(tsk)	(debug_locks ? (tsk)->lockdep_depth : 0)
 
+#define lockdep_assert(cond)		\
+	do { WARN_ON(debug_locks && !(cond)); } while (0)
+
 #define lockdep_assert_held(l)	do {				\
 		WARN_ON(debug_locks && !lockdep_is_held(l));	\
 	} while (0)
@@ -347,6 +350,7 @@ static inline void lockdep_unregister_key(struct lock_class_key *key)
 
 #define lockdep_is_held(l)			(1)
 
+#define lockdep_assert(c)			do { } while (0)
 #define lockdep_assert_held(l)			do { (void)(l); } while (0)
 #define lockdep_assert_not_held(l)		do { (void)(l); } while (0)
 #define lockdep_assert_held_exclusive(l)	do { (void)(l); } while (0)
