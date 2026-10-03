@@ -35,10 +35,12 @@
  * @irq      - the IRQ number
  * @irq_name - the name associated with the IRQ, or a default if none
  */
+#define WAKEUP_IRQ_NAME_LEN	32
+
 struct wakeup_irq_node {
 	struct list_head siblings;
 	int irq;
-	const char *irq_name;
+	char irq_name[WAKEUP_IRQ_NAME_LEN];
 };
 
 static DEFINE_SPINLOCK(wakeup_reason_lock);
@@ -71,9 +73,10 @@ static void init_node(struct wakeup_irq_node *p, int irq)
 	p->irq = irq;
 	desc = irq_to_desc(irq);
 	if (desc && desc->action && desc->action->name)
-		p->irq_name = desc->action->name;
+		strlcpy(p->irq_name, desc->action->name,
+			sizeof(p->irq_name));
 	else
-		p->irq_name = default_irq_name;
+		strlcpy(p->irq_name, default_irq_name, sizeof(p->irq_name));
 }
 
 static struct wakeup_irq_node *create_node(int irq)
@@ -187,9 +190,15 @@ void log_threaded_irq_wakeup_reason(int irq, int parent_irq)
 	else {
 		parent = find_node_in_list(&leaf_irqs, parent_irq);
 		if (parent != NULL) {
-			list_del_init(&parent->siblings);
-			list_add_tail(&parent->siblings, &parent_irqs);
-			add_sibling_node_sorted(&leaf_irqs, irq);
+			/*
+			 * Only demote the parent once the child node has been
+			 * added; otherwise an allocation failure would strand
+			 * the parent in parent_irqs and lose the wakeup reason.
+			 */
+			if (add_sibling_node_sorted(&leaf_irqs, irq)) {
+				list_del_init(&parent->siblings);
+				list_add_tail(&parent->siblings, &parent_irqs);
+			}
 		}
 	}
 
