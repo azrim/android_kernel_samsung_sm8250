@@ -223,7 +223,7 @@ skip_aon_mvp_noc:
 		count++;
 	}
 	if (count == max_count)
-		d_vpr_e("DBLP Set: status %d\n", reg_status);
+		d_vpr_h("DBLP Set: status %d\n", reg_status);
 
 	/* HPG 6.1.2 Step 4, debug bridge to lpi release */
 	__write_register(device,
@@ -239,7 +239,7 @@ skip_aon_mvp_noc:
 		count++;
 	}
 	if (count == max_count)
-		d_vpr_e("DBLP Release: lpi_status %d\n", lpi_status);
+		d_vpr_h("DBLP Release: lpi_status %d\n", lpi_status);
 
 	/* HPG 6.1.2 Step 6 */
 	__disable_unprepare_clks(device);
