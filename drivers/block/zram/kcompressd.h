@@ -19,5 +19,6 @@ int schedule_bio_write(void *mem, struct page *page, u32 index, int offset,
 
 int kcompressd_init(void);
 void kcompressd_exit(void);
+void kcompressd_flush(void);
 
 #endif /* _KCOMPRESSD_H_ */

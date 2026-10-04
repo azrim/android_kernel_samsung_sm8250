@@ -3644,6 +3644,14 @@ static void zram_reset_device(struct zram *zram)
 	struct zcomp *comp;
 	u64 disksize;
 
+#ifdef CONFIG_KCOMPRESSD_ZRAM
+	/*
+	 * A kswapd write queued into kcompressd just before reset holds a
+	 * raw zram pointer and is not covered by flush_scheduled_work();
+	 * run those callbacks now, before the table/pool below are freed.
+	 */
+	kcompressd_flush();
+#endif
 	/*
 	 * compact_work and the packed-read works take init_lock (or touch
 	 * table/comp).  cancel/flush them before down_write(): the worker

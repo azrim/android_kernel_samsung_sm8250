@@ -360,3 +360,36 @@ void kcompressd_exit(void)
 	kcompressd_para = NULL;
 	mutex_unlock(&kcompressd_lock);
 }
+
+/*
+ * Run every queued write callback now, without tearing the daemon down.
+ *
+ * A zram device that is being reset or removed frees its table/pool, but a
+ * kswapd write queued into kcompressd just before that keeps a raw pointer
+ * to the device; if it is still pending when the device goes away the
+ * worker would run the callback against freed memory.  zram_reset_device()
+ * only flushes system_wq, which does not cover these private FIFOs.
+ *
+ * Stop the workers first: that makes this the only FIFO consumer (the kfifo
+ * is single-consumer safe), and each worker already drains its FIFO before
+ * it observes kthread_should_stop().  The workers are restarted lazily by
+ * the next schedule_bio_write().  Callers are in process context, so the
+ * inline callbacks (which may sleep) are fine.
+ */
+void kcompressd_flush(void)
+{
+	int i;
+
+	mutex_lock(&kcompressd_lock);
+	if (!kcompress)
+		goto out;
+	for (i = 0; i < nr_kcompressd; i++) {
+		if (kcompress[i].kcompressd) {
+			kthread_stop(kcompress[i].kcompressd);
+			kcompress[i].kcompressd = NULL;
+		}
+		drain_write_queue(i);
+	}
+out:
+	mutex_unlock(&kcompressd_lock);
+}
