@@ -271,7 +271,13 @@ static bool slmk_memcg_hot(struct mem_cgroup *memcg)
 	if (!memcg || !memcg_aware || !memcg_boost_pct)
 		return false;
 	max = mem_cgroup_get_max(memcg);
-	if (!max)
+	/*
+	 * An unbounded group (root, or any group without memory.max) reports
+	 * PAGE_COUNTER_MAX, i.e. LONG_MAX pages. It has no ceiling to approach,
+	 * and scaling that sentinel by memcg_boost_pct would wrap in u64 and
+	 * mis-rank the group as "hot" (or not) at random.
+	 */
+	if (!max || max == PAGE_COUNTER_MAX)
 		return false;
 	usage = page_counter_read(&memcg->memory);
 	return usage * 100 >= max * memcg_boost_pct;
