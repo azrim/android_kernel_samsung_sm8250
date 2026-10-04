@@ -697,17 +697,6 @@ static bool scan_and_kill(short adj_floor, struct mem_cgroup *scope)
 		do_send_sig_info(SIGKILL, SEND_SIG_FORCED, vtsk, PIDTYPE_TGID);
 
 		/*
-		 * Record the kill for the userspace-LMK bookkeeping that
-		 * should_ulmk_retry() reads to decide whether LMK is stuck.
-		 * This is done explicitly rather than by routing through
-		 * group_send_sig_info(), which would also run
-		 * check_kill_permission() and the add_to_oom_reaper() and
-		 * foreground-kill-panic hooks -- all three gated on the
-		 * caller being named "lmkd", which this thread is not.
-		 */
-		ulmk_update_last_kill();
-
-		/*
 		 * Mark the thread group dead so that other kernel code knows,
 		 * and then elevate the thread group to SCHED_RR with minimum RT
 		 * priority. The entire group needs to be elevated because
@@ -853,15 +842,10 @@ static bool reclaim_needed(int *adj_floor, struct mem_cgroup **scope)
 	mutex_lock(&slmk_lock);
 	t = mem_trigger;
 	/*
-	 * Consuming the event is what psi_trigger_poll() would do for a
-	 * userspace reader, so pet the userspace-LMK watchdog here. Without
-	 * this the watchdog stays armed but is never petted: it latches
-	 * expired after the first event, and should_ulmk_retry() then decides
-	 * forever that the stall consumer is stuck.
+	 * Consume the PSI event here, exactly as psi_trigger_poll() would
+	 * for a userspace reader.
 	 */
 	needed = t && cmpxchg(&t->event, 1, 0);
-	if (needed)
-		ulmk_watchdog_pet(&t->wdog_timer);
 	mutex_unlock(&slmk_lock);
 
 	/*
@@ -1234,22 +1218,6 @@ static int psi_trigger_swap(void)
 	new = psi_trigger_create(&psi_system, spec, len, PSI_MEM);
 	if (IS_ERR(new))
 		return PTR_ERR(new);
-
-	/*
-	 * psi identifies the ULMK trigger by t->comm: update_triggers() arms
-	 * its watchdog timer, and psi_emergency_trigger()/psi_is_trigger_active()
-	 * match on it. psi_trigger_create() stamps the comm of whichever task
-	 * called it, which is lmkd on the minfree init write but an arbitrary
-	 * shell when the threshold or window is swept at runtime. Force the
-	 * magic name so those paths keep working regardless of the writer.
-	 *
-	 * The trigger is already on group->triggers by now, so stamp it under
-	 * trigger_lock: those readers hold that same lock, and an unlocked
-	 * store would race them (KCSAN) and could be observed torn or stale.
-	 */
-	mutex_lock(&psi_system.trigger_lock);
-	memcpy(new->comm, ULMK_MAGIC, sizeof(ULMK_MAGIC));
-	mutex_unlock(&psi_system.trigger_lock);
 
 	old = mem_trigger;
 	mem_trigger = new;
