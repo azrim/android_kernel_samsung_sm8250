@@ -1136,35 +1136,6 @@ bool out_of_memory(struct oom_control *oc)
 	unsigned long freed = 0;
 	enum oom_constraint constraint = CONSTRAINT_NONE;
 
-	/*
-	 * Simple LMK owns process killing. The memory cgroup controller is
-	 * enabled only because OneUI's userspace expects it to exist; its
-	 * limits are not a kill policy here, so a memcg OOM must never select
-	 * a victim.
-	 *
-	 * Return false, not true. OOM_SUCCESS makes __mem_cgroup_try_charge()
-	 * reset its retry budget and jump back to retry the charge, so with no
-	 * victim ever chosen that is an unbounded loop -- which is exactly
-	 * what the blanket "return true" this replaced amounted to. OOM_FAILED
-	 * takes the force path instead: the group is charged past its limit,
-	 * the allocation succeeds, and global pressure stays Simple LMK's job
-	 * off PSI stalls.
-	 */
-	if (IS_ENABLED(CONFIG_ANDROID_SIMPLE_LMK) && is_memcg_oom(oc)) {
-		/*
-		 * OneUI needs the memory controller for userspace, so
-		 * memcg stays enabled.  Its limit is a kill signal for
-		 * Simple LMK rather than something we blindly charge
-		 * past forever: queue a pass scoped to this group so the
-		 * reclaim thread kills inside it.  Still answer false so
-		 * this charge is forced through -- the scoped kill cannot
-		 * finish before we return, and a true answer would reset
-		 * __mem_cgroup_try_charge()'s retry budget into a loop.
-		 */
-		simple_lmk_notify_memcg_oom(oc->memcg);
-		return false;
-	}
-
 	if (oom_killer_disabled)
 		return false;
 
