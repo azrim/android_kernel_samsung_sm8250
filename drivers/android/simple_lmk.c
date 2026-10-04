@@ -1242,8 +1242,14 @@ static int psi_trigger_swap(void)
 	 * called it, which is lmkd on the minfree init write but an arbitrary
 	 * shell when the threshold or window is swept at runtime. Force the
 	 * magic name so those paths keep working regardless of the writer.
+	 *
+	 * The trigger is already on group->triggers by now, so stamp it under
+	 * trigger_lock: those readers hold that same lock, and an unlocked
+	 * store would race them (KCSAN) and could be observed torn or stale.
 	 */
+	mutex_lock(&psi_system.trigger_lock);
 	memcpy(new->comm, ULMK_MAGIC, sizeof(ULMK_MAGIC));
+	mutex_unlock(&psi_system.trigger_lock);
 
 	old = mem_trigger;
 	mem_trigger = new;
