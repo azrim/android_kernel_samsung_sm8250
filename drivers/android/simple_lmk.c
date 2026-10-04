@@ -1357,6 +1357,14 @@ static int simple_lmk_init_set(const char *val, const struct kernel_param *kp)
 unclaim:
 	/* Free the slot so a later write can retry the failed setup */
 	mutex_lock(&slmk_lock);
+	/*
+	 * psi_trigger_swap() may already have installed a trigger before the
+	 * kthread or notifier setup failed. Without this it would leak (and
+	 * keep its psimon rtpoll task alive) until some later write replaced
+	 * it. psi_trigger_destroy() is a no-op on NULL.
+	 */
+	psi_trigger_destroy(mem_trigger);
+	mem_trigger = NULL;
 	slmk_running = false;
 	mutex_unlock(&slmk_lock);
 	return 0;
