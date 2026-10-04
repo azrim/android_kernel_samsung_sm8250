@@ -226,6 +226,7 @@ static void vmpressure_work_fn(struct work_struct *work)
 	} while ((vmpr = vmpressure_parent(vmpr)));
 }
 
+#ifdef CONFIG_MEMCG
 static unsigned long calculate_vmpressure_win(void)
 {
 	long x;
@@ -248,7 +249,6 @@ static unsigned long calculate_vmpressure_win(void)
 	return int_sqrt(x);
 }
 
-#ifdef CONFIG_MEMCG
 static void vmpressure_memcg(gfp_t gfp, struct mem_cgroup *memcg, bool critical,
 			     bool tree, unsigned long scanned,
 			     unsigned long reclaimed)

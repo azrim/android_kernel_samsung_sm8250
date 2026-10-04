@@ -52,6 +52,28 @@
 
 #define NON_LRU_SWAPPINESS 99
 
+#ifdef CONFIG_ZRAM_LRU_WRITEBACK
+/*
+ * A page charged to a memcg that opted out of LRU tracking
+ * (NON_LRU_SWAPPINESS) is left off the LRU list. With the memory
+ * controller disabled there is no per-group swappiness, so every page
+ * is tracked.
+ */
+#ifdef CONFIG_MEMCG
+static bool zram_lru_track(struct page *page)
+{
+	struct mem_cgroup *memcg = page_memcg(page);
+
+	return !memcg || memcg->swappiness != NON_LRU_SWAPPINESS;
+}
+#else
+static bool zram_lru_track(struct page *page)
+{
+	return true;
+}
+#endif
+#endif /* CONFIG_ZRAM_LRU_WRITEBACK */
+
 #ifdef CONFIG_KCOMPRESSD_ZRAM
 #include "kcompressd.h"
 #endif
@@ -3210,7 +3232,6 @@ static int __zram_bvec_write(struct zram *zram, struct bio_vec *bvec,
 	enum zram_pageflags flags = 0;
 #ifdef CONFIG_ZRAM_LRU_WRITEBACK
 	unsigned long irq_flags;
-	struct mem_cgroup *memcg;
 #endif
 
 	mem = kmap_atomic(page);
@@ -3336,9 +3357,7 @@ out:
 		zram_set_entry(zram, index, entry);
 		zram_set_obj_size(zram, index, comp_len);
 #ifdef CONFIG_ZRAM_LRU_WRITEBACK
-		memcg = page_memcg(page);
-
-		if (!memcg || memcg->swappiness != NON_LRU_SWAPPINESS) {
+		if (zram_lru_track(page)) {
 			spin_lock_irqsave(&zram->list_lock, irq_flags);
 			list_add_tail(&zram->table[index].lru_list, &zram->list);
 			spin_unlock_irqrestore(&zram->list_lock, irq_flags);
