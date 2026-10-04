@@ -544,6 +544,12 @@ enum work_state {
 	SLEEP_MODE_OUT,
 };
 
+enum zt_reset_reason {
+	RESET_REASON_NONE = 0,
+	RESET_REASON_ESD,
+	RESET_REASON_I2C,
+};
+
 enum {
 	BUILT_IN = 0,
 	UMS,
@@ -751,6 +757,11 @@ struct zt_ts_info {
 	int print_info_cnt_open;
 	int print_info_cnt_release;
 	unsigned int comm_err_count;
+	unsigned int esd_reset_count;
+	unsigned int i2c_reset_count;
+	unsigned int reset_defer_count;
+	u8 reset_reason;
+	bool wet_mode;
 	u16 pressed_x[MAX_SUPPORTED_FINGER_NUM];
 	u16 pressed_y[MAX_SUPPORTED_FINGER_NUM];
 	long prox_power_off;
@@ -874,7 +885,12 @@ retry:
 	usleep_range(DELAY_FOR_TRANSCATION, DELAY_FOR_TRANSCATION + 10);
 	ret = i2c_master_recv(client, values, length);
 	if (ret < 0) {
-		input_err(true, &info->client->dev, "%s: recv failed %d\n", __func__, ret);
+		input_err(true, &info->client->dev,
+			  "%s: recv failed %d, retry %d\n", __func__, ret, count);
+		zt_delay(1);
+		if (++count < RETRY_CNT)
+			goto retry;
+
 		info->comm_err_count++;
 		mutex_unlock(&info->bus_lock);
 		goto i2c_err;
@@ -891,6 +907,23 @@ i2c_err:
 
 	info->work_state = NOTHING;
 #if ESD_TIMER_INTERVAL
+	/*
+	 * A single transient I2C glitch (more likely when the SoC is hot and
+	 * busy) must not power-cycle the controller and release every finger -
+	 * that drops an in-progress touch such as a virtual analog stick. If a
+	 * finger is still down, keep the touch alive and re-arm the ESD
+	 * watchdog so it can still reset if the controller is really hung.
+	 */
+	if (info->finger_cnt1 > 0) {
+		info->reset_defer_count++;
+		input_info(true, &info->client->dev,
+			  "%s: i2c err %d, finger down (%d), defer reset\n",
+			  __func__, ret, info->finger_cnt1);
+		esd_timer_start(CHECK_ESD_TIMER, info);
+		return ret;
+	}
+
+	info->reset_reason = RESET_REASON_I2C;
 	esd_timer_stop(info);
 	if (esd_tmr_workqueue)
 		queue_work(esd_tmr_workqueue, &info->tmr_work);
@@ -945,6 +978,20 @@ i2c_err:
 
 	info->work_state = NOTHING;
 #if ESD_TIMER_INTERVAL
+	/*
+	 * See read_data(): a transient I2C glitch must not power-cycle the
+	 * controller while a finger is still down.
+	 */
+	if (info->finger_cnt1 > 0) {
+		info->reset_defer_count++;
+		input_info(true, &info->client->dev,
+			  "%s: i2c err %d, finger down (%d), defer reset\n",
+			  __func__, ret, info->finger_cnt1);
+		esd_timer_start(CHECK_ESD_TIMER, info);
+		return ret;
+	}
+
+	info->reset_reason = RESET_REASON_I2C;
 	esd_timer_stop(info);
 	if (esd_tmr_workqueue)
 		queue_work(esd_tmr_workqueue, &info->tmr_work);
@@ -996,6 +1043,20 @@ i2c_err:
 
 	info->work_state = NOTHING;
 #if ESD_TIMER_INTERVAL
+	/*
+	 * See read_data(): a transient I2C glitch must not power-cycle the
+	 * controller while a finger is still down.
+	 */
+	if (info->finger_cnt1 > 0) {
+		info->reset_defer_count++;
+		input_info(true, &info->client->dev,
+			  "%s: i2c err %d, finger down (%d), defer reset\n",
+			  __func__, ret, info->finger_cnt1);
+		esd_timer_start(CHECK_ESD_TIMER, info);
+		return ret;
+	}
+
+	info->reset_reason = RESET_REASON_I2C;
 	esd_timer_stop(info);
 	if (esd_tmr_workqueue)
 		queue_work(esd_tmr_workqueue, &info->tmr_work);
@@ -1032,7 +1093,12 @@ retry:
 	usleep_range(200, 220);
 	ret = i2c_master_recv(client, values, length);
 	if (ret < 0) {
-		input_err(true, &info->client->dev, "%s: recv failed %d\n", __func__, ret);
+		input_err(true, &info->client->dev,
+			  "%s: recv failed %d, retry %d\n", __func__, ret, count);
+		zt_delay(1);
+		if (++count < RETRY_CNT)
+			goto retry;
+
 		info->comm_err_count++;
 		mutex_unlock(&info->bus_lock);
 		goto i2c_err;
@@ -1049,6 +1115,20 @@ i2c_err:
 
 	info->work_state = NOTHING;
 #if ESD_TIMER_INTERVAL
+	/*
+	 * See read_data(): a transient I2C glitch must not power-cycle the
+	 * controller while a finger is still down.
+	 */
+	if (info->finger_cnt1 > 0) {
+		info->reset_defer_count++;
+		input_info(true, &info->client->dev,
+			  "%s: i2c err %d, finger down (%d), defer reset\n",
+			  __func__, ret, info->finger_cnt1);
+		esd_timer_start(CHECK_ESD_TIMER, info);
+		return ret;
+	}
+
+	info->reset_reason = RESET_REASON_I2C;
 	esd_timer_stop(info);
 	if (esd_tmr_workqueue)
 		queue_work(esd_tmr_workqueue, &info->tmr_work);
@@ -1869,6 +1949,7 @@ static void esd_timeout_handler(struct timer_list *t)
 	}
 
 	info->p_esd_timeout_tmr = NULL;
+	info->reset_reason = RESET_REASON_ESD;
 	if (esd_tmr_workqueue)
 		queue_work(esd_tmr_workqueue, &info->tmr_work);
 }
@@ -1922,6 +2003,18 @@ static void ts_tmr_work(struct work_struct *work)
 
 	mutex_lock(&info->state_lock);
 	info->work_state = ESD_TIMER;
+
+	if (info->reset_reason == RESET_REASON_I2C)
+		info->i2c_reset_count++;
+	else
+		info->esd_reset_count++;
+
+	input_err(true, &info->client->dev,
+		  "%s: reset reason=%s (esd=%u i2c=%u defer=%u)\n", __func__,
+		  info->reset_reason == RESET_REASON_I2C ? "i2c" : "esd",
+		  info->esd_reset_count, info->i2c_reset_count,
+		  info->reset_defer_count);
+	info->reset_reason = RESET_REASON_NONE;
 
 	disable_irq_nosync(info->irq);
 	zt_power_control(info, POWER_OFF);
@@ -6967,6 +7060,32 @@ static ssize_t clear_comm_err_count_store(struct device *dev,
 	return count;
 }
 
+static ssize_t read_reset_count_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct sec_cmd_data *sec = dev_get_drvdata(dev);
+	struct zt_ts_info *info = container_of(sec, struct zt_ts_info, sec);
+
+	input_info(true, &info->client->dev, "%s: esd %u i2c %u defer %u\n", __func__,
+		  info->esd_reset_count, info->i2c_reset_count, info->reset_defer_count);
+	return snprintf(buf, SEC_CMD_BUF_SIZE, "%u %u %u", info->esd_reset_count,
+			info->i2c_reset_count, info->reset_defer_count);
+}
+
+static ssize_t clear_reset_count_store(struct device *dev,
+		struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	struct sec_cmd_data *sec = dev_get_drvdata(dev);
+	struct zt_ts_info *info = container_of(sec, struct zt_ts_info, sec);
+
+	info->esd_reset_count = 0;
+	info->i2c_reset_count = 0;
+	info->reset_defer_count = 0;
+	input_info(true, &info->client->dev, "%s: clear\n", __func__);
+	return count;
+}
+
 static ssize_t read_module_id_show(struct device *dev,
 		struct device_attribute *devattr, char *buf)
 {
@@ -7313,6 +7432,7 @@ static DEVICE_ATTR(sensitivity_mode, S_IRUGO | S_IWUSR | S_IWGRP, sensitivity_mo
 static DEVICE_ATTR(ito_check, S_IRUGO | S_IWUSR | S_IWGRP, read_ito_check_show, clear_wet_mode_store);
 static DEVICE_ATTR(wet_mode, S_IRUGO | S_IWUSR | S_IWGRP, read_wet_mode_show, clear_wet_mode_store);
 static DEVICE_ATTR(comm_err_count, S_IRUGO | S_IWUSR | S_IWGRP, read_comm_err_count_show, clear_comm_err_count_store);
+static DEVICE_ATTR(reset_count, S_IRUGO | S_IWUSR | S_IWGRP, read_reset_count_show, clear_reset_count_store);
 static DEVICE_ATTR(multi_count, S_IRUGO | S_IWUSR | S_IWGRP, read_multi_count_show, clear_multi_count_store);
 static DEVICE_ATTR(module_id, S_IRUGO, read_module_id_show, NULL);
 static DEVICE_ATTR(prox_power_off, S_IRUGO | S_IWUSR | S_IWGRP, prox_power_off_show, prox_power_off_store);
@@ -7334,6 +7454,7 @@ static struct attribute *touchscreen_attributes[] = {
 	&dev_attr_wet_mode.attr,
 	&dev_attr_multi_count.attr,
 	&dev_attr_comm_err_count.attr,
+	&dev_attr_reset_count.attr,
 	&dev_attr_module_id.attr,
 	&dev_attr_prox_power_off.attr,
 	&dev_attr_support_feature.attr,
@@ -7979,6 +8100,8 @@ static void zt_read_info_work(struct work_struct *work)
 static void zt_print_info(struct zt_ts_info *info)
 {
 	u16 fw_version = 0;
+	u16 ic_status = 0;
+	bool wet = false;
 
 	if (!info || !info->client)
 		return;
@@ -7992,6 +8115,26 @@ static void zt_print_info(struct zt_ts_info *info)
 		info->print_info_cnt_release++;
 
 	fw_version = ((info->cap_info.hw_id & 0xff) << 8) | (info->cap_info.reg_data_version & 0xff);
+
+	/*
+	 * Observation only: the controller raises a water/moisture bit when it
+	 * detects liquid on the panel (e.g. sweaty hands while gaming). There is
+	 * no command in this driver to clear/force it - we only track and log
+	 * enter/exit so the condition can be confirmed on-device. Use
+	 * read_firmware_data() because it has no reset-on-error path.
+	 */
+	if (read_firmware_data(info->client, ZT_DEBUG_REG, (u8 *)&ic_status, 2) >= 0) {
+		wet = zinitix_bit_test(ic_status, DEF_DEVICE_STATUS_WATER_MODE);
+		if (wet && !info->wet_mode) {
+			info->wet_count++;
+			input_info(true, &info->client->dev,
+				   "%s: wet mode enter, %d\n", __func__, info->wet_count);
+		} else if (!wet && info->wet_mode) {
+			input_info(true, &info->client->dev,
+				   "%s: wet mode exit\n", __func__);
+		}
+		info->wet_mode = wet;
+	}
 
 	input_info(true, &info->client->dev,
 			"tc:%d noise:%s(%d) cover:%d lp:(%x) fod:%d ED:%d // v:%04X C%02XT%04X.%4s%s // #%d %d\n",
