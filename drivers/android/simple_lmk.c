@@ -1262,20 +1262,15 @@ static int psi_trigger_swap(void)
 	return 0;
 }
 
-/* Apply a changed threshold or window, if the trigger already exists */
+/*
+ * Apply a changed threshold or window, if the trigger already exists.
+ * Caller must hold slmk_lock.
+ */
 static int psi_trigger_apply(void)
 {
-	int ret = 0;
-
-	if (!psi_spec_valid())
-		return -EINVAL;
-
-	mutex_lock(&slmk_lock);
 	if (mem_trigger)
-		ret = psi_trigger_swap();
-	mutex_unlock(&slmk_lock);
-
-	return ret;
+		return psi_trigger_swap();
+	return 0;
 }
 
 static int set_psi_threshold_us(const char *val, const struct kernel_param *kp)
@@ -1285,13 +1280,25 @@ static int set_psi_threshold_us(const char *val, const struct kernel_param *kp)
 
 	if (ret)
 		return ret;
-	/* Validate before committing so a rejected write changes nothing */
+
+	/*
+	 * Validate and commit under slmk_lock. psi_window_us is read here and
+	 * rewritten by the sibling setter; checking it unlocked lets a window
+	 * write slip in between the check and the store, leaving threshold >
+	 * window with no rollback -- after which every later write fails
+	 * validation and the trigger can never be recreated.
+	 */
+	mutex_lock(&slmk_lock);
 	if (v < PSI_THRESHOLD_MIN_US || v > PSI_THRESHOLD_MAX_US ||
-	    v > psi_window_us)
+	    v > psi_window_us) {
+		mutex_unlock(&slmk_lock);
 		return -EINVAL;
+	}
 
 	psi_threshold_us = v;
-	return psi_trigger_apply();
+	ret = psi_trigger_apply();
+	mutex_unlock(&slmk_lock);
+	return ret;
 }
 
 static int set_psi_window_us(const char *val, const struct kernel_param *kp)
@@ -1301,12 +1308,19 @@ static int set_psi_window_us(const char *val, const struct kernel_param *kp)
 
 	if (ret)
 		return ret;
+
+	/* See set_psi_threshold_us() for why this runs under slmk_lock. */
+	mutex_lock(&slmk_lock);
 	if (v < PSI_WINDOW_MIN_US || v > PSI_WINDOW_MAX_US ||
-	    v < psi_threshold_us)
+	    v < psi_threshold_us) {
+		mutex_unlock(&slmk_lock);
 		return -EINVAL;
+	}
 
 	psi_window_us = v;
-	return psi_trigger_apply();
+	ret = psi_trigger_apply();
+	mutex_unlock(&slmk_lock);
+	return ret;
 }
 
 static const struct kernel_param_ops psi_threshold_ops = {
