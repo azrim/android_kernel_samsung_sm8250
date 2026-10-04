@@ -1215,7 +1215,11 @@ static int psi_trigger_swap(void)
 	if (len >= (int)sizeof(spec))
 		return -EINVAL;
 
-	new = psi_trigger_create(&psi_system, spec, len, PSI_MEM);
+	/*
+	 * A NULL file marks this as a kernel-internal caller, which is always
+	 * granted a privileged (RT-polling) trigger with an arbitrary window.
+	 */
+	new = psi_trigger_create(&psi_system, spec, PSI_MEM, NULL, NULL);
 	if (IS_ERR(new))
 		return PTR_ERR(new);
 
