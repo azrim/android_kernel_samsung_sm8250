@@ -920,6 +920,7 @@ static struct mm_struct *next_reap_victim(void)
 static void reap_victims(void)
 {
 	struct mm_struct *mm;
+	bool reaped;
 	int retries = 0, fails = 0;
 
 	while ((mm = next_reap_victim())) {
@@ -947,7 +948,8 @@ static void reap_victims(void)
 		 * consecutive reap failures the same way, since this loop
 		 * otherwise spins forever on a victim that can never reap.
 		 */
-		if (__oom_reap_task_mm(mm)) {
+		reaped = __oom_reap_task_mm(mm);
+		if (reaped) {
 			set_bit(MMF_OOM_SKIP, &mm->flags);
 			retries = 0;
 			fails = 0;
@@ -966,6 +968,17 @@ static void reap_victims(void)
 			fails = 0;
 		}
 		mmap_read_unlock(mm);
+
+		/*
+		 * A failed reap means an mmu notifier refused to invalidate
+		 * in non-blocking context. Back off for a jiffy so that
+		 * RECLAIM_EXPIRES bounds real elapsed time here too -- as it
+		 * already does for the mmap_sem retry above -- instead of a
+		 * tight loop that burns the budget in microseconds while
+		 * running at RT priority.
+		 */
+		if (!reaped && fails)
+			schedule_timeout_uninterruptible(1);
 	}
 }
 
