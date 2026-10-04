@@ -411,6 +411,18 @@ static unsigned long find_victims(int *vindex, unsigned long target,
 			struct task_struct *vtsk;
 			struct mm_struct *mm;
 
+			/*
+			 * find_lock_task_mm() returns with task_lock() held.
+			 * The lock is kept on purpose: it pins vtsk->mm until
+			 * the victim is chosen and killed, and is released by
+			 * compact_victims(), process_victims() or the kill
+			 * loop.  Up to MAX_VICTIMS alloc_lock instances can
+			 * therefore be held at once.  That is deliberate and
+			 * safe: alloc_lock is a per-task leaf lock with no
+			 * reverse-order user -- nothing in sched/, signal or
+			 * freezer takes it while holding rq->lock or siglock --
+			 * so no ABBA cycle exists.
+			 */
 			vtsk = find_lock_task_mm(tsk);
 			if (!vtsk)
 				continue;
