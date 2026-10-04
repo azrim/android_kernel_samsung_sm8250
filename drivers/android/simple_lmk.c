@@ -49,6 +49,19 @@
 #define POLL_MSEC_MAX 1000
 
 /*
+ * How long out_of_memory() may be told "Simple LMK is working" purely on the
+ * strength of an emergency batch that has not produced a verdict yet.  The
+ * page allocator retries for as long as the notifier reports progress, so an
+ * unbounded answer lets a scan that keeps finding nobody pin the retry loop:
+ * the reclaim thread re-enters SLMK_RUNNING faster than the allocator can
+ * observe the empty verdict.  The window is wide enough for the emergency
+ * batch (which runs at the adj-0 floor and so may still kill the foreground
+ * app) to land and publish a fresh verdict; past it the promise is not being
+ * kept and out_of_memory() must fall back to the stock OOM killer.
+ */
+#define OOM_GRACE_MSEC 1000
+
+/*
  * oom_score_adj floors. The routine, PSI-driven path never touches adj 0,
  * which is the foreground app; only the OOM emergency path may, because there
  * the alternative to killing it is letting the stock OOM killer choose.
@@ -80,11 +93,15 @@ static atomic_t needs_reap = ATOMIC_INIT(0);
  * What the last completed scan achieved, published for the OOM notifier.
  * The notifier must never scan itself -- it runs inside the page allocator
  * with locks held -- so it enqueues the emergency batch and answers
- * out_of_memory() from this verdict instead: anything but SLMK_EMPTY claims
- * that Simple LMK is working or about to work, and SLMK_EMPTY is the signal
- * to hand control back to the stock OOM killer. Any scan (emergency or
- * routine) refreshes the verdict, so a system whose PSI path is actively
- * killing never strands the emergency path on a stale "found nobody".
+ * out_of_memory() from this verdict instead: SLMK_KILLED (and the
+ * pre-first-scan SLMK_IDLE) means Simple LMK has freed something or has not
+ * had its chance yet, and SLMK_EMPTY is the signal to hand control back to
+ * the stock OOM killer.  SLMK_RUNNING and a not-yet-refreshed SLMK_EMPTY are
+ * only a promise that work is imminent, so simple_lmk_oom_cb() honours them
+ * for a bounded window (OOM_GRACE_MSEC) rather than indefinitely.  Any scan
+ * (emergency or routine) refreshes the verdict, so a system whose PSI path
+ * is actively killing never strands the emergency path on a stale "found
+ * nobody".
  */
 enum slmk_kill_state {
 	SLMK_IDLE,	/* no scan has completed yet */
@@ -93,6 +110,13 @@ enum slmk_kill_state {
 	SLMK_EMPTY,	/* last completed scan found nobody to kill */
 };
 static atomic_t kill_state = ATOMIC_INIT(SLMK_IDLE);
+
+/*
+ * Deadline, in jiffies, for the "about to work" answer described above; 0
+ * means no window is currently open.  Only touched from the OOM notifier,
+ * which out_of_memory() serialises under oom_lock.
+ */
+static unsigned long oom_grace_deadline;
 
 /*
  * The PSI trigger is recreated whenever its threshold or window changes, so it
@@ -846,6 +870,19 @@ static int simple_lmk_reclaim_thread(void *data)
 		killed = scan_and_kill(adj_floor);
 		atomic_set(&kill_state, killed ? SLMK_KILLED : SLMK_EMPTY);
 		mutex_unlock(&reclaim_lock);
+
+		/*
+		 * Acknowledge the emergency batch this scan just serviced.
+		 * out_of_memory() re-arms needs_emergency on every invocation,
+		 * so a re-arm that landed mid-scan would send us straight back
+		 * into another scan -- and back into SLMK_RUNNING -- before the
+		 * allocator can observe the verdict just published, which is
+		 * what pins its retry loop.  A still-failing allocation re-arms
+		 * it on its next out_of_memory() call, so nothing is lost, only
+		 * deferred to the next genuine signal.
+		 */
+		if (adj_floor == ADJ_FLOOR_EMERGENCY)
+			atomic_set(&needs_emergency, 0);
 	}
 
 	return 0;
@@ -1039,15 +1076,18 @@ static int simple_lmk_oom_cb(struct notifier_block *nb,
 	 * running, since it will pick the emergency floor up on its next
 	 * loop iteration once needs_emergency is set.
 	 *
-	 * *freed reports the last completed scan's verdict: any state
-	 * other than SLMK_EMPTY means Simple LMK is working or about to
-	 * work, so out_of_memory() returns true and lets the wakeup land.
-	 * SLMK_EMPTY means the last scan found nobody killable; only then
-	 * do we report failure, so out_of_memory() hands control back to
-	 * the stock OOM killer as the genuine last resort. A stale EMPTY
-	 * is self-correcting: the flag armed here still sends the reclaim
-	 * thread through a fresh emergency scan on its next wakeup, which
-	 * refreshes the verdict before the following OOM invocation.
+	 * *freed is the allocator's "is memory coming back?" answer, and the
+	 * allocator retries for as long as it is told yes. A scan that killed
+	 * someone, and the pre-first-scan state, are real progress and are
+	 * reported outright. A scan merely in flight, or a completed scan
+	 * that found nobody, is only a *promise* of progress -- the emergency
+	 * batch armed above runs at the adj-0 floor and may still kill the
+	 * foreground app -- so the promise is honoured for a bounded window.
+	 * Past that window it is not being kept, and out_of_memory() must
+	 * fall back to the stock OOM killer as the genuine last resort.
+	 * Without the bound the reclaim thread re-enters SLMK_RUNNING faster
+	 * than the allocator can observe SLMK_EMPTY, and the retry loop never
+	 * terminates.
 	 */
 	prev = atomic_read(&kill_state);
 	atomic_set(&needs_emergency, 1);
@@ -1057,8 +1097,24 @@ static int simple_lmk_oom_cb(struct notifier_block *nb,
 	if (waitqueue_active(&reclaim_waitq))
 		wake_up(&reclaim_waitq);
 
-	if (freed)
-		*freed = (prev != SLMK_EMPTY);
+	if (!freed)
+		return NOTIFY_OK;
+
+	if (prev == SLMK_KILLED || prev == SLMK_IDLE) {
+		oom_grace_deadline = 0;
+		*freed = 1;
+		return NOTIFY_OK;
+	}
+
+	if (!oom_grace_deadline)
+		oom_grace_deadline = jiffies + msecs_to_jiffies(OOM_GRACE_MSEC);
+	if (time_before(jiffies, oom_grace_deadline)) {
+		*freed = 1;
+		return NOTIFY_OK;
+	}
+
+	oom_grace_deadline = 0;
+	*freed = 0;
 
 	return NOTIFY_OK;
 }
