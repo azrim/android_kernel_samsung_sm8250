@@ -726,10 +726,22 @@ static bool scan_and_kill(short adj_floor, struct mem_cgroup *scope)
 			 * flag latched on a zombie, which keeps
 			 * oom_killer_disable()'s failure-path TIF_MEMDIE
 			 * scan non-empty and blocks its oom_victims reset.
-			 * Only stamp threads that still own an mm.
+			 * Only stamp threads that still own an mm, and read
+			 * t->mm under the task lock so exit_mm()'s
+			 * t->mm = NULL store cannot race the check on a
+			 * weakly ordered CPU. vtsk is already locked by
+			 * find_lock_task_mm() here, so re-locking it would
+			 * deadlock -- its mm is valid and pinned, stamp it
+			 * directly.
 			 */
-			if (READ_ONCE(t->mm))
+			if (t == vtsk) {
 				set_tsk_thread_flag(t, TIF_MEMDIE);
+				continue;
+			}
+			task_lock(t);
+			if (t->mm)
+				set_tsk_thread_flag(t, TIF_MEMDIE);
+			task_unlock(t);
 		}
 		for_each_thread(vtsk, t) {
 			set_task_rt_prio(t, 1);
