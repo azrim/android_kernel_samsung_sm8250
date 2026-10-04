@@ -2182,7 +2182,13 @@ static void zram_handle_comp_page(struct work_struct *work)
 		pr_err_ratelimited("%s: invalid index %lu in backing device\n",
 				   __func__, handle);
 		kunmap_atomic(src);
-		page_endio(dst_page, op_is_write(bio_op(bio)), -EIO);
+		if (!zw->sync) {
+			if (zw->parent)
+				bio_io_error(zw->parent);
+			else
+				page_endio(dst_page, op_is_write(bio_op(bio)),
+						-EIO);
+		}
 		bio_put(bio);
 		kfree(zw);
 		__free_page(src_page);
@@ -2199,7 +2205,13 @@ static void zram_handle_comp_page(struct work_struct *work)
 	if (!zram->comp || !zram->table) {
 		up_read(&zram->init_lock);
 		kunmap_atomic(src);
-		page_endio(dst_page, op_is_write(bio_op(bio)), -EIO);
+		if (!zw->sync) {
+			if (zw->parent)
+				bio_io_error(zw->parent);
+			else
+				page_endio(dst_page, op_is_write(bio_op(bio)),
+						-EIO);
+		}
 		bio_put(bio);
 		kfree(zw);
 		__free_page(src_page);
@@ -2231,8 +2243,21 @@ static void zram_handle_comp_page(struct work_struct *work)
 		zram->wb_table[blk_idx]++;
 	spin_unlock_irqrestore(&zram->wb_table_lock, flags);
 
-	page_endio(dst_page, op_is_write(bio_op(bio)),
-			blk_status_to_errno(bio->bi_status));
+	/*
+	 * With a parent bio the caller owns dst_page and completes it through
+	 * its own end_io, so propagate the status and finish the parent here;
+	 * the standalone (rw_page) case ends the page itself, and the sync
+	 * (partial-IO) case leaves completion to its inline caller.
+	 */
+	if (zw->sync) {
+		/* partial-IO caller owns the completion */
+	} else if (zw->parent) {
+		zw->parent->bi_status = bio->bi_status;
+		bio_endio(zw->parent);
+	} else {
+		page_endio(dst_page, op_is_write(bio_op(bio)),
+				blk_status_to_errno(bio->bi_status));
+	}
 	bio_put(bio);
 
 	zram_handle_remain(zram, src_page, blk_idx);
@@ -2251,7 +2276,7 @@ static void zram_comp_page_end_io(struct bio *bio)
 }
 
 static int read_comp_from_bdev(struct zram *zram, struct bio_vec *bvec,
-			unsigned long handle, struct bio *parent)
+			unsigned long handle, struct bio *parent, bool sync)
 {
 	struct zram_wb_work *zw;
 	struct bio *bio;
@@ -2281,6 +2306,8 @@ static int read_comp_from_bdev(struct zram *zram, struct bio_vec *bvec,
 	zw->dst_page = bvec->bv_page;
 	zw->zram = zram;
 	zw->bio = bio;
+	zw->parent = parent;
+	zw->sync = sync;
 	zw->handle = handle;
 	set_page_private(page, (unsigned long)zw);
 
@@ -2293,13 +2320,45 @@ static int read_comp_from_bdev(struct zram *zram, struct bio_vec *bvec,
 		return -EIO;
 	}
 
+	if (sync) {
+		/*
+		 * Partial-IO read-modify-write: the caller needs the
+		 * decompressed page before it can modify and rewrite it, so
+		 * the read cannot be handed to the async completion worker
+		 * (which would leave zram_bvec_write() racing it).  Read and
+		 * decompress inline; zram_handle_comp_page() skips the
+		 * page/bio completion when zw->sync is set, so the caller
+		 * owns it.  submit_bio_wait() does not consume the bio, so
+		 * zram_handle_comp_page() still does the single bio_put().
+		 */
+		bio->bi_opf = REQ_OP_READ;
+		if (submit_bio_wait(bio)) {
+			bio_put(bio);
+			kfree(zw);
+			__free_page(page);
+			return -EIO;
+		}
+		zram_handle_comp_page(&zw->work);
+		return 0;
+	}
+
+	/*
+	 * Always complete through zram_comp_page_end_io: the compressed
+	 * slice read into the bounce page must be decompressed into dst_page
+	 * before the read counts as done.  bio_chain() would instead install
+	 * bio_chain_endio, so zram_handle_comp_page() would never run - the
+	 * target page would be left with stale data and the work plus the
+	 * bounce page would leak.  When there is a parent bio, defer its
+	 * completion (bio_inc_remaining) and finish it from
+	 * zram_handle_comp_page() once the decompression has run.
+	 */
 	if (!parent) {
 		bio->bi_opf = REQ_OP_READ;
-		bio->bi_end_io = zram_comp_page_end_io;
 	} else {
 		bio->bi_opf = parent->bi_opf;
-		bio_chain(bio, parent);
+		bio_inc_remaining(parent);
 	}
+	bio->bi_end_io = zram_comp_page_end_io;
 
 	submit_bio(bio);
 	return 1;
@@ -3017,7 +3076,7 @@ static int __zram_bvec_read(struct zram *zram, struct page *page, u32 index,
 			zram_set_flag(zram, index, ZRAM_READ_BDEV);
 			zram_slot_unlock(zram, index);
 			return read_comp_from_bdev(zram, &bvec,
-					element, bio);
+					element, bio, partial_io);
 		}
 #endif
 		zram_slot_unlock(zram, index);

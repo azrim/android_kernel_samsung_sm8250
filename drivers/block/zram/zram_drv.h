@@ -145,8 +145,10 @@ struct zram_wb_work {
 	struct page *src_page;
 	struct page *dst_page;
 	struct bio *bio;
+	struct bio *parent;
 	struct zram *zram;
 	unsigned long handle;
+	bool sync;
 };
 
 struct zram_wb_entry {
