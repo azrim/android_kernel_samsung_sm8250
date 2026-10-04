@@ -613,9 +613,9 @@ static void exit_mm(void)
 	 * Simple LMK stamps TIF_MEMDIE directly on its victims without going
 	 * through mark_oom_victim(), so those tasks never incremented
 	 * oom_victims and must not decrement it here. mark_oom_victim() is the
-	 * only path that both sets TIF_MEMDIE and binds signal->oom_mm (via
-	 * __mark_oom_victim) while bumping oom_victims, so a task carrying
-	 * oom_mm owes a matching exit_oom_victim(). A Simple LMK-only victim
+	 * only path that both sets TIF_MEMDIE and binds signal->oom_mm while
+	 * bumping oom_victims, so a task carrying oom_mm owes a matching
+	 * exit_oom_victim(). A Simple LMK-only victim
 	 * (oom_mm NULL) just drops TIF_MEMDIE to stay balanced.
 	 */
 	if (test_thread_flag(TIF_MEMDIE)) {
