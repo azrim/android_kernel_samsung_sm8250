@@ -343,10 +343,16 @@ static unsigned long find_victims(int *vindex, unsigned long target,
 		 * a stale reading can only extend or miss the grace by one
 		 * store, never fault, and sig itself is pinned by the RCU
 		 * read-side section around this loop.
+		 *
+		 * A task forked after boot_now was sampled has a
+		 * real_start_time in the future relative to it; the
+		 * subtraction below would underflow to a huge age and let
+		 * the brand-new task through, so test the ordering first.
 		 */
 		if (bg_grace &&
 		    (time_before(jiffies, READ_ONCE(sig->oom_adj_change) +
 				 bg_grace) ||
+		     boot_now <= tsk->real_start_time ||
 		     boot_now - tsk->real_start_time < grace_ns))
 			continue;
 
