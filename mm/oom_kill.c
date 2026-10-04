@@ -54,8 +54,6 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/oom.h>
 
-#define ULMK_MAGIC "lmkd"
-
 int sysctl_panic_on_oom =
 IS_ENABLED(CONFIG_DEBUG_PANIC_ON_OOM) ? 2 : 0;
 int sysctl_oom_kill_allocating_task;
@@ -1203,12 +1201,10 @@ bool out_of_memory(struct oom_control *oc)
 	 * This used to be preceded by an unconditional "return true" when
 	 * CONFIG_ANDROID_SIMPLE_LMK was set, which made the notifier below
 	 * dead code that could never fire while also disabling the OOM killer
-	 * entirely. That left the page allocator with no way to make progress:
-	 * should_ulmk_retry() calls out_of_memory() as its own fallback and
-	 * was always told that memory had been freed. If Simple LMK frees
-	 * nothing, fall through to the OOM killer as the genuine last resort
-	 * -- it is the only path that will kill adj 0, i.e. the foreground
-	 * app, which Simple LMK's routine path refuses to touch.
+	 * entirely, and the page allocator had no way to make progress. If
+	 * Simple LMK frees nothing, defer to the OOM killer as the genuine
+	 * last resort -- it is the only path that will kill adj 0, i.e. the
+	 * foreground app, which Simple LMK's routine path refuses to touch.
 	 */
 	if (!is_memcg_oom(oc)) {
 		blocking_notifier_call_chain(&oom_notify_list, 0, &freed);
@@ -1272,8 +1268,7 @@ bool out_of_memory(struct oom_control *oc)
 	}
 	if (oc->chosen && oc->chosen != (void *)-1UL)
 		oom_kill_process(oc, !is_memcg_oom(oc) ? "Out of memory" :
-				 "Memory cgroup out of memory",
-			IS_ENABLED(CONFIG_HAVE_USERSPACE_LOW_MEMORY_KILLER));
+				 "Memory cgroup out of memory", false);
 	return !!oc->chosen;
 }
 
@@ -1300,9 +1295,6 @@ void pagefault_out_of_memory(void)
 
 void add_to_oom_reaper(struct task_struct *p)
 {
-	static DEFINE_RATELIMIT_STATE(reaper_rs, DEFAULT_RATELIMIT_INTERVAL,
-						 DEFAULT_RATELIMIT_BURST);
-
 	if (!sysctl_reap_mem_on_sigkill)
 		return;
 
@@ -1317,12 +1309,6 @@ void add_to_oom_reaper(struct task_struct *p)
 	}
 
 	task_unlock(p);
-
-	if (!strcmp(current->comm, ULMK_MAGIC) && __ratelimit(&reaper_rs)
-			&& p->signal->oom_score_adj == 0) {
-		show_mem(SHOW_MEM_FILTER_NODES, NULL);
-		show_mem_call_notifiers();
-	}
 
 	put_task_struct(p);
 }
