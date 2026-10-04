@@ -1109,6 +1109,7 @@ static int psi_trigger_apply(void)
 static int set_psi_threshold_us(const char *val, const struct kernel_param *kp)
 {
 	unsigned int v = psi_threshold_us;
+	unsigned int old;
 	int ret = kstrtouint(val, 0, &v);
 
 	if (ret)
@@ -1128,8 +1129,16 @@ static int set_psi_threshold_us(const char *val, const struct kernel_param *kp)
 		return -EINVAL;
 	}
 
+	/*
+	 * Commit the value before rebuilding the trigger (psi_trigger_swap()
+	 * reads it), but put it back if the rebuild fails: otherwise the
+	 * tunable would advertise a threshold the live trigger never got.
+	 */
+	old = psi_threshold_us;
 	psi_threshold_us = v;
 	ret = psi_trigger_apply();
+	if (ret)
+		psi_threshold_us = old;
 	mutex_unlock(&slmk_lock);
 	return ret;
 }
@@ -1137,6 +1146,7 @@ static int set_psi_threshold_us(const char *val, const struct kernel_param *kp)
 static int set_psi_window_us(const char *val, const struct kernel_param *kp)
 {
 	unsigned int v = psi_window_us;
+	unsigned int old;
 	int ret = kstrtouint(val, 0, &v);
 
 	if (ret)
@@ -1150,8 +1160,11 @@ static int set_psi_window_us(const char *val, const struct kernel_param *kp)
 		return -EINVAL;
 	}
 
+	old = psi_window_us;
 	psi_window_us = v;
 	ret = psi_trigger_apply();
+	if (ret)
+		psi_window_us = old;
 	mutex_unlock(&slmk_lock);
 	return ret;
 }
