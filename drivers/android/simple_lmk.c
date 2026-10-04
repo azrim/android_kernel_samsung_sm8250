@@ -166,12 +166,18 @@ static unsigned int poll_msec = 200;
  * anyway -- otherwise binder swap-in and other user faults fail with
  * warn_alloc while LMK still thinks there is plenty of "available" RAM.
  *
- * 1024 MiB is the r8q default (8 GiB RAM + 8 GiB zram).  At the old 256 MiB
+ * 1536 MiB is the r8q default (8 GiB RAM + 8 GiB zram).  At the old 256 MiB
  * the gate almost never opened, so memory pressure was absorbed by zram
  * instead of by reclaiming cached apps, and once zram filled the device
- * thrashed.  A ~1 GiB floor lets cached apps be killed before zram saturates.
+ * thrashed.  A ~1 GiB floor was still too late: on r8q zram was already
+ * ~65% full with si_mem_available() around 1.6 GiB, so the gate stayed shut
+ * through the whole range where the device was visibly under pressure.
+ * 1.5 GiB opens it while there is still headroom, before zram saturates,
+ * without the more aggressive behaviour a 2 GiB floor produced.  The gate
+ * looks only at available RAM, never at zram occupancy, so this floor is
+ * what stands in for that.
  */
-static unsigned int reserve_mib = 1024;
+static unsigned int reserve_mib = 1536;
 
 /*
  * Minimum settle time after a reclaim that killed victims, in ms. The victims
