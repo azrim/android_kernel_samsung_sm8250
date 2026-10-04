@@ -1607,23 +1607,55 @@ static int zram_wbd(void *p)
 
 	while (!kthread_should_stop()) {
 		unsigned long nr_pages = 0;
+		unsigned long flags;
+
 		wait_event_freezable(zram->wbd_wait,
 				zram->wbd_running || kthread_should_stop());
-		list_for_each_entry_safe(zram_entry, n, &zram->list, lru_list) {
+
+		spin_lock_irqsave(&zram->list_lock, flags);
+		zram_entry = list_first_entry_or_null(&zram->list,
+					struct zram_table_entry, lru_list);
+		spin_unlock_irqrestore(&zram->list_lock, flags);
+
+		while (zram_entry) {
 			if (try_to_freeze() || kthread_should_stop())
 				break;
 			if (!zram_wb_available(zram))
 				break;
+
+			/*
+			 * Snapshot the next cursor under zram->list_lock
+			 * before touching the entry: the list is mutated
+			 * (list_add_tail()/list_del_init()) under that lock,
+			 * so reading ->next unlocked could follow a node that
+			 * is being unlinked.  A node that was list_del_init()'d
+			 * points at itself, which means our cursor was already
+			 * removed; restart from the head then (the node is
+			 * gone, so the walk still makes progress).  This also
+			 * replaces the old list_first_entry() restart on ABORT,
+			 * which dereferenced an empty list as if it held an
+			 * entry.
+			 */
+			spin_lock_irqsave(&zram->list_lock, flags);
+			if (zram_entry->lru_list.next == &zram_entry->lru_list)
+				n = list_first_entry_or_null(&zram->list,
+						struct zram_table_entry, lru_list);
+			else if (zram_entry->lru_list.next == &zram->list)
+				n = NULL;
+			else
+				n = list_next_entry(zram_entry, lru_list);
+			spin_unlock_irqrestore(&zram->list_lock, flags);
+
 			index = entry_to_index(zram, zram_entry);
 			ret = zram_try_mark_page(zram, index);
 			if (!ret) {
 				if (zram_comp_writeback_index(zram, index,
 						zwbs, &idx, false, false))
 					break;
-			} else if (ret == ABORT) {
-				n = list_first_entry(&zram->list,
-						struct zram_table_entry, lru_list);
 			}
+			/* a stale (ABORT) entry is simply skipped */
+
+			zram_entry = n;
 			if (!zram_should_writeback(zram, ++nr_pages, false))
 				break;
 		}
