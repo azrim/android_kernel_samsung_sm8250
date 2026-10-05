@@ -2574,7 +2574,7 @@ static ssize_t eol_spec_show(struct device *dev,
 
 static DEVICE_ATTR_RO(name);
 static DEVICE_ATTR_RO(vendor);
-static DEVICE_ATTR(als_flush, 0660, NULL, tcs3407_flush_store);
+static DEVICE_ATTR(als_flush, 0220, NULL, tcs3407_flush_store);
 static DEVICE_ATTR_RO(int_pin_check);
 static DEVICE_ATTR(read_reg, 0660,
 	tcs3407_read_reg_show, tcs3407_read_reg_store);
