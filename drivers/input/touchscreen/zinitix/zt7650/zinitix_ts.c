@@ -112,6 +112,22 @@ enum power_control {
 #define SCAN_RATE_HZ			1000
 #define CHECK_ESD_TIMER			5
 
+/*
+ * Deferred finger release (glitch filter).
+ *
+ * A RELEASE at the end of a drag is held for ZT_REL_DEBOUNCE_MS and cancelled
+ * if the same slot reports PRESS/MOVE again within that window and within
+ * ZT_REL_MAX_DRIFT of where it was released. The controller occasionally
+ * emits such a one-frame release+re-press pair, and the framework decodes it
+ * as finger-up followed by finger-down, i.e. a stray tap that breaks a scroll.
+ *
+ * A tap is never deferred (its travel stays below ZT_REL_MIN_MOVE), so typing
+ * and normal tapping take the original path untouched.
+ */
+#define ZT_REL_DEBOUNCE_MS		25
+#define ZT_REL_MIN_MOVE			40
+#define ZT_REL_MAX_DRIFT		60
+
 #define MAX_RAW_DATA_SZ			792 /* 36x22 */
 #define MAX_TRAW_DATA_SZ		(MAX_RAW_DATA_SZ + 4 * MAX_SUPPORTED_FINGER_NUM + 2)
 #define RAWDATA_DELAY_FOR_HOST		20000
@@ -764,6 +780,21 @@ struct zt_ts_info {
 	bool wet_mode;
 	u16 pressed_x[MAX_SUPPORTED_FINGER_NUM];
 	u16 pressed_y[MAX_SUPPORTED_FINGER_NUM];
+
+	/*
+	 * Deferred finger release (glitch filter). rel_pending[i] is set when
+	 * the controller releases a slot that was dragging; the release is only
+	 * committed if the slot does not come back at (nearly) the same spot
+	 * before rel_deadline[i]. rel_timer/rel_work are the backstop for when
+	 * no further interrupt arrives to resolve it.
+	 */
+	bool rel_pending[MAX_SUPPORTED_FINGER_NUM];
+	unsigned long rel_deadline[MAX_SUPPORTED_FINGER_NUM];
+	u16 rel_x[MAX_SUPPORTED_FINGER_NUM];
+	u16 rel_y[MAX_SUPPORTED_FINGER_NUM];
+	unsigned int glitch_count;
+	struct timer_list rel_timer;
+	struct work_struct rel_work;
 	long prox_power_off;
 
 	u8 ed_enable;
@@ -806,6 +837,9 @@ static int ts_set_touchmode(u16 value);
 static bool init_touch(struct zt_ts_info *info);
 static bool mini_init_touch(struct zt_ts_info *info);
 static void clear_report_data(struct zt_ts_info *info);
+static void zt_flush_release(struct zt_ts_info *info, int i);
+static void zt_rel_work(struct work_struct *work);
+static void zt_rel_timeout(struct timer_list *t);
 static bool zt_power_control(struct zt_ts_info *info, u8 ctl);
 static void zt_set_optional_mode(struct zt_ts_info *info, int event, bool enable);
 static int ts_read_from_sponge(struct zt_ts_info *info, u16 offset, u8 *value, int len);
@@ -1690,9 +1724,87 @@ static bool init_touch(struct zt_ts_info *info)
 	return mini_init_touch(info);
 }
 
+/* Commit the deferred release of one slot. Called with state_lock held. */
+static void zt_flush_release(struct zt_ts_info *info, int i)
+{
+	if (!info->rel_pending[i])
+		return;
+
+	info->rel_pending[i] = false;
+
+	input_mt_slot(info->input_dev, i);
+	input_report_abs(info->input_dev, ABS_MT_CUSTOM, 0);
+	input_mt_report_slot_state(info->input_dev, MT_TOOL_FINGER, 0);
+
+	if (info->finger_cnt1 > 0)
+		info->finger_cnt1--;
+
+	if (info->finger_cnt1 == 0) {
+		input_report_key(info->input_dev, BTN_TOUCH, 0);
+		info->check_multi = 0;
+	}
+
+	info->move_count[i] = 0;
+	memset(&info->cur_coord[i], 0, sizeof(struct ts_coordinate));
+	memset(&info->old_coord[i], 0, sizeof(struct ts_coordinate));
+}
+
+/*
+ * Backstop for a deferred release. If the controller goes quiet after the
+ * RELEASE frame it has to be committed from process context, otherwise the
+ * finger would stay pressed forever. Runs on the driver's own workqueue and
+ * takes state_lock - the same lock zt_touch_work() holds while reporting.
+ */
+static void zt_rel_work(struct work_struct *work)
+{
+	struct zt_ts_info *info =
+		container_of(work, struct zt_ts_info, rel_work);
+	int i;
+	u8 reported = false;
+
+	mutex_lock(&info->state_lock);
+
+	for (i = 0; i < info->cap_info.multi_fingers; i++) {
+		if (!info->rel_pending[i])
+			continue;
+
+		zt_flush_release(info, i);
+		reported = true;
+	}
+
+	if (reported)
+		input_sync(info->input_dev);
+
+	mutex_unlock(&info->state_lock);
+}
+
+static void zt_rel_timeout(struct timer_list *t)
+{
+	struct zt_ts_info *info = from_timer(info, t, rel_timer);
+
+#if ESD_TIMER_INTERVAL
+	if (esd_tmr_workqueue)
+		queue_work(esd_tmr_workqueue, &info->rel_work);
+	else
+		schedule_work(&info->rel_work);
+#else
+	schedule_work(&info->rel_work);
+#endif
+}
+
 static void clear_report_data(struct zt_ts_info *info)
 {
 	int i;
+
+	/*
+	 * This path releases every reported slot itself, so a deferred release
+	 * is redundant. Drop the state and disarm the backstop timer. Use
+	 * del_timer(), not cancel_work_sync(): callers hold state_lock, which
+	 * zt_rel_work() also takes.
+	 */
+	del_timer(&info->rel_timer);
+	for (i = 0; i < MAX_SUPPORTED_FINGER_NUM; i++)
+		info->rel_pending[i] = false;
 
 	if (info->prox_power_off) {
 		input_report_key(info->input_dev, KEY_INT_CANCEL, 1);
@@ -2241,6 +2353,16 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 	if (gpio_get_value(info->pdata->gpio_int))
 		return IRQ_HANDLED;
 
+	/*
+	 * Serialise against the deferred-release backstop (zt_rel_work()) and
+	 * the sysfs/power paths: all of them touch cur_coord[]/finger state.
+	 * Drop the frame on contention, as the vendor driver did.
+	 */
+	if (!mutex_trylock(&info->state_lock)) {
+		write_cmd(client, ZT_CLEAR_INT_STATUS_CMD);
+		return IRQ_HANDLED;
+	}
+
 #if ESD_TIMER_INTERVAL
 	/* The controller is alive: push the ESD watchdog out. */
 	esd_timer_stop(info);
@@ -2248,14 +2370,14 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 
 	if (info->work_state != NOTHING && info->work_state != NORMAL) {
 		write_cmd(client, ZT_CLEAR_INT_STATUS_CMD);
-		return IRQ_HANDLED;
+		goto out;
 	}
 
 	info->work_state = NORMAL;
 
 	if (!ts_read_coord(info)) {
 		info->work_state = NOTHING;
-		return IRQ_HANDLED;
+		goto out;
 	}
 
 #if ESD_TIMER_INTERVAL
@@ -2271,7 +2393,7 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 	if (info->touch_info[0].byte00.value.eid == CUSTOM_EVENT ||
 	    info->touch_info[0].byte00.value.eid == GESTURE_EVENT) {
 		info->work_state = NOTHING;
-		return IRQ_HANDLED;
+		goto out;
 	}
 
 	for (i = 0; i < info->cap_info.multi_fingers; i++) {
@@ -2310,6 +2432,44 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 
 		if (info->cur_coord[tid].z <= 0)
 			info->cur_coord[tid].z = 1;
+	}
+
+	/*
+	 * Resolve a deferred release against this frame. If the same slot comes
+	 * back (PRESS/MOVE) inside the debounce window and at (nearly) the same
+	 * spot, the release was a controller glitch: swallow it and keep the
+	 * touch continuous. Otherwise - the finger is gone, the window expired,
+	 * or it came back somewhere else - commit the release. The window is
+	 * checked against jiffies so a late workqueue can never extend it and
+	 * merge two separate touches.
+	 */
+	for (i = 0; i < info->cap_info.multi_fingers; i++) {
+		int drift;
+
+		if (!info->rel_pending[i])
+			continue;
+
+		drift = abs((int)info->cur_coord[i].x - (int)info->rel_x[i]) +
+			abs((int)info->cur_coord[i].y - (int)info->rel_y[i]);
+
+		if (time_before(jiffies, info->rel_deadline[i]) &&
+				drift <= ZT_REL_MAX_DRIFT &&
+				(info->cur_coord[i].touch_status == FINGER_PRESS ||
+				 info->cur_coord[i].touch_status == FINGER_MOVE)) {
+			info->rel_pending[i] = false;
+			info->glitch_count++;
+			/*
+			 * Treat this as a continuation rather than a fresh
+			 * press, so finger_cnt1 is not bumped a second time.
+			 */
+			info->old_coord[i].touch_status = info->cur_coord[i].touch_status;
+			info->old_coord[i].ttype = info->cur_coord[i].ttype;
+			input_dbg(true, &client->dev,
+					"tID:%d glitch release swallowed (cnt:%u)\n",
+					i, info->glitch_count);
+		} else {
+			zt_flush_release(info, i);
+		}
 	}
 
 	for (i = 0; i < info->cap_info.multi_fingers; i++) {
@@ -2385,33 +2545,40 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 				info->move_count[i]++;
 			}
 		} else if (info->cur_coord[i].touch_status == FINGER_RELEASE) {
-			input_mt_slot(info->input_dev, i);
-			input_report_abs(info->input_dev, ABS_MT_CUSTOM, 0);
-			input_mt_report_slot_state(info->input_dev, MT_TOOL_FINGER, 0);
-
-			if (info->finger_cnt1 > 0)
-				info->finger_cnt1--;
-
-			if (info->finger_cnt1 == 0) {
-				input_report_key(info->input_dev, BTN_TOUCH, 0);
-				info->check_multi = 0;
-			}
+			int dx = (int)info->cur_coord[i].x - (int)info->pressed_x[i];
+			int dy = (int)info->cur_coord[i].y - (int)info->pressed_y[i];
 
 			if (unlikely(m_ts_debug_mode)) {
 				input_dbg(true, &client->dev,
 					  "[R] tID:%d dx:%d dy:%d mc:%d tc:%d\n",
-					  i, info->cur_coord[i].x - info->pressed_x[i],
-					  info->cur_coord[i].y - info->pressed_y[i],
-					  info->move_count[i], info->finger_cnt1);
+					  i, dx, dy, info->move_count[i], info->finger_cnt1);
 			}
 
-			info->move_count[i] = 0;
-			memset(&info->cur_coord[i], 0, sizeof(struct ts_coordinate));
+			/*
+			 * Hold the release only at the end of a drag/scroll; a tap is
+			 * committed right away, exactly as before, so typing and normal
+			 * tapping are never affected.
+			 */
+			if (info->rel_pending[i]) {
+				zt_flush_release(info, i);
+			} else if (abs(dx) + abs(dy) >= ZT_REL_MIN_MOVE) {
+				info->rel_pending[i] = true;
+				info->rel_x[i] = info->cur_coord[i].x;
+				info->rel_y[i] = info->cur_coord[i].y;
+				info->rel_deadline[i] = jiffies +
+					msecs_to_jiffies(ZT_REL_DEBOUNCE_MS);
+				mod_timer(&info->rel_timer, info->rel_deadline[i]);
+			} else {
+				zt_flush_release(info, i);
+			}
 		}
 	}
 
 	input_sync(info->input_dev);
 	info->work_state = NOTHING;
+
+out:
+	mutex_unlock(&info->state_lock);
 	return IRQ_HANDLED;
 }
 
@@ -8472,6 +8639,8 @@ static int zt_ts_probe(struct i2c_client *client,
 #endif
 	INIT_DELAYED_WORK(&info->work_read_info, zt_read_info_work);
 	INIT_DELAYED_WORK(&info->work_print_info, touch_print_info_work);
+	timer_setup(&info->rel_timer, zt_rel_timeout, 0);
+	INIT_WORK(&info->rel_work, zt_rel_work);
 
 	mutex_init(&info->state_lock);
 	mutex_init(&info->chip_lock);
@@ -8750,6 +8919,14 @@ static int zt_ts_remove(struct i2c_client *client)
 	cancel_delayed_work_sync(&info->work_read_info);
 	cancel_delayed_work_sync(&info->work_print_info);
 
+	/*
+	 * Disarm the deferred-release backstop before taking state_lock:
+	 * zt_rel_work() takes state_lock, so cancel_work_sync() under the lock
+	 * would deadlock.
+	 */
+	del_timer_sync(&info->rel_timer);
+	cancel_work_sync(&info->rel_work);
+
 	mutex_lock(&info->state_lock);
 
 	info->work_state = REMOVE;
@@ -8807,6 +8984,8 @@ void zt_ts_shutdown(struct i2c_client *client)
 	input_info(true, &client->dev, "%s++\n", __func__);
 	shutdown_is_on_going_tsp = true;
 	disable_irq(info->irq);
+	del_timer_sync(&info->rel_timer);
+	cancel_work_sync(&info->rel_work);
 	mutex_lock(&info->state_lock);
 #if ESD_TIMER_INTERVAL
 	flush_work(&info->tmr_work);
