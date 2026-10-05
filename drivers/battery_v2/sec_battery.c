@@ -669,8 +669,9 @@ static void sec_bat_monitor_work(
 				gpio_direction_output(battery->pdata->wpc_en, 0);
 #endif
 			pr_info("%s: WC CONTROL: Enable\n", __func__);
-			pr_info("%s: wpc_en(%d)\n",
-				__func__, gpio_get_value(battery->pdata->wpc_en));
+			if (battery->pdata->wpc_en)
+				pr_info("%s: wpc_en(%d)\n",
+					__func__, gpio_get_value(battery->pdata->wpc_en));
 		}
 		battery->wc_enable_cnt++;
 	}
