@@ -79,7 +79,7 @@ struct zram_table_entry {
 		unsigned long element;
 	};
 	unsigned long flags;
-#ifdef CONFIG_ZRAM_MEMORY_TRACKING
+#if defined(CONFIG_ZRAM_MEMORY_TRACKING) || defined(CONFIG_ZRAM_WRITEBACK)
 	ktime_t ac_time;
 #endif
 #ifdef CONFIG_ZRAM_LRU_WRITEBACK

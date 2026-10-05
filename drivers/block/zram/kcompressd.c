@@ -2,16 +2,14 @@
 /*
  * Copyright (C) 2024 MediaTek Inc.
  *
- * kcompressd: offload zram page compression from kswapd to a set of kernel
- * daemons. Adapted from the out-of-tree MediaTek "kcompressd" RFC to the
- * Linux 4.19 zram rw_page() path.
+ * kcompressd: offload zram page compression from direct reclaim and kswapd
+ * to a dedicated set of background kernel daemons using lockless ring buffers.
  */
 
 #define pr_fmt(fmt) "kcompressd: " fmt
 
 #include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/kfifo.h>
 #include <linux/kthread.h>
 #include <linux/freezer.h>
 #include <linux/wait.h>
@@ -21,11 +19,13 @@
 #include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/swap.h>
+#include <linux/delay.h>
 
 #include "kcompressd.h"
 
 #define INIT_QUEUE_SIZE		256
 #define DEFAULT_NR_KCOMPRESSD	4
+#define KCOMPRESSD_BATCH_SIZE	16
 
 static atomic_t enable_kcompressd;
 static unsigned int nr_kcompressd = DEFAULT_NR_KCOMPRESSD;
@@ -50,62 +50,26 @@ struct write_work {
 	u32 index;
 	int offset;
 	compress_callback cb;
+	unsigned int ready;
 };
 
 struct kcompress {
 	struct task_struct *kcompressd;
 	wait_queue_head_t kcompressd_wait;
-	struct kfifo write_fifo;
+	atomic_t head;
+	unsigned int tail;
+	atomic_t count;
 	atomic_t running;
-};
-
-struct kcompressd_para {
-	wait_queue_head_t *kcompressd_wait;
-	struct kfifo *write_fifo;
-	atomic_t *running;
+	unsigned int ring_size;
+	unsigned int ring_mask;
+	struct write_work *ring;
 };
 
 static struct kcompress *kcompress;
-static struct kcompressd_para *kcompressd_para;
-/*
- * Serialises schedule_bio_write() against kcompressd_exit().  The writer
- * reads the enable flag once and then touches kcompress[]/kcompressd_para[];
- * without this lock an exit that interleaves after the flag check can
- * kvfree() that state and kthread_stop() the workers while the writer is
- * still starting a new one (whose task pointer is published only after
- * kthread_run() returns, so it would survive the stop).  All callers run
- * in sleepable context (the write path calls kthread_run()), so a mutex is
- * safe here.
- */
-static DEFINE_MUTEX(kcompressd_lock);
 
 int kcompressd_enabled(void)
 {
 	return likely(atomic_read(&enable_kcompressd));
-}
-
-static void kcompressd_try_to_sleep(struct kcompressd_para *p)
-{
-	DEFINE_WAIT(wait);
-
-	if (!kfifo_is_empty(p->write_fifo))
-		return;
-
-	if (freezing(current) || kthread_should_stop())
-		return;
-
-	atomic_set(p->running, KCOMPRESSD_SLEEPING);
-	prepare_to_wait(p->kcompressd_wait, &wait, TASK_INTERRUPTIBLE);
-
-	/*
-	 * After a short sleep, check if it was a premature sleep. If not, then
-	 * go fully to sleep until explicitly woken up.
-	 */
-	if (!kthread_should_stop() && kfifo_is_empty(p->write_fifo))
-		schedule();
-
-	finish_wait(p->kcompressd_wait, &wait);
-	atomic_set(p->running, KCOMPRESSD_RUNNING);
 }
 
 static void kcompressd_do_work(struct write_work *entry)
@@ -116,217 +80,228 @@ static void kcompressd_do_work(struct write_work *entry)
 static int kcompressd_worker(void *para)
 {
 	struct task_struct *tsk = current;
-	struct kcompressd_para *p = (struct kcompressd_para *)para;
+	struct kcompress *kc = (struct kcompress *)para;
 
-	tsk->flags |= PF_MEMALLOC | PF_KSWAPD;
+	tsk->flags |= PF_MEMALLOC;
+	set_user_nice(tsk, 5);
 	set_freezable();
 
 	while (!kthread_should_stop()) {
-		bool ret;
+		struct write_work batch[KCOMPRESSD_BATCH_SIZE];
+		int nr_batch = 0;
+		int i;
 
-		kcompressd_try_to_sleep(p);
-		ret = try_to_freeze();
-		if (kthread_should_stop())
-			break;
+		if (kthread_should_park()) {
+			kthread_parkme();
+			continue;
+		}
 
-		if (ret)
+		if (try_to_freeze())
 			continue;
 
-		while (!kfifo_is_empty(p->write_fifo)) {
-			struct write_work entry;
+		/* Dequeue a batch from the lockless ring buffer */
+		while (nr_batch < KCOMPRESSD_BATCH_SIZE) {
+			unsigned int tail = kc->tail;
+			unsigned int slot = tail & kc->ring_mask;
 
-			if (sizeof(struct write_work) ==
-			    kfifo_out(p->write_fifo, &entry,
-				      sizeof(struct write_work)))
-				kcompressd_do_work(&entry);
+			if (!smp_load_acquire(&kc->ring[slot].ready))
+				break;
+
+			batch[nr_batch].mem = kc->ring[slot].mem;
+			batch[nr_batch].page = kc->ring[slot].page;
+			batch[nr_batch].index = kc->ring[slot].index;
+			batch[nr_batch].offset = kc->ring[slot].offset;
+			batch[nr_batch].cb = kc->ring[slot].cb;
+
+			WRITE_ONCE(kc->ring[slot].ready, 0);
+			kc->tail = tail + 1;
+			smp_wmb();
+			atomic_dec(&kc->count);
+			nr_batch++;
 		}
-	}
 
-	tsk->flags &= ~(PF_MEMALLOC | PF_KSWAPD);
-	atomic_set(p->running, KCOMPRESSD_NOT_STARTED);
-	return 0;
-}
+		if (nr_batch > 0) {
+			for (i = 0; i < nr_batch; i++) {
+				kcompressd_do_work(&batch[i]);
 
-static int init_write_queue(void)
-{
-	int i;
-	unsigned int queue_len = queue_size_per_kcompressd *
-				 sizeof(struct write_work);
+				if (kthread_should_stop() || kthread_should_park())
+					break;
 
-	for (i = 0; i < nr_kcompressd; i++) {
-		if (kfifo_alloc(&kcompress[i].write_fifo, queue_len,
-				GFP_KERNEL)) {
-			pr_err("Failed to alloc kfifo %d\n", i);
-			while (i--)
-				kfifo_free(&kcompress[i].write_fifo);
-			return -ENOMEM;
+				/* Yield CPU immediately if higher priority tasks need it */
+				if (need_resched())
+					cond_resched();
+			}
+			continue;
 		}
+
+		/* Sleep until new pages arrive, or stop/park/freeze is requested */
+		atomic_set(&kc->running, KCOMPRESSD_SLEEPING);
+		wait_event_freezable(kc->kcompressd_wait,
+				     atomic_read(&kc->count) > 0 ||
+				     kthread_should_stop() ||
+				     kthread_should_park());
+		atomic_set(&kc->running, KCOMPRESSD_RUNNING);
 	}
+
+	tsk->flags &= ~PF_MEMALLOC;
+	atomic_set(&kc->running, KCOMPRESSD_NOT_STARTED);
 	return 0;
-}
-
-static void drain_write_queue(int idx)
-{
-	struct write_work entry;
-
-	while (sizeof(struct write_work) ==
-	       kfifo_out(&kcompress[idx].write_fifo, &entry,
-			 sizeof(struct write_work)))
-		kcompressd_do_work(&entry);
-}
-
-static void clean_write_queue(int idx)
-{
-	drain_write_queue(idx);
-	kfifo_free(&kcompress[idx].write_fifo);
-}
-
-static void stop_all_kcompressd_thread(void)
-{
-	int i;
-
-	for (i = 0; i < nr_kcompressd; i++) {
-		if (kcompress[i].kcompressd)
-			kthread_stop(kcompress[i].kcompressd);
-		kcompress[i].kcompressd = NULL;
-		clean_write_queue(i);
-	}
 }
 
 int schedule_bio_write(void *mem, struct page *page, u32 index, int offset,
 		       compress_callback cb)
 {
 	unsigned int i, idx, start;
-	size_t sz_work = sizeof(struct write_work);
-	struct write_work entry = {
-		.mem = mem,
-		.page = page,
-		.index = index,
-		.offset = offset,
-		.cb = cb,
-	};
 	int ret = -EBUSY;
 
-	/*
-	 * Serialise against kcompressd_exit().  enable_kcompressd is read
-	 * once below and the kcompress[]/kcompressd_para[] arrays are then
-	 * used without further checks; holding the lock for the whole
-	 * operation means an exit cannot kvfree() them (or miss a worker we
-	 * are about to start) in the middle.
-	 */
-	mutex_lock(&kcompressd_lock);
 	if (unlikely(!atomic_read(&enable_kcompressd)))
-		goto out;
+		return -EBUSY;
 
-	if (!nr_kcompressd || !current_is_kswapd())
-		goto out;
+	if (!nr_kcompressd || !kcompress)
+		return -EBUSY;
 
-	/*
-	 * Round-robin over the daemons rather than always filling the lowest
-	 * index first. Starting each write at a different daemon spreads
-	 * steady-state load across all of them instead of pinning it on
-	 * kcompressd:0; a full queue just moves on to the next one.
-	 */
+	/* Round-robin across daemons to balance steady-state load */
 	start = (unsigned int)atomic_inc_return(&kcompressd_next) % nr_kcompressd;
 
 	for (i = 0; i < nr_kcompressd; i++) {
-		idx = (start + i) % nr_kcompressd;
+		struct kcompress *kc;
+		unsigned int slot;
 
-		if (kfifo_avail(&kcompress[idx].write_fifo) < sz_work)
+		idx = (start + i) % nr_kcompressd;
+		kc = &kcompress[idx];
+
+		if (unlikely(!kc->kcompressd))
 			continue;
 
-		/*
-		 * Start the worker before queueing the entry.  The previous
-		 * order queued first and, on kthread_run() failure, called
-		 * kfifo_out() to "undo" the insert -- but kfifo_out() removes
-		 * the *oldest* entry, so an unrelated page's callback was
-		 * silently dropped and that page never got page_endio().
-		 * Starting first means there is nothing to undo on failure.
-		 *
-		 * Claim the NOT_STARTED -> RUNNING transition with a cmpxchg
-		 * so two concurrent writers cannot both kthread_run() and
-		 * leave one worker untracked (surviving kcompressd_exit() and
-		 * dereferencing freed state).
-		 */
-		if (atomic_read(&kcompress[idx].running) == KCOMPRESSD_NOT_STARTED) {
-			if (atomic_cmpxchg(&kcompress[idx].running,
-					   KCOMPRESSD_NOT_STARTED,
-					   KCOMPRESSD_RUNNING) ==
-			    KCOMPRESSD_NOT_STARTED) {
-				kcompress[idx].kcompressd =
-					kthread_run(kcompressd_worker,
-						    &kcompressd_para[idx],
-						    "kcompressd:%d", idx);
-				if (IS_ERR(kcompress[idx].kcompressd)) {
-					kcompress[idx].kcompressd = NULL;
-					atomic_set(&kcompress[idx].running,
-						   KCOMPRESSD_NOT_STARTED);
-					pr_warn("Failed to start kcompressd:%d\n",
-						idx);
-					/* nothing queued: caller falls back */
-					goto out;
-				}
-			}
+		/* Check queue capacity; if saturated, try next daemon or fall back */
+		if (atomic_inc_return(&kc->count) > kc->ring_size) {
+			atomic_dec(&kc->count);
+			continue;
 		}
 
-		if (kfifo_in(&kcompress[idx].write_fifo, &entry, sz_work) != sz_work)
-			continue;
+		preempt_disable();
+		slot = ((unsigned int)atomic_fetch_add(1, &kc->head)) & kc->ring_mask;
+		kc->ring[slot].mem = mem;
+		kc->ring[slot].page = page;
+		kc->ring[slot].index = index;
+		kc->ring[slot].offset = offset;
+		kc->ring[slot].cb = cb;
+		smp_store_release(&kc->ring[slot].ready, 1);
+		preempt_enable();
 
-		/*
-		 * Enqueue *before* waking: if the wake were issued first the
-		 * worker could re-check an empty fifo and go to sleep forever,
-		 * leaving this entry stranded.
-		 */
-		/*
-		 * Wake unconditionally.  Gating on KCOMPRESSD_SLEEPING races
-		 * with the worker setting it (there is no barrier between the
-		 * fifo enqueue above and the state store in
-		 * kcompressd_try_to_sleep()), which can lose the wakeup and
-		 * strand the entry.  A spurious wakeup is harmless - the worker
-		 * re-checks the fifo.
-		 */
-		wake_up_interruptible(&kcompress[idx].kcompressd_wait);
-
-		ret = 0;
-		break;
+		wake_up_interruptible(&kc->kcompressd_wait);
+		return 0;
 	}
 
-out:
-	mutex_unlock(&kcompressd_lock);
 	return ret;
+}
+
+void kcompressd_flush(void)
+{
+	int i;
+
+	if (!kcompress)
+		return;
+
+	for (i = 0; i < nr_kcompressd; i++)
+		wake_up_interruptible(&kcompress[i].kcompressd_wait);
+
+	for (i = 0; i < nr_kcompressd; i++) {
+		struct kcompress *kc = &kcompress[i];
+		unsigned long timeout = jiffies + msecs_to_jiffies(1000);
+
+		while (atomic_read(&kc->count) > 0 &&
+		       time_before(jiffies, timeout)) {
+			wake_up_interruptible(&kc->kcompressd_wait);
+			usleep_range(500, 1000);
+		}
+	}
+}
+
+void kcompressd_exit(void)
+{
+	int i;
+
+	atomic_set(&enable_kcompressd, false);
+	smp_mb();
+
+	if (!kcompress)
+		return;
+
+	for (i = 0; i < nr_kcompressd; i++) {
+		if (kcompress[i].kcompressd) {
+			kthread_stop(kcompress[i].kcompressd);
+			kcompress[i].kcompressd = NULL;
+		}
+
+		if (kcompress[i].ring) {
+			while (atomic_read(&kcompress[i].count) > 0) {
+				unsigned int tail = kcompress[i].tail;
+				unsigned int slot = tail & kcompress[i].ring_mask;
+				struct write_work entry;
+
+				if (!smp_load_acquire(&kcompress[i].ring[slot].ready))
+					break;
+
+				entry = kcompress[i].ring[slot];
+				WRITE_ONCE(kcompress[i].ring[slot].ready, 0);
+				kcompress[i].tail = tail + 1;
+				smp_wmb();
+				atomic_dec(&kcompress[i].count);
+
+				kcompressd_do_work(&entry);
+			}
+			kvfree(kcompress[i].ring);
+			kcompress[i].ring = NULL;
+		}
+	}
+
+	kvfree(kcompress);
+	kcompress = NULL;
 }
 
 int kcompressd_init(void)
 {
 	int i, ret;
+	unsigned int qsize;
 
 	if (!nr_kcompressd)
 		nr_kcompressd = DEFAULT_NR_KCOMPRESSD;
 	if (!queue_size_per_kcompressd)
 		queue_size_per_kcompressd = INIT_QUEUE_SIZE;
 
-	kcompress = kvmalloc_array(nr_kcompressd, sizeof(struct kcompress),
-				   GFP_KERNEL);
+	qsize = roundup_pow_of_two(queue_size_per_kcompressd);
+
+	kcompress = kvzalloc(nr_kcompressd * sizeof(struct kcompress),
+			     GFP_KERNEL);
 	if (!kcompress)
 		return -ENOMEM;
 
-	kcompressd_para = kvmalloc_array(nr_kcompressd,
-			sizeof(struct kcompressd_para), GFP_KERNEL);
-	if (!kcompressd_para)
-		goto err_free;
-
-	ret = init_write_queue();
-	if (ret) {
-		pr_err("Initialization of writing to FIFOs failed!!\n");
-		goto err_free;
-	}
-
 	for (i = 0; i < nr_kcompressd; i++) {
+		kcompress[i].ring_size = qsize;
+		kcompress[i].ring_mask = qsize - 1;
+		kcompress[i].ring = kvzalloc(qsize * sizeof(struct write_work),
+					     GFP_KERNEL);
+		if (!kcompress[i].ring) {
+			ret = -ENOMEM;
+			goto err_free;
+		}
+
 		init_waitqueue_head(&kcompress[i].kcompressd_wait);
-		kcompressd_para[i].kcompressd_wait =
-			&kcompress[i].kcompressd_wait;
-		kcompressd_para[i].write_fifo = &kcompress[i].write_fifo;
-		kcompressd_para[i].running = &kcompress[i].running;
+		atomic_set(&kcompress[i].head, 0);
+		kcompress[i].tail = 0;
+		atomic_set(&kcompress[i].count, 0);
+		atomic_set(&kcompress[i].running, KCOMPRESSD_RUNNING);
+
+		kcompress[i].kcompressd = kthread_run(kcompressd_worker,
+						      &kcompress[i],
+						      "kcompressd:%d", i);
+		if (IS_ERR(kcompress[i].kcompressd)) {
+			ret = PTR_ERR(kcompress[i].kcompressd);
+			kcompress[i].kcompressd = NULL;
+			pr_err("Failed to start kcompressd:%d (%d)\n", i, ret);
+			goto err_free;
+		}
 	}
 
 	atomic_set(&kcompressd_next, 0);
@@ -334,62 +309,6 @@ int kcompressd_init(void)
 	return 0;
 
 err_free:
-	kvfree(kcompress);
-	kvfree(kcompressd_para);
-	kcompress = NULL;
-	kcompressd_para = NULL;
-	return -ENOMEM;
-}
-
-void kcompressd_exit(void)
-{
-	/*
-	 * Clear the enable flag, then take the lock so any in-flight
-	 * schedule_bio_write() finishes before we stop the workers and free
-	 * the shared arrays.  A writer that starts after the flag is cleared
-	 * observes it and returns -EBUSY.
-	 */
-	atomic_set(&enable_kcompressd, false);
-	mutex_lock(&kcompressd_lock);
-	if (kcompress)
-		stop_all_kcompressd_thread();
-
-	kvfree(kcompress);
-	kvfree(kcompressd_para);
-	kcompress = NULL;
-	kcompressd_para = NULL;
-	mutex_unlock(&kcompressd_lock);
-}
-
-/*
- * Run every queued write callback now, without tearing the daemon down.
- *
- * A zram device that is being reset or removed frees its table/pool, but a
- * kswapd write queued into kcompressd just before that keeps a raw pointer
- * to the device; if it is still pending when the device goes away the
- * worker would run the callback against freed memory.  zram_reset_device()
- * only flushes system_wq, which does not cover these private FIFOs.
- *
- * Stop the workers first: that makes this the only FIFO consumer (the kfifo
- * is single-consumer safe), and each worker already drains its FIFO before
- * it observes kthread_should_stop().  The workers are restarted lazily by
- * the next schedule_bio_write().  Callers are in process context, so the
- * inline callbacks (which may sleep) are fine.
- */
-void kcompressd_flush(void)
-{
-	int i;
-
-	mutex_lock(&kcompressd_lock);
-	if (!kcompress)
-		goto out;
-	for (i = 0; i < nr_kcompressd; i++) {
-		if (kcompress[i].kcompressd) {
-			kthread_stop(kcompress[i].kcompressd);
-			kcompress[i].kcompressd = NULL;
-		}
-		drain_write_queue(i);
-	}
-out:
-	mutex_unlock(&kcompressd_lock);
+	kcompressd_exit();
+	return ret;
 }

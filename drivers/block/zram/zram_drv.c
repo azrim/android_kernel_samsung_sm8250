@@ -357,9 +357,21 @@ static ssize_t idle_store(struct device *dev,
 	struct zram *zram = dev_to_zram(dev);
 	unsigned long nr_pages;
 	int index;
+	bool is_cutoff = false;
+	ktime_t cutoff = 0;
 
-	if (!sysfs_streq(buf, "all"))
-		return -EINVAL;
+	if (sysfs_streq(buf, "all")) {
+		is_cutoff = false;
+	} else {
+		u64 cutoff_sec;
+
+		if (kstrtoull(buf, 10, &cutoff_sec))
+			return -EINVAL;
+
+		cutoff = ktime_sub(ktime_get_boottime(),
+				   ns_to_ktime(cutoff_sec * NSEC_PER_SEC));
+		is_cutoff = true;
+	}
 
 	down_read(&zram->init_lock);
 	if (!init_done(zram)) {
@@ -380,9 +392,20 @@ static ssize_t idle_store(struct device *dev,
 		 * See the comment in writeback_store.
 		 */
 		zram_slot_lock(zram, index);
-		if (zram_allocated(zram, index) &&
-				!zram_test_flag(zram, index, ZRAM_UNDER_WB))
-			zram_set_flag(zram, index, ZRAM_IDLE);
+		if (!zram_allocated(zram, index) ||
+				zram_test_flag(zram, index, ZRAM_UNDER_WB)) {
+			zram_slot_unlock(zram, index);
+			continue;
+		}
+
+#if defined(CONFIG_ZRAM_MEMORY_TRACKING) || defined(CONFIG_ZRAM_WRITEBACK)
+		if (is_cutoff && ktime_after(zram->table[index].ac_time, cutoff)) {
+			zram_slot_unlock(zram, index);
+			continue;
+		}
+#endif
+
+		zram_set_flag(zram, index, ZRAM_IDLE);
 		zram_slot_unlock(zram, index);
 	}
 
@@ -415,13 +438,22 @@ static DECLARE_WORK(zram_app_launch_work, zram_app_launch_work_fn);
 #define F2FS_SET_PIN_FILE	1
 static int zram_pin_backing_file(struct zram *zram)
 {
-	struct loop_device *lo = zram->bdev->bd_disk->private_data;
-	struct file *file = lo->lo_backing_file;
+	struct loop_device *lo;
+	struct file *file;
 	unsigned int cmd = F2FS_IOC_SET_PIN_FILE;
 	int __user *buf;
 	int set = F2FS_SET_PIN_FILE;
 	int ret;
 
+	if (!zram->bdev || !zram->bdev->bd_disk ||
+	    MAJOR(zram->bdev->bd_dev) != LOOP_MAJOR)
+		return 0;
+
+	lo = zram->bdev->bd_disk->private_data;
+	if (!lo || !lo->lo_backing_file)
+		return 0;
+
+	file = lo->lo_backing_file;
 	buf = compat_alloc_user_space(sizeof(*buf));
 	if (!buf) {
 		pr_info("%s failed to compat_alloc_user_space\n", __func__);
@@ -438,18 +470,25 @@ static void fallocate_block(struct zram *zram, unsigned long blk_idx)
 {
 	struct block_device *bdev = zram->bdev;
 
-	if (!bdev)
+	if (!bdev || !bdev->bd_disk || MAJOR(bdev->bd_dev) != LOOP_MAJOR)
 		return;
 
 	mutex_lock(&zram->blk_bitmap_lock);
 	/* check 2MB block bitmap. if unset, fallocate 2MB block at once */
 	if (!test_and_set_bit(blk_idx / NR_FALLOC_PAGES, zram->blk_bitmap)) {
 		struct loop_device *lo = bdev->bd_disk->private_data;
-		struct file *file = lo->lo_backing_file;
+		struct file *file;
 		loff_t pos = (blk_idx & FALLOC_ALIGN_MASK) << PAGE_SHIFT;
 		loff_t len = NR_FALLOC_PAGES << PAGE_SHIFT;
 		int mode = FALLOC_FL_KEEP_SIZE;
 		int ret;
+
+		if (!lo || !lo->lo_backing_file) {
+			mutex_unlock(&zram->blk_bitmap_lock);
+			return;
+		}
+
+		file = lo->lo_backing_file;
 
 		file_start_write(file);
 		ret = file->f_op->fallocate(file, mode, pos, len);
@@ -746,17 +785,7 @@ static ssize_t backing_dev_store(struct device *dev,
 		err = -ENOTBLK;
 		goto out;
 	}
-#ifdef CONFIG_ZRAM_LRU_WRITEBACK
-	/*
-	 * The LRU writeback helpers (zram_pin_backing_file(),
-	 * fallocate_block(), is_bdev_avail()) treat bd_disk->private_data as a
-	 * struct loop_device, so reject anything that is not a loop device.
-	 */
-	if (MAJOR(inode->i_rdev) != LOOP_MAJOR) {
-		err = -EINVAL;
-		goto out;
-	}
-#endif
+	/* Supports dedicated backing storage partitions and loop devices */
 
 	bdev = bdgrab(I_BDEV(inode));
 	err = blkdev_get(bdev, FMODE_READ | FMODE_WRITE | FMODE_EXCL, zram);
@@ -1034,6 +1063,8 @@ static int read_from_bdev_async(struct zram *zram, struct bio_vec *bvec,
 static int zram_balance_ratio = 25;	/* nand writeback ratio */
 module_param(zram_balance_ratio, int, 0644);
 
+static bool zram_wb_available(struct zram *zram);
+
 static bool is_bdev_avail(struct zram *zram)
 {
 	struct loop_device *lo;
@@ -1043,8 +1074,15 @@ static bool is_bdev_avail(struct zram *zram)
 	u64 min_free_blocks;
 	int ret;
 
-	if (!zram->bdev->bd_disk)
+	if (!zram->bdev || !zram->bdev->bd_disk)
 		return false;
+
+	/*
+	 * For dedicated backing storage partitions, availability is governed
+	 * by zram's free block bitmap and available space.
+	 */
+	if (MAJOR(zram->bdev->bd_dev) != LOOP_MAJOR)
+		return zram_wb_available(zram);
 
 	lo = zram->bdev->bd_disk->private_data;
 	if (!lo || !lo->lo_backing_file)
@@ -1103,6 +1141,10 @@ static u32 entry_to_index(struct zram *zram, struct zram_table_entry *entry)
 			sizeof(struct zram_table_entry));
 }
 
+static unsigned int writeback_age_threshold = 300; /* 5 minutes */
+module_param(writeback_age_threshold, uint, 0644);
+MODULE_PARM_DESC(writeback_age_threshold, "Minimum page age in seconds before writeback");
+
 #define SKIP 1
 #define ABORT 2
 static int zram_try_mark_page(struct zram *zram, u32 index)
@@ -1122,6 +1164,18 @@ static int zram_try_mark_page(struct zram *zram, u32 index)
 		zram_slot_unlock(zram, index);
 		return SKIP;
 	}
+
+#if defined(CONFIG_ZRAM_MEMORY_TRACKING) || defined(CONFIG_ZRAM_WRITEBACK)
+	if (writeback_age_threshold) {
+		ktime_t cutoff = ktime_sub(ktime_get_boottime(),
+				ns_to_ktime((u64)writeback_age_threshold * NSEC_PER_SEC));
+		if (ktime_after(zram->table[index].ac_time, cutoff)) {
+			zram_slot_unlock(zram, index);
+			return SKIP;
+		}
+	}
+#endif
+
 	zram_set_flag(zram, index, ZRAM_IDLE);
 	zram_slot_unlock(zram, index);
 	return 0;
@@ -1858,7 +1912,7 @@ static ssize_t writeback_store(struct device *dev,
 
 	if (sysfs_streq(buf, "idle"))
 		mode = IDLE_WRITEBACK;
-	else if (sysfs_streq(buf, "huge"))
+	else if (sysfs_streq(buf, "huge") || sysfs_streq(buf, "incompressible"))
 		mode = HUGE_WRITEBACK;
 	else
 		return -EINVAL;
@@ -2503,7 +2557,10 @@ static void zram_debugfs_destroy(void) {};
 static void zram_accessed(struct zram *zram, u32 index)
 {
 	zram_clear_flag(zram, index, ZRAM_IDLE);
-};
+#if defined(CONFIG_ZRAM_MEMORY_TRACKING) || defined(CONFIG_ZRAM_WRITEBACK)
+	zram->table[index].ac_time = ktime_get_boottime();
+#endif
+}
 static void zram_debugfs_register(struct zram *zram) {};
 static void zram_debugfs_unregister(struct zram *zram) {};
 #endif
@@ -2954,7 +3011,7 @@ static void zram_free_page(struct zram *zram, size_t index)
 	unsigned long flags;
 #endif
 
-#ifdef CONFIG_ZRAM_MEMORY_TRACKING
+#if defined(CONFIG_ZRAM_MEMORY_TRACKING) || defined(CONFIG_ZRAM_WRITEBACK)
 	zram->table[index].ac_time = 0;
 #endif
 	if (zram_test_flag(zram, index, ZRAM_IDLE))
@@ -3366,6 +3423,10 @@ out:
 		}
 #endif
 	}
+
+#if defined(CONFIG_ZRAM_MEMORY_TRACKING) || defined(CONFIG_ZRAM_WRITEBACK)
+	zram->table[index].ac_time = ktime_get_boottime();
+#endif
 	zram_slot_unlock(zram, index);
 
 	/* Update stats */
@@ -3618,9 +3679,11 @@ static int zram_rw_page(struct block_device *bdev, sector_t sector,
 
 #ifdef CONFIG_KCOMPRESSD_ZRAM
 	/*
-	 * Offload kswapd's zram writes to kcompressd. The page is already
-	 * under writeback (set by bdev_write_page()) and is completed later by
-	 * the daemon via page_endio(); bdev_write_page() still unlocks it.
+	 * Offload zram writes (from direct reclaim and kswapd) to kcompressd.
+	 * The page is already under writeback (set by bdev_write_page()) and is
+	 * completed asynchronously by the daemon via page_endio();
+	 * bdev_write_page() still unlocks it. If queues are saturated, gracefully
+	 * fall through to synchronous compression.
 	 */
 	if (op == REQ_OP_WRITE && kcompressd_enabled() &&
 	    !schedule_bio_write(zram, page, index, offset,
@@ -3842,6 +3905,24 @@ static DEVICE_ATTR_WO(idle);
 static DEVICE_ATTR_RW(max_comp_streams);
 static DEVICE_ATTR_RW(comp_algorithm);
 #ifdef CONFIG_ZRAM_WRITEBACK
+static ssize_t writeback_age_threshold_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%u\n", writeback_age_threshold);
+}
+
+static ssize_t writeback_age_threshold_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t len)
+{
+	unsigned int val;
+
+	if (kstrtouint(buf, 10, &val))
+		return -EINVAL;
+
+	writeback_age_threshold = val;
+	return len;
+}
+static DEVICE_ATTR_RW(writeback_age_threshold);
 static DEVICE_ATTR_RW(backing_dev);
 static DEVICE_ATTR_WO(writeback);
 static DEVICE_ATTR_RW(writeback_limit);
@@ -3868,6 +3949,7 @@ static struct attribute *zram_disk_attrs[] = {
 	&dev_attr_writeback.attr,
 	&dev_attr_writeback_limit.attr,
 	&dev_attr_writeback_limit_enable.attr,
+	&dev_attr_writeback_age_threshold.attr,
 #endif
 	&dev_attr_use_dedup.attr,
 	&dev_attr_io_stat.attr,
