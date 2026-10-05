@@ -21,12 +21,21 @@
 #endif
 
 /*
- * Charging-current limits for the cable type currently attached.
+ * pdata->charging_current[] is allocated with SEC_BATTERY_CABLE_MAX entries
+ * (sec_battery_dt.c) but battery->cable_type is fed from notifier payloads
+ * and is not otherwise range checked, so it can point past the array. Fall
+ * back to the SEC_BATTERY_CABLE_UNKNOWN entry for an out-of-range value; an
+ * in-range cable_type is used unchanged.
  */
 static const struct sec_charging_current *
 sec_bat_psy_charging_current(const struct sec_battery_info *battery)
 {
-	return &battery->pdata->charging_current[battery->cable_type];
+	int cable_type = battery->cable_type;
+
+	if (cable_type < 0 || cable_type >= SEC_BATTERY_CABLE_MAX)
+		cable_type = SEC_BATTERY_CABLE_UNKNOWN;
+
+	return &battery->pdata->charging_current[cable_type];
 }
 
 /*

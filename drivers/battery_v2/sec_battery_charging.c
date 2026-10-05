@@ -11,8 +11,30 @@
  */
 #include "include/sec_battery.h"
 
+/*
+ * pdata->charging_current[] holds exactly SEC_BATTERY_CABLE_MAX entries
+ * (sec_battery_dt.c) but battery->cable_type is fed from notifier payloads
+ * and is not otherwise range checked, so it can point past the array. Map an
+ * out-of-range cable type to the SEC_BATTERY_CABLE_UNKNOWN entry; an in-range
+ * cable type is used unchanged.
+ */
+static int sec_bat_charging_current_index(int cable_type)
+{
+	if (cable_type < 0 || cable_type >= SEC_BATTERY_CABLE_MAX)
+		return SEC_BATTERY_CABLE_UNKNOWN;
+
+	return cable_type;
+}
+
+static struct sec_charging_current *
+sec_bat_charging_current(struct sec_battery_info *battery)
+{
+	return &battery->pdata->charging_current
+			[sec_bat_charging_current_index(battery->cable_type)];
+}
+
 /* Input current advertised by the PD PDO at index. */
-static int sec_bat_pd_pdo_current(struct sec_battery_info *battery, int index)
+static unsigned int sec_bat_pd_pdo_current(struct sec_battery_info *battery, int index)
 {
 #if defined(CONFIG_PDIC_PD30)
 	return battery->pd_list.pd_info[index].max_current;
@@ -24,19 +46,21 @@ static int sec_bat_pd_pdo_current(struct sec_battery_info *battery, int index)
 void sec_bat_change_default_current(struct sec_battery_info *battery,
 					int cable_type, int input, int output)
 {
+	int index = sec_bat_charging_current_index(cable_type);
+
 #if defined(CONFIG_ENG_BATTERY_CONCEPT)
 	if (!battery->test_max_current)
 #endif
-		battery->pdata->charging_current[cable_type].input_current_limit = input;
+		battery->pdata->charging_current[index].input_current_limit = input;
 #if defined(CONFIG_ENG_BATTERY_CONCEPT)
 	if (!battery->test_charge_current)
 #endif
-		battery->pdata->charging_current[cable_type].fast_charging_current = output;
+		battery->pdata->charging_current[index].fast_charging_current = output;
 	pr_info("%s: cable_type: %d input: %d output: %d\n",
 		__func__,
 		cable_type,
-		battery->pdata->charging_current[cable_type].input_current_limit,
-		battery->pdata->charging_current[cable_type].fast_charging_current);
+		battery->pdata->charging_current[index].input_current_limit,
+		battery->pdata->charging_current[index].fast_charging_current);
 }
 
 int sec_bat_get_wireless_current(struct sec_battery_info *battery, int incurr)
@@ -634,12 +658,14 @@ static void sec_bat_check_direct_chg_temp(struct sec_battery_info *battery, int 
 			sec_bat_set_dchg_current(battery, power_type, pt, is_apdo, input_current, charging_current);
 			battery->chg_limit = true;
 		} else if (battery->chg_limit) {
+			struct sec_charging_current *cc = sec_bat_charging_current(battery);
+
 			if (((battery->dchg_temp <= battery->pdata->dchg_high_temp_recovery[pt]) &&
 				(battery->temperature <= battery->pdata->dchg_high_batt_temp_recovery[pt]) &&
 				is_apdo) || ((battery->chg_temp <= battery->pdata->chg_high_temp_recovery) &&
 				(!is_apdo))) {
-				*input_current = battery->pdata->charging_current[battery->cable_type].input_current_limit;
-				*charging_current = battery->pdata->charging_current[battery->cable_type].fast_charging_current;
+				*input_current = cc->input_current_limit;
+				*charging_current = cc->fast_charging_current;
 				battery->chg_limit = false;
 			} else {
 				sec_bat_set_dchg_current(battery, power_type, pt, is_apdo, input_current, charging_current);
@@ -654,6 +680,8 @@ static void sec_bat_check_direct_chg_temp(struct sec_battery_info *battery, int 
 
 static void sec_bat_check_afc_temp(struct sec_battery_info *battery, int *input_current, int *charging_current)
 {
+	struct sec_charging_current *cc = sec_bat_charging_current(battery);
+
 	if (battery->pdata->chg_temp_check_type == SEC_BATTERY_TEMP_CHECK_NONE)
 		return;
 
@@ -669,8 +697,8 @@ static void sec_bat_check_afc_temp(struct sec_battery_info *battery, int *input_
 			battery->chg_limit = true;
 		} else if (battery->chg_limit && is_hv_wire_type(battery->cable_type)) {
 			if (battery->chg_temp <= battery->pdata->chg_high_temp_recovery) {
-				*input_current = battery->pdata->charging_current[battery->cable_type].input_current_limit;
-				*charging_current = battery->pdata->charging_current[battery->cable_type].fast_charging_current;
+				*input_current = cc->input_current_limit;
+				*charging_current = cc->fast_charging_current;
 				battery->chg_limit = false;
 			} else {
 				*input_current = battery->pdata->chg_input_limit_current;
@@ -679,8 +707,8 @@ static void sec_bat_check_afc_temp(struct sec_battery_info *battery, int *input_
 			}
 		} else if (battery->chg_limit && battery->max_charge_power >= (battery->pdata->pd_charging_charge_power - 500)) {
 			if (battery->chg_temp <= battery->pdata->chg_high_temp_recovery) {
-				*input_current = battery->pdata->charging_current[battery->cable_type].input_current_limit;
-				*charging_current = battery->pdata->charging_current[battery->cable_type].fast_charging_current;
+				*input_current = cc->input_current_limit;
+				*charging_current = cc->fast_charging_current;
 				battery->chg_limit = false;
 			} else {
 				*input_current = battery->pdata->chg_input_limit_current;
@@ -698,8 +726,8 @@ static void sec_bat_check_afc_temp(struct sec_battery_info *battery, int *input_
 		*charging_current = battery->pdata->chg_charging_limit_current;
 		battery->chg_limit = true;
 	} else if (battery->chg_limit && is_hv_wire_type(battery->cable_type) && (battery->chg_temp <= battery->pdata->chg_high_temp_recovery)) {
-		*input_current = battery->pdata->charging_current[battery->cable_type].input_current_limit;
-		*charging_current = battery->pdata->charging_current[battery->cable_type].fast_charging_current;
+		*input_current = cc->input_current_limit;
+		*charging_current = cc->fast_charging_current;
 		battery->chg_limit = false;
 	}
 #endif
@@ -781,6 +809,8 @@ static void sec_bat_check_pdic_temp(struct sec_battery_info *battery, int *input
 		return;
 
 	if (battery->pdic_ps_rdy && battery->siop_level >= 100 && !battery->lcd_status) {
+		struct sec_charging_current *cc = sec_bat_charging_current(battery);
+
 		if ((!battery->chg_limit && (battery->chg_temp >= battery->pdata->chg_high_temp)) ||
 			(battery->chg_limit && (battery->chg_temp >= battery->pdata->chg_high_temp_recovery))) {
 			*input_current =
@@ -788,8 +818,8 @@ static void sec_bat_check_pdic_temp(struct sec_battery_info *battery, int *input
 			*charging_current = battery->pdata->chg_charging_limit_current;
 			battery->chg_limit = true;
 		} else if (battery->chg_limit && battery->chg_temp <= battery->pdata->chg_high_temp_recovery) {
-			*input_current = battery->pdata->charging_current[battery->cable_type].input_current_limit;
-			*charging_current = battery->pdata->charging_current[battery->cable_type].fast_charging_current;
+			*input_current = cc->input_current_limit;
+			*charging_current = cc->fast_charging_current;
 			battery->chg_limit = false;
 		}
 		pr_info("%s: cable_type(%d), chg_limit(%d)\n", __func__,
@@ -1023,8 +1053,9 @@ int sec_bat_set_charging_current(struct sec_battery_info *battery)
 {
 	static int afc_init;
 	union power_supply_propval value = {0, };
-	unsigned int input_current = battery->pdata->charging_current[battery->cable_type].input_current_limit,
-		charging_current = battery->pdata->charging_current[battery->cable_type].fast_charging_current,
+	struct sec_charging_current *cc = sec_bat_charging_current(battery);
+	unsigned int input_current = cc->input_current_limit,
+		charging_current = cc->fast_charging_current,
 		topoff_current = (battery->charging_mode == SEC_BATTERY_CHARGING_2ND) ?
 			battery->pdata->full_check_current_2nd : battery->pdata->full_check_current_1st;
 
@@ -1448,7 +1479,8 @@ void sec_bat_siop_level_work(struct work_struct *work)
 void sec_bat_check_input_voltage(struct sec_battery_info *battery)
 {
 	unsigned int voltage = 0;
-	int input_current = battery->pdata->charging_current[battery->cable_type].input_current_limit;
+	int cable_type = sec_bat_charging_current_index(battery->cable_type);
+	int input_current = battery->pdata->charging_current[cable_type].input_current_limit;
 
 	if (is_pd_wire_type(battery->cable_type)) {
 		battery->max_charge_power = battery->pd_max_charge_power;
