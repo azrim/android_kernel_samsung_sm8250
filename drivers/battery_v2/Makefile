@@ -7,6 +7,13 @@ obj-$(CONFIG_BATTERY_SAMSUNG)	+= sec_battery.o
 endif
 obj-$(CONFIG_BATTERY_SAMSUNG)	+= sec_battery_sysfs.o
 obj-$(CONFIG_BATTERY_SAMSUNG)	+= sec_battery_dt.o
+obj-$(CONFIG_BATTERY_SAMSUNG)	+= sec_battery_tx.o
+obj-$(CONFIG_BATTERY_SAMSUNG)	+= sec_battery_events.o
+obj-$(CONFIG_BATTERY_SAMSUNG)	+= sec_battery_fwupd.o
+obj-$(CONFIG_BATTERY_SAMSUNG)	+= sec_battery_time.o
+obj-$(CONFIG_BATTERY_SAMSUNG)	+= sec_battery_psy.o
+obj-$(CONFIG_BATTERY_SAMSUNG)	+= sec_battery_charging.o
+obj-$(CONFIG_BATTERY_SAMSUNG)	+= sec_battery_thermal.o
 obj-$(CONFIG_BATTERY_SAMSUNG)	+= sb_full_soc.o
 obj-$(CONFIG_OF)				+= sec_adc.o
 obj-$(CONFIG_MULTI_CHARGING)	+= sec_multi_charger.o

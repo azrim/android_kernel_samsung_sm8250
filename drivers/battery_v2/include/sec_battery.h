@@ -63,6 +63,7 @@
 #include "sb_full_soc.h"
 
 extern char *sec_cable_type[];
+extern char *sec_bat_status_str[];
 
 /* current event */
 #define SEC_BAT_CURRENT_EVENT_NONE					0x000000
@@ -806,9 +807,136 @@ extern void sec_bat_aging_check(struct sec_battery_info *battery);
 extern void sec_wireless_set_tx_enable(struct sec_battery_info *battery, bool wc_tx_enable);
 extern void sec_bat_check_wc_re_auth(struct sec_battery_info *battery);
 
+/* sec_battery_tx.c */
+extern void sec_bat_send_cs100(struct sec_battery_info *battery);
+extern bool sec_bat_hv_wc_normal_mode_check(struct sec_battery_info *battery);
+extern void sec_bat_handle_tx_misalign(struct sec_battery_info *battery, bool trigger_misalign);
+extern void sec_bat_handle_tx_ocp(struct sec_battery_info *battery, bool trigger_ocp);
+extern void sec_bat_wireless_minduty_cntl(struct sec_battery_info *battery, unsigned int duty_val);
+extern void sec_bat_wireless_iout_cntl(struct sec_battery_info *battery, int uno_iout, int mfc_iout);
+extern void sec_bat_wireless_vout_cntl(struct sec_battery_info *battery, int vout_now);
+extern void sec_bat_check_tx_battery_drain(struct sec_battery_info *battery);
+extern void sec_bat_check_tx_current(struct sec_battery_info *battery);
+extern void sec_bat_check_tx_temperature(struct sec_battery_info *battery);
+extern void sec_bat_check_tx_switch_mode(struct sec_battery_info *battery);
+extern void sec_bat_txpower_calc(struct sec_battery_info *battery);
+extern void sec_bat_txpower_calc_work(struct work_struct *work);
+extern void sec_bat_wc_headroom_work(struct work_struct *work);
+extern void sec_bat_predict_wireless20_time_to_full_current(struct sec_battery_info *battery, int rx_power);
+extern void sec_bat_set_wireless20_current(struct sec_battery_info *battery, int rx_power);
+extern void sec_wireless_otg_control(struct sec_battery_info *battery, int enable);
+extern void sec_bat_wpc_tx_work(struct work_struct *work);
+extern void sec_bat_wpc_tx_en_work(struct work_struct *work);
+
+/* helpers kept in sec_battery.c, now shared with sec_battery_tx.c */
+extern void sec_bat_change_default_current(struct sec_battery_info *battery,
+				int cable_type, int input, int output);
+extern void sec_bat_change_pdo(struct sec_battery_info *battery, int vol);
+extern void sec_bat_wc_cv_mode_check(struct sec_battery_info *battery);
+
+/* sec_battery_events.c */
+extern void sec_bat_misc_event_work(struct work_struct *work);
+extern void sec_bat_ext_event_work(struct work_struct *work);
+extern void sec_bat_calculate_safety_time(struct sec_battery_info *battery);
+
+/* helpers kept in sec_battery.c, now shared with sec_battery_events.c */
+extern void sec_bat_get_temperature_info(struct sec_battery_info *battery);
+
+/* sec_battery_time.c */
+extern void sec_bat_polling_work(struct work_struct *work);
+extern unsigned int sec_bat_get_polling_time(struct sec_battery_info *battery);
+extern bool sec_bat_is_short_polling(struct sec_battery_info *battery);
+extern void sec_bat_set_polling(struct sec_battery_info *battery);
+extern void sec_bat_calc_time_to_full(struct sec_battery_info *battery);
+extern void sec_bat_time_to_full_work(struct work_struct *work);
+extern enum alarmtimer_restart sec_bat_alarm(struct alarm *alarm, ktime_t now);
+
+/* sec_battery_psy.c */
+extern int sec_bat_set_property(struct power_supply *psy,
+				enum power_supply_property psp,
+				const union power_supply_propval *val);
+extern int sec_bat_get_property(struct power_supply *psy,
+				enum power_supply_property psp,
+				union power_supply_propval *val);
+extern int sec_usb_get_property(struct power_supply *psy,
+				enum power_supply_property psp,
+				union power_supply_propval *val);
+extern int sec_ac_get_property(struct power_supply *psy,
+				enum power_supply_property psp,
+				union power_supply_propval *val);
+extern int sec_wireless_get_property(struct power_supply *psy,
+				enum power_supply_property psp,
+				union power_supply_propval *val);
+extern int sec_wireless_set_property(struct power_supply *psy,
+				enum power_supply_property psp,
+				const union power_supply_propval *val);
+#if defined(CONFIG_USE_POGO)
+extern int sec_pogo_get_property(struct power_supply *psy,
+				enum power_supply_property psp,
+				union power_supply_propval *val);
+extern int sec_pogo_set_property(struct power_supply *psy,
+				enum power_supply_property psp,
+				const union power_supply_propval *val);
+#endif
+extern int sec_ps_set_property(struct power_supply *psy,
+				enum power_supply_property psp,
+				const union power_supply_propval *val);
+extern int sec_ps_get_property(struct power_supply *psy,
+				enum power_supply_property psp,
+				union power_supply_propval *val);
+extern struct device_attribute dev_attr_sgf;
+
+/* helpers kept in sec_battery.c, now shared with sec_battery_psy.c */
+extern bool sec_bat_get_cable_type(struct sec_battery_info *battery,
+			int cable_source_type);
+extern void sec_bat_do_fullcharged(struct sec_battery_info *battery,
+			bool force_fullcharged);
+extern char *vout_control_mode_str[];
+
+/* sec_battery_charging.c */
+extern int sec_bat_get_wireless_current(struct sec_battery_info *battery, int incurr);
+extern void sec_bat_get_charging_current_by_siop(struct sec_battery_info *battery,
+			int *input_current, int *charging_current);
+extern void sec_bat_get_input_current_in_power_list(struct sec_battery_info *battery);
+extern void sec_bat_get_charging_current_in_power_list(struct sec_battery_info *battery);
+extern void sec_bat_siop_level_work(struct work_struct *work);
+extern void sec_bat_check_input_voltage(struct sec_battery_info *battery);
+extern void sec_bat_afc_work(struct work_struct *work);
+extern char *sec_bat_charge_mode_str[];
+
+/* helpers kept in sec_battery.c, now shared with sec_battery_charging.c */
+extern int sec_bat_check_mix_temp(struct sec_battery_info *battery, int input_current);
+extern void sec_bat_check_wpc_temp(struct sec_battery_info *battery, int *input_current, int *charging_current);
+
+/* sec_battery_thermal.c */
+extern void sec_bat_cable_work(struct work_struct *work);
+extern void sec_bat_do_test_function(struct sec_battery_info *battery);
+extern bool sec_bat_battery_cable_check(struct sec_battery_info *battery);
+extern bool sec_bat_voltage_check(struct sec_battery_info *battery);
+extern bool sec_bat_time_management(struct sec_battery_info *battery);
+extern bool sec_bat_temperature_check(struct sec_battery_info *battery);
+extern bool sec_bat_fullcharged_check(struct sec_battery_info *battery);
+extern int sec_bat_get_temp_by_temp_control_source(struct sec_battery_info *battery,
+			enum sec_battery_temp_control_source tcs);
+#if defined(CONFIG_BATTERY_SWELLING)
+extern void sec_bat_swelling_check(struct sec_battery_info *battery);
+extern void sec_bat_swelling_fullcharged_check(struct sec_battery_info *battery);
+#endif
+
+/* helpers kept in sec_battery.c, now shared with sec_battery_thermal.c */
+extern bool sec_bat_check(struct sec_battery_info *battery);
+extern char *sec_bat_charging_mode_str[];
+extern char *swelling_mode_str[];
+
+#if defined(CONFIG_PREVENT_USB_CONN_OVERHEAT)
+extern int muic_set_hiccup_mode(int on_off);
+extern void pdic_manual_ccopen_request(int is_on);
+#endif
+
 #if defined(CONFIG_WIRELESS_FIRMWARE_UPDATE)
 extern void sec_bat_fw_update_work(struct sec_battery_info *battery, int mode);
 extern bool sec_bat_check_boost_mfc_condition(struct sec_battery_info *battery, int mode);
+extern void sec_bat_fw_init_work(struct work_struct *work);
 #endif
 
 #if defined(CONFIG_STEP_CHARGING)
@@ -829,6 +957,7 @@ extern void sec_direct_chg_init(struct sec_battery_info *battery, struct device 
 
 #if defined(CONFIG_UPDATE_BATTERY_DATA)
 extern int sec_battery_update_data(const char* file_path);
+extern void sec_bat_update_data_work(struct work_struct *work);
 #endif
 #if defined(CONFIG_BATTERY_CISD)
 extern bool sec_bat_cisd_check(struct sec_battery_info *battery);
@@ -848,6 +977,7 @@ void sec_bat_parse_mode_dt_work(struct work_struct *work);
 u8 sec_bat_get_wireless20_power_class(struct sec_battery_info *battery);
 void sec_bat_check_battery_health(struct sec_battery_info *battery);
 #if defined(CONFIG_DISABLE_MFC_IC)
+void sec_bat_set_mfc_off(struct sec_battery_info *battery, bool need_ept);
 void sec_bat_set_mfc_on(struct sec_battery_info *battery);
 #endif
 #endif /* __SEC_BATTERY_H */
