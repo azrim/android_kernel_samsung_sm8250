@@ -202,8 +202,12 @@ void sec_bat_get_charging_current_by_siop(struct sec_battery_info *battery,
 			}
 #if defined(CONFIG_CCIC_NOTIFIER)
 		} else if (is_pd_wire_type(battery->cable_type)) {
-			if (*input_current > (60000 / battery->input_voltage))
+			if (battery->input_voltage &&
+				*input_current > (60000 / battery->input_voltage))
 				*input_current = 60000 / battery->input_voltage;
+			else if (!battery->input_voltage && *input_current > 0u)
+				/* arm64: 60000/0 == 0, so the original clamp stored 0 */
+				*input_current = 0;
 			/* 2 step(0) for PD type */
 			if (battery->siop_level == 0 &&
 				*input_current > battery->pdata->siop_hv_input_limit_current_2nd)
@@ -441,8 +445,12 @@ void sec_bat_check_lrp_temp(
 				*charging_current = battery->pdata->lrp_curr[LRP_25W].st_fcc[lrp_step - 1];
 			} else {
 				if (lcd_sts) {
-					if (*input_current > (60000 / battery->input_voltage))
+					if (battery->input_voltage &&
+						*input_current > (60000 / battery->input_voltage))
 						*input_current = 60000 / battery->input_voltage;
+					else if (!battery->input_voltage && *input_current > 0u)
+						/* arm64: 60000/0 == 0, so the original clamp stored 0 */
+						*input_current = 0;
 				} else {
 					if (*input_current > battery->pdata->chg_input_limit_current)
 						*input_current = battery->pdata->chg_input_limit_current;
@@ -813,8 +821,13 @@ static void sec_bat_check_pdic_temp(struct sec_battery_info *battery, int *input
 
 		if ((!battery->chg_limit && (battery->chg_temp >= battery->pdata->chg_high_temp)) ||
 			(battery->chg_limit && (battery->chg_temp >= battery->pdata->chg_high_temp_recovery))) {
-			*input_current =
-				(battery->pdata->chg_input_limit_current * SEC_INPUT_VOLTAGE_9V) / battery->input_voltage;
+			if (battery->input_voltage) {
+				*input_current = (battery->pdata->chg_input_limit_current *
+					SEC_INPUT_VOLTAGE_9V) / battery->input_voltage;
+			} else {
+				/* arm64: div-by-zero yields 0, so the original stored 0 */
+				*input_current = 0;
+			}
 			*charging_current = battery->pdata->chg_charging_limit_current;
 			battery->chg_limit = true;
 		} else if (battery->chg_limit && battery->chg_temp <= battery->pdata->chg_high_temp_recovery) {
@@ -1110,8 +1123,11 @@ int sec_bat_set_charging_current(struct sec_battery_info *battery)
 		 */
 		if ((battery->store_mode || !battery->charging_enabled) &&
 			(battery->capacity >= 5)) {
-			unsigned int store_input_max =
-				battery->pdata->store_mode_max_input_power /
+			unsigned int store_input_max = 0;
+
+			/* arm64: div-by-zero yields 0, so the original limit was 0 */
+			if (battery->input_voltage)
+				store_input_max = battery->pdata->store_mode_max_input_power /
 					battery->input_voltage * 10;
 
 			if (input_current > store_input_max)

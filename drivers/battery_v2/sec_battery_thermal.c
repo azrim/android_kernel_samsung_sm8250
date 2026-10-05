@@ -85,8 +85,13 @@ int sec_bat_check_mix_temp(struct sec_battery_info *battery, int input_current)
 				battery->pdata->full_check_current_1st + 50;
 
 			/* inpu current = float voltage * (topoff_current_1st + 50mA(margin)) / (vbus_level * 0.9) */
-			input_current = ((battery->pdata->chg_float_voltage / battery->pdata->chg_float_voltage_conv) * max_input_current) /
-				(battery->input_voltage * 9) / 10;
+			if (battery->input_voltage) {
+				input_current = ((battery->pdata->chg_float_voltage / battery->pdata->chg_float_voltage_conv) * max_input_current) /
+					(battery->input_voltage * 9) / 10;
+			} else {
+				/* arm64: div-by-zero yields 0, so the original stored 0 */
+				input_current = 0;
+			}
 			if (input_current > max_input_current)
 				input_current = max_input_current;
 
