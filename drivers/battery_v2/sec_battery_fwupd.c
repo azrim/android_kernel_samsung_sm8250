@@ -19,6 +19,7 @@ bool sec_bat_check_boost_mfc_condition(struct sec_battery_info *battery, int mod
 
 	dev_info(battery->dev, "%s \n", __func__);
 
+	/* wpc_det stays 0 unless the caller asks for the RX_INIT check */
 	if (mode == SEC_WIRELESS_RX_INIT) {
 		psy_do_property(battery->pdata->wireless_charger_name, get,
 			POWER_SUPPLY_EXT_PROP_WIRELESS_INITIAL_WC_CHECK, value);
@@ -39,48 +40,45 @@ bool sec_bat_check_boost_mfc_condition(struct sec_battery_info *battery, int mod
 	pr_info("%s wpc_det(%d), mst_pwr_en(%d), boost_status(%d), boot_recov(%d)\n",
 		__func__, wpc_det, mst_pwr_en, boost_status, boot_recov);
 
-	if (!boost_status && !wpc_det && !mst_pwr_en && !boot_recov)
-		return true;
-	return false;
+	return !boost_status && !wpc_det && !mst_pwr_en && !boot_recov;
 }
 
 void sec_bat_fw_update_work(struct sec_battery_info *battery, int mode)
 {
 	union power_supply_propval value = {0, };
-	int ret = 0;	
+	int ret = 0;
 
 	dev_info(battery->dev, "%s \n", __func__);
 
 	__pm_wakeup_event(battery->vbus_wake_lock, jiffies_to_msecs(HZ * 10));
 
 	switch (mode) {
-		case SEC_WIRELESS_RX_SDCARD_MODE:
-		case SEC_WIRELESS_RX_BUILT_IN_MODE:
-		case SEC_WIRELESS_RX_SPU_MODE:
-			mfc_fw_update = true;
-			value.intval = mode;
-			ret = psy_do_property(battery->pdata->wireless_charger_name, set,
-				POWER_SUPPLY_PROP_CHARGE_POWERED_OTG_CONTROL, value);
-			if (ret < 0)
-				mfc_fw_update = false;
-			break;
-		case SEC_WIRELESS_TX_ON_MODE:
-			value.intval = true;
-			psy_do_property(battery->pdata->charger_name, set,
-				POWER_SUPPLY_PROP_CHARGE_UNO_CONTROL, value);
+	case SEC_WIRELESS_RX_SDCARD_MODE:
+	case SEC_WIRELESS_RX_BUILT_IN_MODE:
+	case SEC_WIRELESS_RX_SPU_MODE:
+		mfc_fw_update = true;
+		value.intval = mode;
+		ret = psy_do_property(battery->pdata->wireless_charger_name, set,
+			POWER_SUPPLY_PROP_CHARGE_POWERED_OTG_CONTROL, value);
+		if (ret < 0)
+			mfc_fw_update = false;
+		break;
+	case SEC_WIRELESS_TX_ON_MODE:
+		value.intval = true;
+		psy_do_property(battery->pdata->charger_name, set,
+			POWER_SUPPLY_PROP_CHARGE_UNO_CONTROL, value);
 
-			value.intval = mode;
-			psy_do_property(battery->pdata->wireless_charger_name, set,
-				POWER_SUPPLY_PROP_CHARGE_POWERED_OTG_CONTROL, value);
-
-			break;
-		case SEC_WIRELESS_TX_OFF_MODE:
-			value.intval = false;
-			psy_do_property(battery->pdata->charger_name, set,
-				POWER_SUPPLY_PROP_CHARGE_UNO_CONTROL, value);
-			break;
-		default:
-			break;
+		value.intval = mode;
+		psy_do_property(battery->pdata->wireless_charger_name, set,
+			POWER_SUPPLY_PROP_CHARGE_POWERED_OTG_CONTROL, value);
+		break;
+	case SEC_WIRELESS_TX_OFF_MODE:
+		value.intval = false;
+		psy_do_property(battery->pdata->charger_name, set,
+			POWER_SUPPLY_PROP_CHARGE_UNO_CONTROL, value);
+		break;
+	default:
+		break;
 	}
 }
 
@@ -95,7 +93,7 @@ void sec_bat_fw_init_work(struct work_struct *work)
 #if defined(CONFIG_WIRELESS_IC_PARAM)
 	psy_do_property(battery->pdata->wireless_charger_name, get,
 		POWER_SUPPLY_EXT_PROP_WIRELESS_CHECK_FW_VER, value);
-	if (value.intval) {		
+	if (value.intval) {
 		pr_info("%s: wireless firmware is already updated.\n", __func__);
 		return;
 	}

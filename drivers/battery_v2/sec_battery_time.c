@@ -20,6 +20,7 @@ void sec_bat_polling_work(struct work_struct *work)
 	queue_delayed_work(battery->monitor_wqueue, &battery->monitor_work, 0);
 	dev_dbg(battery->dev, "%s: Activated\n", __func__);
 }
+
 static void sec_bat_program_alarm(
 				struct sec_battery_info *battery, int seconds)
 {
@@ -29,15 +30,17 @@ static void sec_bat_program_alarm(
 unsigned int sec_bat_get_polling_time(
 	struct sec_battery_info *battery)
 {
-	if (battery->status ==
-		POWER_SUPPLY_STATUS_FULL)
+	/*
+	 * The polling table has no entry for POWER_SUPPLY_STATUS_FULL, so a
+	 * full battery is polled at the charging interval unless one of the
+	 * cases below overrides it.
+	 */
+	if (battery->status == POWER_SUPPLY_STATUS_FULL)
 		battery->polling_time =
-			battery->pdata->polling_time[
-			POWER_SUPPLY_STATUS_CHARGING];
+			battery->pdata->polling_time[POWER_SUPPLY_STATUS_CHARGING];
 	else
 		battery->polling_time =
-			battery->pdata->polling_time[
-			battery->status];
+			battery->pdata->polling_time[battery->status];
 
 	battery->polling_short = true;
 
@@ -48,13 +51,12 @@ unsigned int sec_bat_get_polling_time(
 		break;
 	case POWER_SUPPLY_STATUS_DISCHARGING:
 		if (battery->polling_in_sleep && (battery->ps_enable != true)) {
-			battery->polling_time =
-				battery->pdata->polling_time[
+			battery->polling_time = battery->pdata->polling_time[
 					SEC_BATTERY_POLLING_TIME_SLEEP];
-		} else
-			battery->polling_time =
-				battery->pdata->polling_time[
-				battery->status];
+		} else {
+			battery->polling_time = battery->pdata->polling_time[
+					battery->status];
+		}
 		if (!battery->wc_enable) {
 			battery->polling_time = battery->pdata->polling_time[
 					SEC_BATTERY_POLLING_TIME_CHARGING];
@@ -66,17 +68,16 @@ unsigned int sec_bat_get_polling_time(
 	case POWER_SUPPLY_STATUS_FULL:
 		if (battery->polling_in_sleep) {
 			if (!(battery->pdata->full_condition_type &
-				SEC_BATTERY_FULL_CONDITION_NOSLEEPINFULL) &&
-				battery->charging_mode ==
-				SEC_BATTERY_CHARGING_NONE) {
-				battery->polling_time =
-					battery->pdata->polling_time[
+					SEC_BATTERY_FULL_CONDITION_NOSLEEPINFULL) &&
+					battery->charging_mode ==
+					SEC_BATTERY_CHARGING_NONE) {
+				battery->polling_time = battery->pdata->polling_time[
 						SEC_BATTERY_POLLING_TIME_SLEEP];
 			}
 			battery->polling_short = false;
 		} else {
 			if (battery->charging_mode ==
-				SEC_BATTERY_CHARGING_NONE)
+					SEC_BATTERY_CHARGING_NONE)
 				battery->polling_short = false;
 		}
 		break;
@@ -126,11 +127,9 @@ bool sec_bat_is_short_polling(
 	 * But change full monitoring to first time
 	 * because temperature check is too late
 	 */
-	if (!battery->polling_short || battery->polling_count == 1)
-		return false;
-	else
-		return true;
+	return battery->polling_short && battery->polling_count != 1;
 }
+
 static void sec_bat_update_polling_count(
 	struct sec_battery_info *battery)
 {
@@ -142,14 +141,14 @@ static void sec_bat_update_polling_count(
 		return;
 
 	if (battery->polling_short &&
-		((battery->polling_time /
-		battery->pdata->polling_time[
-		SEC_BATTERY_POLLING_TIME_BASIC])
-		> battery->polling_count))
+		(battery->polling_time /
+		 battery->pdata->polling_time[SEC_BATTERY_POLLING_TIME_BASIC] >
+		 battery->polling_count))
 		battery->polling_count++;
 	else
 		battery->polling_count = 1;	/* initial value = 1 */
 }
+
 void sec_bat_set_polling(
 	struct sec_battery_info *battery)
 {
@@ -193,6 +192,7 @@ void sec_bat_set_polling(
 				polling_time_temp * HZ);
 		break;
 	case SEC_BATTERY_MONITOR_ALARM:
+		/* the alarm fires relative to the last poll, so stamp it now */
 		battery->last_poll_time = ktime_get_boottime();
 
 		if (battery->pdata->monitor_initial_count) {
@@ -208,8 +208,9 @@ void sec_bat_set_polling(
 	}
 	dev_dbg(battery->dev, "%s: End\n", __func__);
 }
+
 #if defined(CONFIG_CALC_TIME_TO_FULL)
-void sec_bat_calc_time_to_full(struct sec_battery_info * battery)
+void sec_bat_calc_time_to_full(struct sec_battery_info *battery)
 {
 	if (delayed_work_pending(&battery->timetofull_work)) {
 		pr_info("%s: keep time_to_full(%5d sec)\n", __func__, battery->timetofull);
@@ -241,16 +242,27 @@ void sec_bat_calc_time_to_full(struct sec_battery_info * battery)
 			} else if (battery->pd_max_charge_power > HV_CHARGER_STATUS_STANDARD3) {
 				charge = battery->pdata->ttf_dc25_charge_current;
 			} else if (battery->pd_max_charge_power <= battery->pdata->pd_charging_charge_power &&
-				battery->pdata->charging_current[battery->cable_type].fast_charging_current >= \
+				battery->pdata->charging_current[battery->cable_type].fast_charging_current >=
 				battery->pdata->max_charging_current) { /* same PD power with AFC */
 				charge = battery->pdata->ttf_hv_charge_current;
-			} else { /* other PD charging */
-				charge = (battery->pd_max_charge_power / 5) > battery->pdata->charging_current[battery->cable_type].fast_charging_current ?
-					battery->pdata->charging_current[battery->cable_type].fast_charging_current : (battery->pd_max_charge_power / 5);
+			} else {
+				/*
+				 * other PD charging: the lower of PD power / 5 and
+				 * the fast charge current
+				 */
+				unsigned int pd_power = battery->pd_max_charge_power / 5;
+				unsigned int fast_current =
+					battery->pdata->charging_current[battery->cable_type].fast_charging_current;
+
+				charge = pd_power > fast_current ? fast_current : pd_power;
 			}
 		} else {
-			charge = (battery->max_charge_power / 5) > battery->pdata->charging_current[battery->cable_type].fast_charging_current ?
-					battery->pdata->charging_current[battery->cable_type].fast_charging_current : (battery->max_charge_power / 5);
+			/* lower of input power / 5 and the fast charge current */
+			unsigned int input_power = battery->max_charge_power / 5;
+			unsigned int fast_current =
+				battery->pdata->charging_current[battery->cable_type].fast_charging_current;
+
+			charge = input_power > fast_current ? fast_current : input_power;
 		}
 		value.intval = charge;
 		psy_do_property(battery->pdata->fuelgauge_name, get,
@@ -294,6 +306,7 @@ void sec_bat_time_to_full_work(struct work_struct *work)
 
 	sec_bat_calc_time_to_full(battery);
 	dev_info(battery->dev, "%s:\n", __func__);
+	/* nudge voltage_now so the psy change is seen even if nothing else moved */
 	if (battery->voltage_now > 0)
 		battery->voltage_now--;
 
