@@ -96,8 +96,8 @@ static const char * const ver_info_path[SSC_CNT_MAX] = {
 	SLPI_SPU_VER_INFO,
 	SLPI_VER_INFO
 };
-static int ver_buf[SSC_CNT_MAX][SSC_VC_MAX];
-static int fw_idx = SSC_ORI;
+int ver_buf[SSC_CNT_MAX][SSC_VC_MAX];
+int fw_idx = SSC_ORI;
 
 static bool slpi_need_update_spu(void)
 {
