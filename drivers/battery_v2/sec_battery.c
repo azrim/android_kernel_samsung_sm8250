@@ -2739,7 +2739,8 @@ static int sec_battery_probe(struct platform_device *pdev)
 		ret = PTR_ERR(battery->psy_pogo);
 		dev_err(battery->dev,
 			"%s: Failed to Register psy_pogo(%d)\n", __func__, ret);
-		goto err_supply_unreg_pogo;
+		/* pogo itself failed: unwind only the supplies below it */
+		goto err_supply_unreg_bat;
 	}
 #endif
 
@@ -2748,7 +2749,11 @@ static int sec_battery_probe(struct platform_device *pdev)
 		ret = PTR_ERR(battery->psy_wireless);
 		dev_err(battery->dev,
 			"%s: Failed to Register psy_wireless(%d)\n", __func__, ret);
+#if defined(CONFIG_USE_POGO)
+		goto err_supply_unreg_pogo;
+#else
 		goto err_supply_unreg_bat;
+#endif
 	}
 	battery->psy_wireless->supplied_to = supply_list;
 	battery->psy_wireless->num_supplicants = ARRAY_SIZE(supply_list);
@@ -2854,7 +2859,12 @@ static int sec_battery_probe(struct platform_device *pdev)
 	return 0;
 
 err_req_irq:
+	device_remove_file(&battery->psy_wireless->dev, &dev_attr_sgf);
 	power_supply_unregister(battery->psy_wireless);
+#if defined(CONFIG_USE_POGO)
+err_supply_unreg_pogo:
+	power_supply_unregister(battery->psy_pogo);
+#endif
 err_supply_unreg_bat:
 	power_supply_unregister(battery->psy_bat);
 err_supply_unreg_ac:
@@ -2863,10 +2873,6 @@ err_supply_unreg_usb:
 	power_supply_unregister(battery->psy_usb);
 err_supply_unreg_ps:
 	power_supply_unregister(battery->psy_ps);
-#if defined(CONFIG_USE_POGO)
-err_supply_unreg_pogo:
-	power_supply_unregister(battery->psy_pogo);
-#endif
 err_workqueue:
 	destroy_workqueue(battery->monitor_wqueue);
 err_irq:
@@ -2992,10 +2998,14 @@ static int sec_battery_remove(struct platform_device *pdev)
 	sec_bat_misc_exit();
 #endif
 	power_supply_unregister(battery->psy_ps);
+	device_remove_file(&battery->psy_wireless->dev, &dev_attr_sgf);
 	power_supply_unregister(battery->psy_wireless);
 	power_supply_unregister(battery->psy_ac);
 	power_supply_unregister(battery->psy_usb);
 	power_supply_unregister(battery->psy_bat);
+#if defined(CONFIG_USE_POGO)
+	power_supply_unregister(battery->psy_pogo);
+#endif
 
 	kfree(battery);
 
