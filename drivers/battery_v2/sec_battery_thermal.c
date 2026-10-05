@@ -2431,8 +2431,23 @@ void sec_bat_cable_work(struct work_struct *work)
 	if (current_cable_type == SEC_BATTERY_CABLE_HV_TA_CHG_LIMIT)
 		current_cable_type = SEC_BATTERY_CABLE_9V_TA;
 
+	/*
+	 * Serialize the cable-state commit against the typec notifier, which
+	 * mutates the same fields under typec_notylock (see
+	 * usb_typec_handle_notification()).  Take the lock around plain
+	 * assignments only: never across psy_do_property(), msleep(),
+	 * sec_bat_set_charge*(), power_supply_changed() or queue_delayed_work().
+	 *
+	 * Caveat: if CONFIG_USB_TYPEC_MANAGER_NOTIFIER is disabled, the MUIC
+	 * notifier (batt_handle_notification(), guarded by batt_handlelock)
+	 * becomes live and also writes cable_type/wc_status; this lock alone
+	 * would then be incomplete.
+	 */
+	mutex_lock(&battery->typec_notylock);
 	WRITE_ONCE(battery->cable_type, current_cable_type);
 	cable_type = READ_ONCE(battery->cable_type);
+	mutex_unlock(&battery->typec_notylock);
+
 	if (is_wireless_type(cable_type)) {
 		power_supply_changed(battery->psy_bat);
 		/* After 10sec wireless charging, Vrect headroom has to be reduced */
@@ -2468,6 +2483,7 @@ void sec_bat_cable_work(struct work_struct *work)
 		pr_info("%s: prev_cable_type(%d)\n", __func__, prev_cable_type);
 
 		/* initialize all status */
+		mutex_lock(&battery->typec_notylock);
 		WRITE_ONCE(battery->charging_mode, SEC_BATTERY_CHARGING_NONE);
 		battery->vbus_chg_by_siop = SEC_INPUT_VOLTAGE_NONE;
 		battery->vbus_chg_by_full = false;
@@ -2485,8 +2501,12 @@ void sec_bat_cable_work(struct work_struct *work)
 		battery->charge_power = 0;
 		WRITE_ONCE(battery->max_charge_power, 0);
 		battery->pd_max_charge_power = 0;
+		mutex_unlock(&battery->typec_notylock);
+
 		sec_bat_set_charging_status(battery,
 				POWER_SUPPLY_STATUS_DISCHARGING);
+
+		mutex_lock(&battery->typec_notylock);
 		battery->chg_limit = false;
 		battery->lrp_limit = false;
 		battery->lrp_step = LRP_NONE;
@@ -2496,6 +2516,8 @@ void sec_bat_cable_work(struct work_struct *work)
 		battery->health = POWER_SUPPLY_HEALTH_GOOD;
 		battery->prev_usb_conf = USB_CURRENT_NONE;
 		battery->ta_alert_mode = OCP_NONE;
+		mutex_unlock(&battery->typec_notylock);
+
 		cancel_delayed_work(&battery->afc_work);
 		__pm_relax(battery->afc_wake_lock);
 		sec_bat_change_default_current(battery, SEC_BATTERY_CABLE_USB,
@@ -2550,6 +2572,7 @@ void sec_bat_cable_work(struct work_struct *work)
 	} else if (is_slate_mode(battery) || (battery->current_event & SEC_BAT_CURRENT_EVENT_USB_SUSPENDED)) {
 		dev_info(battery->dev,
 			"%s:slate mode on or set usb suspend\n", __func__);
+		mutex_lock(&battery->typec_notylock);
 		battery->is_recharging = false;
 		WRITE_ONCE(battery->cable_type, SEC_BATTERY_CABLE_NONE);
 		WRITE_ONCE(battery->charging_mode, SEC_BATTERY_CHARGING_NONE);
@@ -2558,6 +2581,8 @@ void sec_bat_cable_work(struct work_struct *work)
 		battery->is_vbatovlo = false;
 		battery->is_abnormal_temp = false;
 		WRITE_ONCE(battery->swelling_mode, SWELLING_MODE_NONE);
+		mutex_unlock(&battery->typec_notylock);
+
 		sec_bat_set_charging_status(battery,
 			POWER_SUPPLY_STATUS_DISCHARGING);
 		sec_bat_set_charge(battery, SEC_BAT_CHG_MODE_BUCK_OFF);
