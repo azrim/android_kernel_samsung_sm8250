@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * drivers/staging/android/ion/ion_heap.c
+ * Legacy ION allocator - heap operations and freelist management.
  *
  * Copyright (C) 2011 Google, Inc.
  */
@@ -21,15 +21,21 @@ void *ion_heap_map_kernel(struct ion_heap *heap,
 			  struct ion_buffer *buffer)
 {
 	struct scatterlist *sg;
-	int i, j;
+	int i, j, page_idx = 0;
 	void *vaddr;
 	pgprot_t pgprot;
 	struct sg_table *table = buffer->sg_table;
-	int npages = PAGE_ALIGN(buffer->size) / PAGE_SIZE;
-	struct page **pages = vmalloc(array_size(npages,
-						 sizeof(struct page *)));
-	struct page **tmp = pages;
+	int npages;
+	struct page **pages;
 
+	if (!table || !table->sgl)
+		return ERR_PTR(-EINVAL);
+
+	npages = PAGE_ALIGN(buffer->size) / PAGE_SIZE;
+	if (npages <= 0)
+		return ERR_PTR(-EINVAL);
+
+	pages = kvmalloc_array(npages, sizeof(*pages), GFP_KERNEL);
 	if (!pages)
 		return ERR_PTR(-ENOMEM);
 
@@ -42,12 +48,21 @@ void *ion_heap_map_kernel(struct ion_heap *heap,
 		int npages_this_entry = PAGE_ALIGN(sg->length) / PAGE_SIZE;
 		struct page *page = sg_page(sg);
 
-		BUG_ON(i >= npages);
+		if (WARN_ON(page_idx + npages_this_entry > npages)) {
+			kvfree(pages);
+			return ERR_PTR(-EINVAL);
+		}
 		for (j = 0; j < npages_this_entry; j++)
-			*(tmp++) = page++;
+			pages[page_idx++] = page++;
 	}
+
+	if (WARN_ON(page_idx != npages)) {
+		kvfree(pages);
+		return ERR_PTR(-EINVAL);
+	}
+
 	vaddr = vmap(pages, npages, VM_MAP, pgprot);
-	vfree(pages);
+	kvfree(pages);
 
 	if (!vaddr)
 		return ERR_PTR(-ENOMEM);
@@ -71,10 +86,18 @@ int ion_heap_map_user(struct ion_heap *heap, struct ion_buffer *buffer,
 	int i;
 	int ret;
 
+	if (!table || !table->sgl)
+		return -EINVAL;
+
 	for_each_sg(table->sgl, sg, table->nents, i) {
 		struct page *page = sg_page(sg);
-		unsigned long remainder = vma->vm_end - addr;
+		unsigned long remainder;
 		unsigned long len = sg->length;
+
+		if (addr >= vma->vm_end)
+			return 0;
+
+		remainder = vma->vm_end - addr;
 
 		if (offset >= sg->length) {
 			offset -= sg->length;
@@ -179,10 +202,12 @@ static size_t _ion_heap_freelist_drain(struct ion_heap *heap, size_t size,
 	struct ion_buffer *buffer;
 	size_t total_drained = 0;
 
-	if (ion_heap_freelist_size(heap) == 0)
-		return 0;
-
 	spin_lock(&heap->free_lock);
+	if (list_empty(&heap->free_list)) {
+		spin_unlock(&heap->free_lock);
+		return 0;
+	}
+
 	if (size == 0)
 		size = heap->free_list_size;
 
@@ -192,7 +217,11 @@ static size_t _ion_heap_freelist_drain(struct ion_heap *heap, size_t size,
 		buffer = list_first_entry(&heap->free_list, struct ion_buffer,
 					  list);
 		list_del(&buffer->list);
-		heap->free_list_size -= buffer->size;
+		if (WARN_ON(heap->free_list_size < buffer->size))
+			heap->free_list_size = 0;
+		else
+			heap->free_list_size -= buffer->size;
+
 		if (skip_pools)
 			buffer->private_flags |= ION_PRIV_FLAG_SHRINKER_FREE;
 		total_drained += buffer->size;
@@ -219,11 +248,15 @@ static int ion_heap_deferred_free(void *data)
 {
 	struct ion_heap *heap = data;
 
-	while (true) {
+	while (!kthread_should_stop()) {
 		struct ion_buffer *buffer;
 
 		wait_event_freezable(heap->waitqueue,
-				     ion_heap_freelist_size(heap) > 0);
+				     READ_ONCE(heap->free_list_size) > 0 ||
+				     kthread_should_stop());
+
+		if (kthread_should_stop())
+			break;
 
 		spin_lock(&heap->free_lock);
 		if (list_empty(&heap->free_list)) {
@@ -233,10 +266,15 @@ static int ion_heap_deferred_free(void *data)
 		buffer = list_first_entry(&heap->free_list, struct ion_buffer,
 					  list);
 		list_del(&buffer->list);
-		heap->free_list_size -= buffer->size;
+		if (WARN_ON(heap->free_list_size < buffer->size))
+			heap->free_list_size = 0;
+		else
+			heap->free_list_size -= buffer->size;
 		spin_unlock(&heap->free_lock);
 		ion_buffer_destroy(buffer);
 	}
+
+	_ion_heap_freelist_drain(heap, 0, false);
 
 	return 0;
 }
@@ -251,9 +289,9 @@ int ion_heap_init_deferred_free(struct ion_heap *heap)
 	heap->task = kthread_run(ion_heap_deferred_free, heap,
 				 "%s", heap->name);
 	if (IS_ERR(heap->task)) {
-		pr_err("%s: creating thread for deferred free failed\n",
-		       __func__);
-		return PTR_ERR_OR_ZERO(heap->task);
+		pr_err("%s: creating thread for deferred free failed: %ld\n",
+		       __func__, PTR_ERR(heap->task));
+		return PTR_ERR(heap->task);
 	}
 #ifndef CONFIG_ION_DEFER_FREE_NO_SCHED_IDLE
 	sched_setscheduler(heap->task, SCHED_IDLE, &param);
@@ -266,7 +304,7 @@ static unsigned long ion_heap_shrink_count(struct shrinker *shrinker,
 {
 	struct ion_heap *heap = container_of(shrinker, struct ion_heap,
 					     shrinker);
-	int total = 0;
+	unsigned long total = 0;
 
 	total = ion_heap_freelist_size(heap) / PAGE_SIZE;
 	if (heap->ops->shrink)
@@ -279,8 +317,9 @@ static unsigned long ion_heap_shrink_scan(struct shrinker *shrinker,
 {
 	struct ion_heap *heap = container_of(shrinker, struct ion_heap,
 					     shrinker);
-	int freed = 0;
-	int to_scan = sc->nr_to_scan;
+	unsigned long freed = 0;
+	unsigned long to_scan = sc->nr_to_scan;
+	size_t bytes_to_drain;
 
 	if (to_scan == 0)
 		return 0;
@@ -289,12 +328,15 @@ static unsigned long ion_heap_shrink_scan(struct shrinker *shrinker,
 	 * shrink the free list first, no point in zeroing the memory if we're
 	 * just going to reclaim it. Also, skip any possible page pooling.
 	 */
-	if (heap->flags & ION_HEAP_FLAG_DEFER_FREE)
-		freed = ion_heap_freelist_shrink(heap, to_scan * PAGE_SIZE) /
+	if (heap->flags & ION_HEAP_FLAG_DEFER_FREE) {
+		bytes_to_drain = (to_scan > SIZE_MAX / PAGE_SIZE) ?
+				 SIZE_MAX : to_scan * PAGE_SIZE;
+		freed = ion_heap_freelist_shrink(heap, bytes_to_drain) /
 				PAGE_SIZE;
+	}
 
-	to_scan -= freed;
-	if (to_scan <= 0)
+	to_scan = (to_scan > freed) ? to_scan - freed : 0;
+	if (to_scan == 0)
 		return freed;
 
 	if (heap->ops->shrink)
@@ -384,7 +426,7 @@ struct ion_heap *ion_heap_create(struct ion_platform_heap *heap_data)
 		pr_err("%s: error creating heap %s type %d base %pa size %zu\n",
 		       __func__, heap_data->name, heap_data->type,
 		       &heap_data->base, heap_data->size);
-		return ERR_PTR(-EINVAL);
+		return heap ? ERR_CAST(heap) : ERR_PTR(-EINVAL);
 	}
 
 	heap->name = heap_data->name;
