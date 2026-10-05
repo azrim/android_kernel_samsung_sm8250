@@ -15,24 +15,30 @@
 void sec_bat_set_misc_event(struct sec_battery_info *battery,
 	unsigned int misc_event_val, unsigned int misc_event_mask)
 {
-	unsigned int temp = battery->misc_event;
+	unsigned int prev;
 
 	mutex_lock(&battery->misclock);
 
+	prev = battery->misc_event;
 	battery->misc_event &= ~misc_event_mask;
 	battery->misc_event |= misc_event_val;
 
 	pr_info("%s: misc event before(0x%x), after(0x%x)\n",
-		__func__, temp, battery->misc_event);
+		__func__, prev, battery->misc_event);
 
-	mutex_unlock(&battery->misclock);
-
+	/*
+	 * Compare with the previous event and queue the work while still
+	 * holding misclock: sec_bat_misc_event_work() updates prev_misc_event
+	 * under the same lock, so this read is now race-free.
+	 */
 	if (battery->prev_misc_event != battery->misc_event) {
 		cancel_delayed_work(&battery->misc_event_work);
 		__pm_stay_awake(battery->misc_event_wake_lock);
 		queue_delayed_work(battery->monitor_wqueue,
 			&battery->misc_event_work, 0);
 	}
+
+	mutex_unlock(&battery->misclock);
 }
 void sec_bat_set_tx_event(struct sec_battery_info *battery,
 	unsigned int tx_event_val, unsigned int tx_event_mask)
@@ -426,23 +432,33 @@ void sec_bat_misc_event_work(struct work_struct *work)
 {
 	struct sec_battery_info *battery = container_of(work,
 				struct sec_battery_info, misc_event_work.work);
-	int xor_misc_event = battery->prev_misc_event ^ battery->misc_event;
+	unsigned int prev_misc_event, misc_event;
+	int xor_misc_event;
+
+	mutex_lock(&battery->misclock);
+	prev_misc_event = battery->prev_misc_event;
+	misc_event = battery->misc_event;
+	mutex_unlock(&battery->misclock);
+
+	xor_misc_event = prev_misc_event ^ misc_event;
 
 	if ((xor_misc_event & (BATT_MISC_EVENT_UNDEFINED_RANGE_TYPE |
 		BATT_MISC_EVENT_HICCUP_TYPE | BATT_MISC_EVENT_TEMP_HICCUP_TYPE)) &&
 		is_nocharge_type(battery->cable_type)) {
-		if (battery->misc_event & (BATT_MISC_EVENT_UNDEFINED_RANGE_TYPE |
+		if (misc_event & (BATT_MISC_EVENT_UNDEFINED_RANGE_TYPE |
 			BATT_MISC_EVENT_HICCUP_TYPE | BATT_MISC_EVENT_TEMP_HICCUP_TYPE))
 			sec_bat_set_charge(battery, SEC_BAT_CHG_MODE_BUCK_OFF);
-		else if (battery->prev_misc_event & (BATT_MISC_EVENT_UNDEFINED_RANGE_TYPE |
+		else if (prev_misc_event & (BATT_MISC_EVENT_UNDEFINED_RANGE_TYPE |
 			BATT_MISC_EVENT_HICCUP_TYPE | BATT_MISC_EVENT_TEMP_HICCUP_TYPE))
 			sec_bat_set_charge(battery, SEC_BAT_CHG_MODE_CHARGING_OFF);
 	}
 
 	pr_info("%s: change misc event(0x%x --> 0x%x)\n",
-		__func__, battery->prev_misc_event, battery->misc_event);
+		__func__, prev_misc_event, misc_event);
 
+	mutex_lock(&battery->misclock);
 	battery->prev_misc_event = battery->misc_event;
+	mutex_unlock(&battery->misclock);
 
 	__pm_relax(battery->misc_event_wake_lock);
 
