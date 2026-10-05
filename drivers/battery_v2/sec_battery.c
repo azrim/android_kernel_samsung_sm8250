@@ -1491,6 +1491,17 @@ static int usb_typec_handle_notification(struct notifier_block *nb,
 #endif
 		break;
 	case CCIC_NOTIFY_ID_POWER_STATUS:
+		/*
+		 * pd is only guaranteed non-NULL for a real PD event, and it
+		 * is dereferenced repeatedly below.  The attach path already
+		 * NULL-checks it; guard this path the same way.
+		 */
+		if (usb_typec_info.pd == NULL) {
+			dev_info(battery->dev, "%s: null pd, skip POWER_STATUS\n",
+				__func__);
+			mutex_unlock(&battery->typec_notylock);
+			return 0;
+		}
 #ifdef CONFIG_SEC_FACTORY
 		dev_info(battery->dev, "%s: pd_event(%d)\n", __func__,
 			(*(struct pdic_notifier_struct *)usb_typec_info.pd).event);
