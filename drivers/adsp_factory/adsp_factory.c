@@ -116,7 +116,7 @@ int adsp_unicast(void *param, int param_size, u16 sensor_type,
 	NETLINK_CB(skb).dst_group = 0;
 	ret = nlmsg_unicast(data->adsp_skt, skb, PID);
 	if (ret != 0)
-		pr_err("[FACTORY] %s - ret = %d\n", __func__, ret);
+		pr_debug("[FACTORY] %s - ret = %d\n", __func__, ret);
 
 	return ret;
 }
