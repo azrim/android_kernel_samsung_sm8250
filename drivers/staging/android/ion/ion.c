@@ -516,9 +516,16 @@ static int ion_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma)
 	ret = buffer->heap->ops->map_user(buffer->heap, buffer, vma);
 	mutex_unlock(&buffer->lock);
 
-	if (ret)
+	if (ret) {
 		pr_err("%s: failure mapping buffer to userspace\n",
 		       __func__);
+		/*
+		 * mmap_region() frees the vma without invoking ->close on the
+		 * call_mmap() failure path, so the entry registered by
+		 * ion_vm_open() must be removed here or it will dangle.
+		 */
+		ion_vm_close(vma);
+	}
 
 	return ret;
 }
