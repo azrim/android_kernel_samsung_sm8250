@@ -460,8 +460,8 @@ void ion_system_heap_free(struct ion_buffer *buffer)
 
 	if (!(buffer->private_flags & ION_PRIV_FLAG_SHRINKER_FREE) &&
 	    !(buffer->flags & ION_FLAG_POOL_FORCE_ALLOC)) {
-		if (vmid < 0)
-			ion_heap_buffer_zero(buffer);
+		if (vmid < 0 && ion_heap_buffer_zero(buffer))
+			buffer->private_flags |= ION_PRIV_FLAG_SHRINKER_FREE;
 	} else if (vmid > 0) {
 		if (ion_hyp_unassign_sg(table, &vmid, 1, true, false))
 			return;
