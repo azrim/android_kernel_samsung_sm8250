@@ -4165,6 +4165,14 @@ static void fw_update(void *device_data)
 		}
 
 		fsize = fp->f_path.dentry->d_inode->i_size;
+		/* the header offsets below read up to 0x6B */
+		if (fsize < 0x6C) {
+			input_err(true, &client->dev, "%s: firmware too small (%ld bytes)\n",
+					__func__, fsize);
+			filp_close(fp, NULL);
+			set_fs(old_fs);
+			goto fw_update_out;
+		}
 		buff = vzalloc(fsize);
 		if (!buff) {
 			input_err(true, &client->dev, "%s: failed to alloc buffer for fw\n", __func__);
