@@ -1128,7 +1128,7 @@ struct dma_buf *ion_alloc_dmabuf(size_t len, unsigned int heap_id_mask,
 	down_read(&dev->lock);
 	plist_for_each_entry(heap, &dev->heaps, node) {
 		/* if the caller didn't specify this heap id */
-		if (!((1 << heap->id) & heap_id_mask))
+		if (!(BIT(heap->id) & heap_id_mask))
 			continue;
 		buffer = ion_buffer_create(heap, dev, len, flags);
 		if (!IS_ERR(buffer) || PTR_ERR(buffer) == -EINTR)
@@ -1190,7 +1190,7 @@ struct dma_buf *ion_alloc(size_t len, unsigned int heap_id_mask,
 	down_read(&dev->lock);
 	plist_for_each_entry(heap, &dev->heaps, node) {
 		/* if the caller didn't specify this heap id */
-		if (!((1 << heap->id) & heap_id_mask))
+		if (!(BIT(heap->id) & heap_id_mask))
 			continue;
 		if (heap->type == ION_HEAP_TYPE_SYSTEM ||
 		    heap->type == ION_HEAP_TYPE_CARVEOUT ||
