@@ -3251,8 +3251,20 @@ static void clear_reference_data(void *device_data)
 	write_reg(client, ZT_EEPROM_INFO, 0xffff);
 	write_reg(client, VCMD_NVM_WRITE_ENABLE, 0x0001);
 	usleep_range(100, 100);
-	if (write_cmd(client, ZT_SAVE_STATUS_CMD) != I2C_SUCCESS)
+	if (write_cmd(client, ZT_SAVE_STATUS_CMD) != I2C_SUCCESS) {
+		/*
+		 * Don't leave NVM write-protection disabled and the ESD
+		 * watchdog stopped just because the save command failed.
+		 */
+		input_err(true, &client->dev, "%s: failed to save status\n", __func__);
+		write_reg(client, VCMD_NVM_WRITE_ENABLE, 0x0000);
+		usleep_range(100, 100);
+		zt_ts_esd_timer_start(info);
+		snprintf(buff, sizeof(buff), "%s", "NG");
+		sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
 		return;
+	}
 
 	zt_delay(500);
 	write_reg(client, VCMD_NVM_WRITE_ENABLE, 0x0000);
@@ -5984,6 +5996,7 @@ static void run_cs_raw_read_all(void *device_data)
 		retry++;
 		input_info(true, &client->dev, "%s: retry:%d\n", __func__, retry);
 		if (retry > 100) {
+			ts_exit_strength_mode(info);
 			enable_irq(info->irq);
 			goto out;
 		}
@@ -6049,6 +6062,7 @@ static void run_cs_delta_read_all(void *device_data)
 		retry++;
 		input_info(true, &client->dev, "%s: retry:%d\n", __func__, retry);
 		if (retry > 100) {
+			ts_exit_strength_mode(info);
 			enable_irq(info->irq);
 			zt_ts_esd_timer_start(info);
 			goto out;
@@ -8899,6 +8913,8 @@ err_input_register_device:
 err_fw_update:
 #if ESD_TIMER_INTERVAL
 	del_timer(&(info->esd_timeout_tmr));
+	destroy_workqueue(esd_tmr_workqueue);
+	esd_tmr_workqueue = NULL;
 err_esd_sequence:
 #endif
 	zt_power_control(info, POWER_OFF);
@@ -8917,7 +8933,10 @@ err_allocate_input_dev_pad:
 		input_free_device(info->input_dev);
 error_null_data:
 err_alloc:
+	misc_info = NULL;
 	kfree(info);
+	if (gpio_is_valid(pdata->gpio_int))
+		gpio_free(pdata->gpio_int);
 err_gpio_request:
 error_allocate_tdata:
 	if (IS_ENABLED(CONFIG_OF))
@@ -9043,9 +9062,9 @@ void zt_ts_shutdown(struct i2c_client *client)
 	cancel_work_sync(&info->rel_work);
 #if ESD_TIMER_INTERVAL
 	/*
-	 * Stop the ESD watchdog and drain its worker before touching
-	 * state_lock: ts_tmr_work() takes the same lock, so flushing it under
-	 * the lock deadlocks if a worker is already queued.
+	 * Stop the ESD watchdog and drain its worker before powering the panel
+	 * down: ts_tmr_work() takes state_lock and power-cycles the controller,
+	 * so it must not run concurrently with the shutdown teardown.
 	 */
 	esd_timer_stop(info);
 	cancel_work_sync(&info->tmr_work);
