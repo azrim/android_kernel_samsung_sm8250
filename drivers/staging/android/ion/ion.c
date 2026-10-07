@@ -1509,6 +1509,7 @@ static int debug_shrink_set(void *data, u64 val)
 	struct shrink_control sc;
 	unsigned long objs;
 
+	memset(&sc, 0, sizeof(sc));
 	sc.gfp_mask = GFP_HIGHUSER;
 	sc.nr_to_scan = val;
 
@@ -1527,6 +1528,7 @@ static int debug_shrink_get(void *data, u64 *val)
 	struct shrink_control sc;
 	unsigned long objs;
 
+	memset(&sc, 0, sizeof(sc));
 	sc.gfp_mask = GFP_HIGHUSER;
 	sc.nr_to_scan = 0;
 
