@@ -994,10 +994,6 @@ static int qmp_mbox_probe(struct platform_device *pdev)
 			mdev->rx_irq_line, ret);
 		return ret;
 	}
-	ret = enable_irq_wake(mdev->rx_irq_line);
-	if (ret < 0)
-		QMP_ERR(mdev->ilc, "enable_irq_wake on %d failed: %d\n",
-			mdev->rx_irq_line, ret);
 
 	/* Trigger fake RX in case of missed interrupt */
 	if (of_property_read_bool(edge_node, "qcom,early-boot"))
