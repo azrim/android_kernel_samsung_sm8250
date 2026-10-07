@@ -1423,8 +1423,17 @@ void enable_nonboot_cpus(void)
 	/* Allow everyone to use the CPU hotplug again */
 	cpu_maps_update_begin();
 	__cpu_hotplug_enable();
-	if (cpumask_empty(frozen_cpus))
+	if (cpumask_empty(frozen_cpus)) {
+		/*
+		 * No CPU was frozen, but freeze_secondary_cpus() still ran
+		 * unaffine_perf_irqs() before aborting (e.g. a wakeup was
+		 * pending). Undo it here, otherwise perf_crit_suspended stays
+		 * set and hotplug is locked out of reaffining perf-critical
+		 * IRQs until the next full suspend/resume cycle.
+		 */
+		reaffine_perf_irqs(false);
 		goto out;
+	}
 
 	pr_info("Enabling non-boot CPUs ...\n");
 
