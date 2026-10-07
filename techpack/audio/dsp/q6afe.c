@@ -11483,7 +11483,7 @@ static bool q6afe_is_afe_lsm_port(int port_id)
 	int i = 0;
 	for (i = 0; i< MAX_LSM_SESSIONS; i++)
 	{
-		pr_err("%s:: lsm_afe_port_array[%d]=0x%x - port_id 0x%x\n", __func__, i, this_afe.lsm_afe_port_array[i], port_id);
+		pr_debug("%s:: lsm_afe_port_array[%d]=0x%x - port_id 0x%x\n", __func__, i, this_afe.lsm_afe_port_array[i], port_id);
 		if (port_id == this_afe.lsm_afe_port_array[i])
 			return true;
 	}
