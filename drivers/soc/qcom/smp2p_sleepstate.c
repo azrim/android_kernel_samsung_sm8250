@@ -17,6 +17,8 @@
 #define AWAKE_BIT BIT(PROC_AWAKE_ID)
 struct qcom_smem_state *smem_state;
 static struct wakeup_source *notify_ws;
+static int sleepstate_irq;
+static bool sleepstate_irq_masked;
 
 /**
  * sleepstate_pm_notifier() - PM notifier callback function.
@@ -32,10 +34,26 @@ static int sleepstate_pm_notifier(struct notifier_block *nb,
 {
 	switch (event) {
 	case PM_SUSPEND_PREPARE:
+		/*
+		 * Mask the sleepstate IRQ for the whole suspend window so a
+		 * late SLPI event cannot fire a wakeup and abort the freeze
+		 * (freeze_secondary_cpus() -> pm_wakeup_pending()).  The
+		 * handler only reports a bounded wakeup, so not servicing the
+		 * event in this window loses nothing; it is unmasked in
+		 * PM_POST_SUSPEND.
+		 */
+		if (sleepstate_irq > 0) {
+			disable_irq(sleepstate_irq);
+			sleepstate_irq_masked = true;
+		}
 		usleep_range(10000, 10500); /* Tuned based on SMP2P latencies */
 		break;
 
 	case PM_POST_SUSPEND:
+		if (sleepstate_irq_masked) {
+			sleepstate_irq_masked = false;
+			enable_irq(sleepstate_irq);
+		}
 		break;
 	}
 
@@ -92,6 +110,7 @@ static int smp2p_sleepstate_probe(struct platform_device *pdev)
 		dev_err(dev, "fail to register smp2p threaded_irq=%d\n", irq);
 		goto err;
 	}
+	sleepstate_irq = irq;
 	return 0;
 err:
 	wakeup_source_unregister(notify_ws);
