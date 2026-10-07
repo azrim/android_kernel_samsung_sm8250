@@ -2132,15 +2132,20 @@ static void ts_tmr_work(struct work_struct *work)
 {
 	struct zt_ts_info *info = container_of(work, struct zt_ts_info, tmr_work);
 
-	if (info->work_state != NOTHING)
+	mutex_lock(&info->state_lock);
+
+	if (info->work_state != NOTHING) {
+		mutex_unlock(&info->state_lock);
 		return;
+	}
 
 #ifdef CONFIG_INPUT_SEC_SECURE_TOUCH
-	if (atomic_read(&info->secure_enabled) == SECURE_TOUCH_ENABLED)
+	if (atomic_read(&info->secure_enabled) == SECURE_TOUCH_ENABLED) {
+		mutex_unlock(&info->state_lock);
 		return;
+	}
 #endif
 
-	mutex_lock(&info->state_lock);
 	info->work_state = ESD_TIMER;
 
 	if (info->reset_reason == RESET_REASON_I2C)
@@ -9015,13 +9020,21 @@ static int zt_ts_remove(struct i2c_client *client)
 	 * is already queued and blocked on the same mutex.
 	 */
 #if ESD_TIMER_INTERVAL
+	/*
+	 * Stop the controller's periodic interrupt before disarming the
+	 * watchdog: write_reg() can fail and re-arm the ESD timer (and queue
+	 * tmr_work) from its I2C error path, so it must run first. Then drain
+	 * the worker and destroy the queue, and clear the global so a later
+	 * I2C error path cannot queue onto a freed workqueue.
+	 */
+	write_reg(info->client, ZT_PERIODICAL_INTERRUPT_INTERVAL, 0);
 	esd_timer_stop(info);
 	cancel_work_sync(&info->tmr_work);
-	write_reg(info->client, ZT_PERIODICAL_INTERRUPT_INTERVAL, 0);
+	destroy_workqueue(esd_tmr_workqueue);
+	esd_tmr_workqueue = NULL;
 #if defined(TSP_VERBOSE_DEBUG)
 	input_info(true, &client->dev, "%s: Stopped esd timer\n", __func__);
 #endif
-	destroy_workqueue(esd_tmr_workqueue);
 #endif
 
 	mutex_lock(&info->state_lock);
