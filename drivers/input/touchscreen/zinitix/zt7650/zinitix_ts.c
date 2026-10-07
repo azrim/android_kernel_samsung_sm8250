@@ -8653,12 +8653,17 @@ static int zt_ts_probe(struct i2c_client *client,
 
 	if (!i2c_check_functionality(adapter, I2C_FUNC_I2C)) {
 		input_err(true, &client->dev, "%s: Not compatible i2c function\n", __func__);
+		/* zinitix_init_gpio() ran on the DT path only */
+		if (client->dev.of_node)
+			gpio_free(pdata->gpio_int);
 		return -EIO;
 	}
 
 	info = kzalloc(sizeof(struct zt_ts_info), GFP_KERNEL);
 	if (!info) {
 		input_err(true, &client->dev, "%s: Failed to allocate memory\n", __func__);
+		if (client->dev.of_node)
+			gpio_free(pdata->gpio_int);
 		return -ENOMEM;
 	}
 
@@ -9066,6 +9071,13 @@ void zt_ts_shutdown(struct i2c_client *client)
 	input_info(true, &client->dev, "%s++\n", __func__);
 	shutdown_is_on_going_tsp = true;
 	disable_irq(info->irq);
+	/*
+	 * Drop the info-dump works before powering the panel off; both are
+	 * (re)scheduled during normal operation and would otherwise run
+	 * against a powered-down controller during shutdown.
+	 */
+	cancel_delayed_work_sync(&info->work_read_info);
+	cancel_delayed_work_sync(&info->work_print_info);
 	del_timer_sync(&info->rel_timer);
 	cancel_work_sync(&info->rel_work);
 #if ESD_TIMER_INTERVAL
