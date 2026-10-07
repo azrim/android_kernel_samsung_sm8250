@@ -8393,11 +8393,13 @@ static void touch_print_info_work(struct work_struct *work)
 
 static void zt_ts_set_input_prop(struct zt_ts_info *info, struct input_dev *dev, u8 propbit)
 {
-	static char zt_phys[64] = { 0 };
-
-	snprintf(zt_phys, sizeof(zt_phys), "%s/input1", dev->name);
+	/*
+	 * Give each input device its own phys string: a shared static buffer
+	 * is overwritten when the second device (DeX touchpad) is set up, so
+	 * both would end up reporting the same phys.
+	 */
+	dev->phys = devm_kasprintf(&info->client->dev, GFP_KERNEL, "%s/input1", dev->name);
 	dev->id.bustype = BUS_I2C;
-	dev->phys = zt_phys;
 	dev->dev.parent = &info->client->dev;
 
 	set_bit(EV_SYN, dev->evbit);
@@ -8435,10 +8437,7 @@ static void zt_ts_set_input_prop(struct zt_ts_info *info, struct input_dev *dev,
 
 static void zt_ts_set_input_prop_proximity(struct zt_ts_info *info, struct input_dev *dev)
 {
-	static char zt_phys[64] = { 0 };
-
-	snprintf(zt_phys, sizeof(zt_phys), "%s/input1", dev->name);
-	dev->phys = zt_phys;
+	dev->phys = devm_kasprintf(&info->client->dev, GFP_KERNEL, "%s/input1", dev->name);
 	dev->id.bustype = BUS_I2C;
 	dev->dev.parent = &info->client->dev;
 
