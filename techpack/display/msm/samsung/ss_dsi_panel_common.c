@@ -6598,7 +6598,7 @@ skip_bl_update:
 			ss_wait_for_te_gpio(vdd, vdd->panel_hbm_entry_delay, 200);
 		}
 		if ((backlight_origin >= BACKLIGHT_FINGERMASK_ON) && (vdd->finger_mask_updated)) {
-			SDE_ERROR("finger_mask_updated/ sysfs_notify finger_mask_state = %d\n", vdd->finger_mask);
+			LCD_INFO("finger_mask_updated/ sysfs_notify finger_mask_state = %d\n", vdd->finger_mask);
 			sysfs_notify(&vdd->lcd_dev->dev.kobj, NULL, "actual_mask_brightness");
 			vdd->finger_mask_updated = 0;
 		}

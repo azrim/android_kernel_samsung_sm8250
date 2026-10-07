@@ -30,7 +30,7 @@ Copyright (C) 2012, Samsung Electronics. All rights reserved.
 #define MDNIE_LITE_TUN_DEBUG
 
 #ifdef MDNIE_LITE_TUN_DEBUG
-#define DPRINT(x...)	printk(KERN_ERR "[SDE_mdnie] " x)
+#define DPRINT(x...)	pr_debug("[SDE_mdnie] " x)
 #else
 #define DPRINT(x...)
 #endif
