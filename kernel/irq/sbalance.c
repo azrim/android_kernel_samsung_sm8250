@@ -150,6 +150,18 @@ static int move_irq_to_cpu(struct bal_irq *bi, int cpu)
 
 	/* Set the affinity if it wasn't changed since we looked at it */
 	raw_spin_lock_irq(&desc->lock);
+
+	/*
+	 * The IRQ may have been torn down since we picked it up: bail out if
+	 * it is no longer started or has lost its action. Otherwise we could
+	 * touch an irq_data hierarchy (parent_data) that irq_domain_free_irqs()
+	 * is freeing concurrently without holding desc->lock.
+	 */
+	if (!irqd_is_started(&desc->irq_data) || !desc->action) {
+		raw_spin_unlock_irq(&desc->lock);
+		return -ENODEV;
+	}
+
 	prev_cpu = cpumask_first(desc->irq_common_data.affinity);
 	if (prev_cpu == bi->prev_cpu) {
 		ret = irq_set_affinity_locked(&desc->irq_data, cpumask_of(cpu),
@@ -245,8 +257,14 @@ static void balance_irqs(void)
 	}
 
 	list_for_each_entry_rcu(bi, &bal_irq_list, node) {
-		/* Consider this IRQ for balancing if it's movable */
-		if (!__irq_can_set_affinity(bi->desc))
+		/*
+		 * Consider this IRQ for balancing if it's movable. Skip IRQs
+		 * that are not started or have no action: those are being torn
+		 * down and their irq_data hierarchy may be freed concurrently
+		 * by irq_domain_free_irqs() without holding desc->lock.
+		 */
+		if (!__irq_can_set_affinity(bi->desc) ||
+		    !irqd_is_started(&bi->desc->irq_data) || !bi->desc->action)
 			continue;
 
 		if (!update_irq_data(bi, &cpu))
