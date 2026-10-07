@@ -1646,12 +1646,12 @@ retry:
 			int i = 0;
 			char phase_result[17] = { 0, };
 
-			pr_err("%s: %s: finally setting the tuning phase from %d to %d\n",
+			pr_info("%s: %s: finally setting the tuning phase from %d to %d\n",
 					mmc_hostname(mmc), __func__,
 					msm_host->saved_tuning_phase, phase);
 			for (i = 0; i < tuned_phase_cnt; i++)
 				snprintf(phase_result + i, sizeof(phase_result) - i, "%1x", tuned_phases[i]);
-			pr_err("%s\n", phase_result);
+			pr_debug("%s\n", phase_result);
 
 			msm_host->saved_tuning_phase = phase;
 		}
