@@ -18,6 +18,15 @@ static DEFINE_RATELIMIT_STATE(mm_debug_rs, 30 * HZ, 1);
 #define MIN_FILE_SIZE_THR_GB	3
 static unsigned long min_file;
 
+/*
+ * The full task dump is a few hundred lines and runs from the shrink_slab
+ * path while shrinker_rwsem is held, so keep it off by default.
+ * Enable with: echo 1 > /sys/module/sec_mm/parameters/dump_tasks
+ */
+static bool dump_tasks;
+module_param(dump_tasks, bool, 0644);
+MODULE_PARM_DESC(dump_tasks, "dump all tasks when low file cache is detected");
+
 static unsigned long lowfile_count(struct shrinker *s,
 				  struct shrink_control *sc)
 {
@@ -29,12 +38,9 @@ static unsigned long lowfile_count(struct shrinker *s,
 	if (file < min_file && __ratelimit(&mm_debug_rs)) {
 		pr_info("low file detected : %lukB < %luKB\n", K(file),
 			K(min_file));
-#ifdef CONFIG_SEC_MM
-                show_mem(0, NULL);
-#else
-                mm_debug_show_free_areas();
-#endif
-		mm_debug_dump_tasks();
+		mm_debug_show_free_areas();
+		if (dump_tasks)
+			mm_debug_dump_tasks();
 	}
 
 	return 0; /* return 0 not to call to scan_objects */
