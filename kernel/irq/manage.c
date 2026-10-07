@@ -1408,10 +1408,16 @@ void unaffine_perf_irqs(void)
 	list_for_each_entry_rcu(data, &perf_crit_irqs, list) {
 		struct irq_desc *desc = data->desc;
 
-		raw_spin_lock(&desc->lock);
+		/*
+		 * desc->lock is also taken from hardirq context, so it must
+		 * be acquired with interrupts disabled here. Otherwise an
+		 * interrupt for this very line can fire on this CPU and
+		 * deadlock on the lock we are already holding.
+		 */
+		raw_spin_lock_irqsave(&desc->lock, flags);
 		irq_set_affinity_locked(&desc->irq_data, cpu_all_mask, true);
 		unaffine_one_perf_thread(desc->action);
-		raw_spin_unlock(&desc->lock);
+		raw_spin_unlock_irqrestore(&desc->lock, flags);
 	}
 	rcu_read_unlock();
 }
@@ -1437,12 +1443,13 @@ void reaffine_perf_irqs(bool from_hotplug)
 	list_for_each_entry_rcu(data, &perf_crit_irqs, list) {
 		struct irq_desc *desc = data->desc;
 
-		raw_spin_lock(&desc->lock);
+		/* See the comment in unaffine_perf_irqs() about irqsave. */
+		raw_spin_lock_irqsave(&desc->lock, flags);
 		raw_spin_lock(&perf_irqs_lock);
 		affine_one_perf_irq(desc, data->perf_flag);
 		raw_spin_unlock(&perf_irqs_lock);
 		affine_one_perf_thread(desc->action);
-		raw_spin_unlock(&desc->lock);
+		raw_spin_unlock_irqrestore(&desc->lock, flags);
 	}
 	rcu_read_unlock();
 }
