@@ -271,10 +271,19 @@ int irq_startup(struct irq_desc *desc, bool resend, bool force)
 			if (d->chip->flags & IRQCHIP_AFFINITY_PRE_STARTUP)
 				irq_setup_affinity(desc);
 			ret = __irq_startup(desc);
-			if (!(d->chip->flags & IRQCHIP_AFFINITY_PRE_STARTUP))
-				irq_setup_affinity(desc);
-			else if (irqd_has_set(&desc->irq_data, IRQD_PERF_CRITICAL))
+			/*
+			 * A perf-critical IRQ must be affined to its performance
+			 * CPUs and registered for migration on every
+			 * architecture. Check it first: IRQCHIP_AFFINITY_PRE_STARTUP
+			 * is only set on x86, so hanging the perf setup off it
+			 * would leave the perf path dead on ARM/ARM64 and the IRQ
+			 * would be dumped onto CPU0 by irq_setup_affinity()
+			 * instead of being tracked for hotplug migration.
+			 */
+			if (irqd_has_set(&desc->irq_data, IRQD_PERF_CRITICAL))
 				setup_perf_irq_locked(desc, desc->action->flags);
+			else if (!(d->chip->flags & IRQCHIP_AFFINITY_PRE_STARTUP))
+				irq_setup_affinity(desc);
 			break;
 		case IRQ_STARTUP_MANAGED:
 			irq_do_set_affinity(d, aff, false);
