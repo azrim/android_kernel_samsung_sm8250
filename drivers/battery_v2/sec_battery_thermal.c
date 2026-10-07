@@ -1508,7 +1508,7 @@ bool sec_bat_time_management(
 		}
 		break;
 	default:
-		dev_err(battery->dev,
+		dev_dbg(battery->dev,
 			"%s: Undefine Battery Status\n", __func__);
 		return true;
 	}
