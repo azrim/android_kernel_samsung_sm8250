@@ -9,6 +9,7 @@
 #include <linux/kthread.h>
 #include <linux/math64.h>
 #include <linux/mm.h>
+#include <linux/swap.h>
 #include <linux/vmstat.h>
 #include <linux/sort.h>
 #include <linux/moduleparam.h>
@@ -173,11 +174,27 @@ static unsigned int poll_msec = 200;
  * ~65% full with si_mem_available() around 1.6 GiB, so the gate stayed shut
  * through the whole range where the device was visibly under pressure.
  * 1.5 GiB opens it while there is still headroom, before zram saturates,
- * without the more aggressive behaviour a 2 GiB floor produced.  The gate
- * looks only at available RAM, never at zram occupancy, so this floor is
- * what stands in for that.
+ * without the more aggressive behaviour a 2 GiB floor produced.  This
+ * floor is only a proxy for zram occupancy; zram_full_pct below lets the
+ * gate look at the real thing.
  */
 static unsigned int reserve_mib = 1536;
+
+/*
+ * Swap occupancy, in percent, at or above which the reserve_mib gate is
+ * bypassed so routine reclaim runs even while si_mem_available() still
+ * claims there is plenty of RAM.  0 disables the check.
+ *
+ * si_mem_available() cannot see pages compressed into zram -- it counts
+ * them as available -- so the gate stays shut while the compressor fills,
+ * and the device spends its time decompressing instead of reclaiming
+ * cached apps.  On r8q (swap is an 8 GiB zram) a stress run drove zram to
+ * ~86% with PSI memory stall avg300 ~29% while stat_gated kept climbing:
+ * the gate was suppressing reclaim through the whole stall.  Reading swap
+ * occupancy directly opens the gate at the point si_mem_available() misses.
+ */
+static unsigned int zram_full_pct = 70;
+#define ZRAM_FULL_PCT_MAX 100
 
 /*
  * Minimum settle time after a reclaim that killed victims, in ms. The victims
@@ -221,6 +238,7 @@ static unsigned long stat_pages_freed;
 static unsigned long stat_no_victims;
 static unsigned long stat_gated;
 static unsigned long stat_grace_dropped;
+static unsigned long stat_zram_ungated;
 
 /*
  * Descending by the named field. Comparing explicitly rather than subtracting
@@ -783,6 +801,31 @@ static bool pages_below_min_wmark(void)
 	return free < min;
 }
 
+/*
+ * Is the swap backing close to full?  On r8q swap is an 8 GiB zram, so
+ * this is zram occupancy.  total_swap_pages and get_nr_swap_pages() are
+ * maintained by the swap allocator; both are 0 when no swap is active.
+ */
+static bool swap_nearly_full(void)
+{
+	long total = total_swap_pages;
+	long free_pages;
+
+	if (!zram_full_pct || total <= 0)
+		return false;
+
+	free_pages = get_nr_swap_pages();
+	if (free_pages < 0)
+		free_pages = 0;
+
+	/*
+	 * Compare without dividing: used/total >= pct/100 is
+	 * used * 100 >= pct * total.  total is at most a few million pages,
+	 * so the product stays well inside long.
+	 */
+	return (total - free_pages) * 100 >= (long)zram_full_pct * total;
+}
+
 static bool reclaim_needed(int *adj_floor)
 {
 	struct psi_trigger *t;
@@ -839,8 +882,17 @@ static bool reclaim_needed(int *adj_floor)
 	if (needed && reserve_mib && !pages_below_min_wmark() &&
 	    si_mem_available() >
 	    ((unsigned long)reserve_mib << (20 - PAGE_SHIFT))) {
-		stat_gated++;
-		return false;
+		/*
+		 * si_mem_available() counts zram-compressed pages as
+		 * available, so it can hold the gate shut while swap fills.
+		 * Once swap is nearly full, reclaim anyway.
+		 */
+		if (swap_nearly_full()) {
+			stat_zram_ungated++;
+		} else {
+			stat_gated++;
+			return false;
+		}
 	}
 
 	return needed;
@@ -1334,6 +1386,20 @@ static int set_reserve_mib(const char *val, const struct kernel_param *kp)
 	return 0;
 }
 
+static int set_zram_full_pct(const char *val, const struct kernel_param *kp)
+{
+	unsigned int v = zram_full_pct;
+	int ret = kstrtouint(val, 0, &v);
+
+	if (ret)
+		return ret;
+	/* 0 disables the check; above 100% it could never fire */
+	if (v > ZRAM_FULL_PCT_MAX)
+		return -EINVAL;
+	zram_full_pct = v;
+	return 0;
+}
+
 static int set_grace_msec(const char *val, const struct kernel_param *kp)
 {
 	unsigned int v = grace_msec;
@@ -1379,6 +1445,11 @@ static const struct kernel_param_ops target_mib_ops = {
 
 static const struct kernel_param_ops reserve_mib_ops = {
 	.set = set_reserve_mib,
+	.get = param_get_uint,
+};
+
+static const struct kernel_param_ops zram_full_pct_ops = {
+	.set = set_zram_full_pct,
 	.get = param_get_uint,
 };
 
@@ -1488,6 +1559,9 @@ MODULE_PARM_DESC(target_mib,
 module_param_cb(reserve_mib, &reserve_mib_ops, &reserve_mib, 0644);
 MODULE_PARM_DESC(reserve_mib,
 		"MiB of free memory below which routine reclaim may run; 0 disables");
+module_param_cb(zram_full_pct, &zram_full_pct_ops, &zram_full_pct, 0644);
+MODULE_PARM_DESC(zram_full_pct,
+		"Swap (zram) occupancy percent above which reserve_mib is bypassed; 0 disables");
 module_param_cb(grace_msec, &grace_msec_ops, &grace_msec, 0644);
 MODULE_PARM_DESC(grace_msec,
 		"Minimum settle time after a killing reclaim, ms; 0 disables");
@@ -1515,6 +1589,9 @@ MODULE_PARM_DESC(stat_gated,
 module_param(stat_grace_dropped, ulong, 0444);
 MODULE_PARM_DESC(stat_grace_dropped,
 		 "Pressure events whose reclaim was suppressed by grace_msec");
+module_param(stat_zram_ungated, ulong, 0444);
+MODULE_PARM_DESC(stat_zram_ungated,
+		 "Pressure events reclaimed because zram was nearly full");
 
 /* Needed to prevent Android from thinking there's no LMK and thus rebooting */
 #undef MODULE_PARAM_PREFIX
