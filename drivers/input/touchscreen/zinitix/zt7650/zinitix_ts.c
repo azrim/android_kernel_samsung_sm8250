@@ -4708,16 +4708,14 @@ static bool ts_get_raw_data(struct zt_ts_info *info)
 	u32 total_node = info->cap_info.total_node_num;
 	u32 sz;
 
-	if (!mutex_trylock(&info->bus_lock)) {
-		input_err(true, &client->dev, "%s: Failed to occupy mutex\n", __func__);
-		return true;
-	}
-
+	/*
+	 * read_raw_data() takes bus_lock itself; do not hold it here too, or
+	 * the same non-recursive mutex is acquired twice on this path.
+	 */
 	sz = total_node * 2 + sizeof(struct point_info) * MAX_SUPPORTED_FINGER_NUM;
 
 	if (read_raw_data(info->client, ZT_RAWDATA_REG, (char *)info->cur_data, sz) < 0) {
 		input_err(true, &client->dev, "%s: Failed to read raw data\n", __func__);
-		mutex_unlock(&info->bus_lock);
 		return false;
 	}
 
@@ -4725,7 +4723,6 @@ static bool ts_get_raw_data(struct zt_ts_info *info)
 	memcpy((u8 *)(&info->touch_info[0]),
 			(u8 *)&info->cur_data[total_node],
 			sizeof(struct point_info) * MAX_SUPPORTED_FINGER_NUM);
-	mutex_unlock(&info->bus_lock);
 
 	return true;
 }
@@ -5974,7 +5971,7 @@ static void ts_get_strength_data(struct zt_ts_info *info)
 	int i, j, n;
 	u8 ref_max[2] = { 0, 0 };
 
-	mutex_lock(&info->bus_lock);
+	/* read_data() takes bus_lock itself. */
 	read_data(info->client, 0x0308, ref_max, 2);
 
 	input_info(true, &client->dev, "reference max: %X %X\n", ref_max[0], ref_max[1]);
@@ -5986,7 +5983,6 @@ static void ts_get_strength_data(struct zt_ts_info *info)
 			pr_cont(" %d", info->cur_data[n]);
 		pr_cont("\n");
 	}
-	mutex_unlock(&info->bus_lock);
 }
 
 static void run_cs_raw_read_all(void *device_data)
@@ -6436,9 +6432,7 @@ static void get_wet_mode(void *device_data)
 	u16 temp = 0;
 
 	sec_cmd_set_default_result(sec);
-	mutex_lock(&info->bus_lock);
 	read_data(client, ZT_DEBUG_REG, (u8 *)&temp, 2);
-	mutex_unlock(&info->bus_lock);
 
 	input_info(true, &client->dev, "%s, %x\n", __func__, temp);
 
