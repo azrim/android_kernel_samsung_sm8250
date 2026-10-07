@@ -901,6 +901,9 @@ static int ion_dma_buf_begin_cpu_access_partial(struct dma_buf *dmabuf,
 	struct ion_dma_buf_attachment *a;
 	int ret = 0;
 
+	if (offset > buffer->size || len > buffer->size - offset)
+		return -EINVAL;
+
 	if (!hlos_accessible_buffer(buffer)) {
 		trace_ion_begin_cpu_access_cmo_skip(NULL, dmabuf->buf_name,
 						    ion_buffer_cached(buffer),
@@ -981,6 +984,9 @@ static int ion_dma_buf_end_cpu_access_partial(struct dma_buf *dmabuf,
 	struct ion_buffer *buffer = dmabuf->priv;
 	struct ion_dma_buf_attachment *a;
 	int ret = 0;
+
+	if (offset > buffer->size || len > buffer->size - offset)
+		return -EINVAL;
 
 	if (!hlos_accessible_buffer(buffer)) {
 		trace_ion_end_cpu_access_cmo_skip(NULL, dmabuf->buf_name,
