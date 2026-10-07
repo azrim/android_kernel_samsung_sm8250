@@ -7852,7 +7852,8 @@ static long ts_misc_fops_ioctl(struct file *filp, unsigned int cmd, unsigned lon
 	u16 val;
 	int nval = 0;
 #ifdef CONFIG_COMPAT
-	void __user *argp = compat_ptr(arg);
+	/* .unlocked_ioctl gets a native pointer, .compat_ioctl a compat one. */
+	void __user *argp = is_compat_task() ? compat_ptr(arg) : (void __user *)arg;
 #else
 	void __user *argp = (void __user *)arg;
 #endif
@@ -7984,7 +7985,6 @@ fail_hw_cal:
 	case TOUCH_IOCTL_SET_RAW_DATA_MODE:
 		if (copy_from_user(&nval, argp, sizeof(nval))) {
 			input_info(true, &misc_info->client->dev, "%s: error: copy_from_user\n", __func__);
-			misc_info->work_state = NOTHING;
 			return -1;
 		}
 		ts_set_touchmode((u16)nval);
@@ -8140,6 +8140,7 @@ static const struct file_operations ts_misc_fops = {
 	.owner = THIS_MODULE,
 	.open = ts_misc_fops_open,
 	.release = ts_misc_fops_close,
+	.unlocked_ioctl = ts_misc_fops_ioctl,
 	.compat_ioctl = ts_misc_fops_ioctl,
 };
 
