@@ -720,6 +720,8 @@ struct zt_ts_info {
 
 	struct pinctrl *pinctrl;
 	bool tsp_pwr_enabled;
+	/* Per-instance regulator power state (survives re-probe). */
+	bool pwr_on;
 #ifdef CONFIG_VBUS_NOTIFIER
 	struct notifier_block vbus_nb;
 #endif
@@ -1460,9 +1462,13 @@ static int zt_power_ctrl(void *data, bool on)
 	struct regulator *regulator_dvdd = NULL;
 	struct regulator *regulator_avdd;
 	int retval = 0;
-	static bool enabled;
 
-	if (enabled == on)
+	/*
+	 * Track the rail state per instance: a file-scope static survives
+	 * driver remove/re-probe, so a re-probe would see "already on" and skip
+	 * regulator_enable(), leaving the controller unpowered.
+	 */
+	if (info->pwr_on == on)
 		return retval;
 
 	if (!pdata->gpio_ldo_en) {
@@ -1507,7 +1513,7 @@ static int zt_power_ctrl(void *data, bool on)
 			regulator_disable(regulator_avdd);
 	}
 
-	enabled = on;
+	info->pwr_on = on;
 
 out:
 	if (!pdata->gpio_ldo_en)
@@ -1972,7 +1978,14 @@ static ssize_t secure_touch_enable_store(struct device *dev,
 		atomic_set(&info->secure_enabled, 0);
 		sysfs_notify(&info->input_dev->dev.kobj, NULL, "secure_touch");
 
+		/*
+		 * Serialise with zt_touch_work(), which mutates cur_coord[] and
+		 * the input MT slots under state_lock. secure_enabled is already
+		 * cleared, so an interrupt can reach that path right now.
+		 */
+		mutex_lock(&info->state_lock);
 		clear_report_data(info);
+		mutex_unlock(&info->state_lock);
 		complete(&info->secure_powerdown);
 		complete(&info->secure_interrupt);
 
@@ -5395,7 +5408,7 @@ static void run_mis_cal_read(void *device_data)
 		goto NG;
 	}
 
-	if (info->work_state == SUSPEND) {
+	if (info->work_state == EALRY_SUSPEND) {
 		input_info(true, &info->client->dev, "%s: [ERROR] Touch is stopped\n", __func__);
 		mis_cal_data = 0xF2;
 		goto NG;
@@ -5531,7 +5544,7 @@ static void run_jitter_test(void *device_data)
 	disable_irq(info->irq);
 	sec_cmd_set_default_result(sec);
 
-	if (info->work_state == SUSPEND) {
+	if (info->work_state == EALRY_SUSPEND) {
 		input_info(true, &info->client->dev, "%s: [ERROR] Touch is stopped\n", __func__);
 		goto NG;
 	}
@@ -5598,7 +5611,7 @@ static void run_factory_miscalibration(void *device_data)
 		goto NG;
 	}
 
-	if (info->work_state == SUSPEND) {
+	if (info->work_state == EALRY_SUSPEND) {
 		input_info(true, &info->client->dev, "%s: [ERROR] Touch is stopped\n", __func__);
 		mis_cal_data = 0xF2;
 		goto NG;
@@ -6961,6 +6974,10 @@ static int tsp_vbus_notification(struct notifier_block *nb,
 				"%s: psy otg not ready yet\n", __func__);
 	}
 
+	/* power_supply_get_by_name() took a reference; drop it. */
+	if (psy_otg)
+		power_supply_put(psy_otg);
+
 #ifdef CONFIG_INPUT_SEC_SECURE_TOUCH
 	if (atomic_read(&info->secure_enabled)) {
 		input_info(true, &info->client->dev,
@@ -8128,7 +8145,7 @@ static void zt_run_mis_cal(struct zt_ts_info *info)
 		goto NG;
 	}
 
-	if (info->work_state == SUSPEND) {
+	if (info->work_state == EALRY_SUSPEND) {
 		input_info(true, &info->client->dev, "%s: [ERROR] Touch is stopped\n", __func__);
 		mis_cal_data = 0xF2;
 		goto NG;
@@ -8914,6 +8931,20 @@ static int zt_ts_remove(struct i2c_client *client)
 	wait_event(ts_misc_close_wq, atomic_read(&ts_misc_open_cnt) == 0);
 #endif
 
+	/*
+	 * Drop the external registrations that hold a pointer into @info
+	 * before it is freed: a stale notifier block or secure-touch descriptor
+	 * would be dereferenced after kfree(info).
+	 */
+#ifdef CONFIG_VBUS_NOTIFIER
+	vbus_notifier_unregister(&info->vbus_nb);
+#endif
+
+#ifdef CONFIG_INPUT_SEC_SECURE_TOUCH
+	if (info->pdata->ss_touch_num > 0)
+		sec_secure_touch_unregister(info->pdata->ss_touch_num);
+#endif
+
 	disable_irq(info->irq);
 
 	cancel_delayed_work_sync(&info->work_read_info);
@@ -8927,6 +8958,22 @@ static int zt_ts_remove(struct i2c_client *client)
 	del_timer_sync(&info->rel_timer);
 	cancel_work_sync(&info->rel_work);
 
+	/*
+	 * Same hazard for the ESD watchdog: ts_tmr_work() takes state_lock, so
+	 * stop the timer and drain the worker *before* acquiring the lock.
+	 * Flushing it while holding state_lock deadlocks against a worker that
+	 * is already queued and blocked on the same mutex.
+	 */
+#if ESD_TIMER_INTERVAL
+	esd_timer_stop(info);
+	cancel_work_sync(&info->tmr_work);
+	write_reg(info->client, ZT_PERIODICAL_INTERRUPT_INTERVAL, 0);
+#if defined(TSP_VERBOSE_DEBUG)
+	input_info(true, &client->dev, "%s: Stopped esd timer\n", __func__);
+#endif
+	destroy_workqueue(esd_tmr_workqueue);
+#endif
+
 	mutex_lock(&info->state_lock);
 
 	info->work_state = REMOVE;
@@ -8936,16 +8983,6 @@ static int zt_ts_remove(struct i2c_client *client)
 
 #ifdef CONFIG_TOUCHSCREEN_DUMP_MODE
 	p_ghost_check = NULL;
-#endif
-
-#if ESD_TIMER_INTERVAL
-	flush_work(&info->tmr_work);
-	write_reg(info->client, ZT_PERIODICAL_INTERRUPT_INTERVAL, 0);
-	esd_timer_stop(info);
-#if defined(TSP_VERBOSE_DEBUG)
-	input_info(true, &client->dev, "%s: Stopped esd timer\n", __func__);
-#endif
-	destroy_workqueue(esd_tmr_workqueue);
 #endif
 
 	if (info->irq)
@@ -8986,12 +9023,15 @@ void zt_ts_shutdown(struct i2c_client *client)
 	disable_irq(info->irq);
 	del_timer_sync(&info->rel_timer);
 	cancel_work_sync(&info->rel_work);
-	mutex_lock(&info->state_lock);
 #if ESD_TIMER_INTERVAL
-	flush_work(&info->tmr_work);
+	/*
+	 * Stop the ESD watchdog and drain its worker before touching
+	 * state_lock: ts_tmr_work() takes the same lock, so flushing it under
+	 * the lock deadlocks if a worker is already queued.
+	 */
 	esd_timer_stop(info);
+	cancel_work_sync(&info->tmr_work);
 #endif
-	mutex_unlock(&info->state_lock);
 	zt_power_control(info, POWER_OFF);
 	input_info(true, &client->dev, "%s--\n", __func__);
 }
