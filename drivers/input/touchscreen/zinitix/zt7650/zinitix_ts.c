@@ -4908,6 +4908,7 @@ static void run_raw_test_all(struct sec_cmd_data *sec, u16 mode, s16 *data, bool
 	char *all_cmdbuff;
 	s32 i, j, idx;
 	int ret;
+	size_t bufsz;
 
 	zt_ts_esd_timer_stop(info);
 	sec_cmd_set_default_result(sec);
@@ -4920,7 +4921,9 @@ static void run_raw_test_all(struct sec_cmd_data *sec, u16 mode, s16 *data, bool
 	get_raw_data(info, (u8 *)data, 1);
 	ts_set_touchmode(TOUCH_POINT_MODE);
 
-	all_cmdbuff = kzalloc(info->cap_info.x_node_num * info->cap_info.y_node_num * 6, GFP_KERNEL);
+	/* "[-]NNNNN," is up to 7 bytes; +1 for the terminating NUL. */
+	bufsz = (size_t)info->cap_info.x_node_num * info->cap_info.y_node_num * 8 + 1;
+	all_cmdbuff = kzalloc(bufsz, GFP_KERNEL);
 	if (!all_cmdbuff) {
 		input_info(true, &info->client->dev, "%s: alloc failed\n", __func__);
 		ret = -ENOMEM;
@@ -4938,7 +4941,7 @@ static void run_raw_test_all(struct sec_cmd_data *sec, u16 mode, s16 *data, bool
 		}
 	}
 
-	sec_cmd_set_cmd_result(sec, all_cmdbuff, strnlen(all_cmdbuff, info->cap_info.x_node_num * info->cap_info.y_node_num * 6));
+	sec_cmd_set_cmd_result(sec, all_cmdbuff, strnlen(all_cmdbuff, bufsz));
 	sec->cmd_state = SEC_CMD_STATUS_OK;
 	kfree(all_cmdbuff);
 
@@ -5969,6 +5972,7 @@ static void run_cs_raw_read_all(void *device_data)
 	int retry = 0;
 	char *all_cmdbuff;
 	s32 i, j;
+	size_t bufsz;
 
 	sec_cmd_set_default_result(sec);
 	disable_irq(info->irq);
@@ -5990,7 +5994,9 @@ static void run_cs_raw_read_all(void *device_data)
 
 	ts_get_strength_data(info);
 
-	all_cmdbuff = kzalloc(info->cap_info.x_node_num * info->cap_info.y_node_num * 6, GFP_KERNEL);
+	/* "[-]NNNNN," is up to 7 bytes; +1 for the terminating NUL. */
+	bufsz = (size_t)info->cap_info.x_node_num * info->cap_info.y_node_num * 8 + 1;
+	all_cmdbuff = kzalloc(bufsz, GFP_KERNEL);
 	if (!all_cmdbuff) {
 		input_info(true, &info->client->dev, "%s: alloc failed\n", __func__);
 		goto out;
@@ -6004,7 +6010,7 @@ static void run_cs_raw_read_all(void *device_data)
 	}
 
 	snprintf(buff, sizeof(buff), "%s", "OK");
-	sec_cmd_set_cmd_result(sec, all_cmdbuff, strnlen(all_cmdbuff, sizeof(all_cmdbuff)));
+	sec_cmd_set_cmd_result(sec, all_cmdbuff, strnlen(all_cmdbuff, bufsz));
 	sec->cmd_state = SEC_CMD_STATUS_OK;
 	kfree(all_cmdbuff);
 
@@ -6029,6 +6035,7 @@ static void run_cs_delta_read_all(void *device_data)
 	int retry = 0;
 	char *all_cmdbuff;
 	s32 i, j;
+	size_t bufsz;
 
 	sec_cmd_set_default_result(sec);
 
@@ -6054,7 +6061,9 @@ static void run_cs_delta_read_all(void *device_data)
 	zt_ts_esd_timer_start(info);
 	ts_get_strength_data(info);
 
-	all_cmdbuff = kzalloc(info->cap_info.x_node_num * info->cap_info.y_node_num * 6, GFP_KERNEL);
+	/* "[-]NNNNN," is up to 7 bytes; +1 for the terminating NUL. */
+	bufsz = (size_t)info->cap_info.x_node_num * info->cap_info.y_node_num * 8 + 1;
+	all_cmdbuff = kzalloc(bufsz, GFP_KERNEL);
 	if (!all_cmdbuff) {
 		input_info(true, &info->client->dev, "%s: alloc failed\n", __func__);
 		goto out;
@@ -6068,7 +6077,7 @@ static void run_cs_delta_read_all(void *device_data)
 	}
 
 	snprintf(buff, sizeof(buff), "%s", "OK");
-	sec_cmd_set_cmd_result(sec, all_cmdbuff, strnlen(all_cmdbuff, sizeof(all_cmdbuff)));
+	sec_cmd_set_cmd_result(sec, all_cmdbuff, strnlen(all_cmdbuff, bufsz));
 	sec->cmd_state = SEC_CMD_STATUS_OK;
 	kfree(all_cmdbuff);
 
@@ -7555,6 +7564,15 @@ static ssize_t get_lp_dump(struct device *dev, struct device_attribute *attr, ch
 
 	dump_format = sponge_data[0];
 	dump_num = sponge_data[1];
+
+	if (dump_format == 0 || dump_format > sizeof(sponge_data)) {
+		input_err(true, &info->client->dev,
+				"%s: invalid dump format %d\n", __func__, dump_format);
+		snprintf(buf, SEC_CMD_BUF_SIZE,
+				"NG, invalid dump format, format=%d", dump_format);
+		goto out;
+	}
+
 	dump_start = ZT_SPONGE_DUMP_START;
 	dump_end = dump_start + (dump_format * (dump_num - 1));
 
