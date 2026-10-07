@@ -1957,7 +1957,7 @@ static ssize_t secure_touch_enable_store(struct device *dev,
 
 		zt_delay(100);
 		mutex_lock(&info->state_lock);
-		disable_irq(info->client->irq);
+		disable_irq(info->irq);
 
 #if ESD_TIMER_INTERVAL
 		write_reg(info->client, ZT_PERIODICAL_INTERRUPT_INTERVAL, 0);
@@ -1966,7 +1966,7 @@ static ssize_t secure_touch_enable_store(struct device *dev,
 		clear_report_data(info);
 
 		if (pm_runtime_get_sync(info->client->adapter->dev.parent) < 0) {
-			enable_irq(info->client->irq);
+			enable_irq(info->irq);
 #if ESD_TIMER_INTERVAL
 			esd_timer_start(CHECK_ESD_TIMER, info);
 			write_reg(info->client, ZT_PERIODICAL_INTERRUPT_INTERVAL, SCAN_RATE_HZ * ESD_TIMER_INTERVAL);
@@ -1981,7 +1981,7 @@ static ssize_t secure_touch_enable_store(struct device *dev,
 		atomic_set(&info->secure_enabled, 1);
 		atomic_set(&info->secure_pending_irqs, 0);
 
-		enable_irq(info->client->irq);
+		enable_irq(info->irq);
 		mutex_unlock(&info->state_lock);
 	} else if (data == 0) {
 		if (atomic_read(&info->secure_enabled) == SECURE_TOUCH_DISABLED)
@@ -9103,7 +9103,7 @@ int stui_tsp_enter(void)
 	ret = stui_i2c_lock(tui_tsp_info->client->adapter);
 	if (ret) {
 		pr_err("[STUI] stui_i2c_lock failed : %d\n", ret);
-		enable_irq(tui_tsp_info->client->irq);
+		enable_irq(tui_tsp_info->irq);
 		return -1;
 	}
 
