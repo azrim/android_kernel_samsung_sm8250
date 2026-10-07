@@ -47,7 +47,7 @@ static atomic_long_t total_heap_bytes;
 int ion_walk_heaps(int heap_id, enum ion_heap_type type, void *data,
 		   int (*f)(struct ion_heap *heap, void *data))
 {
-	int ret_val = 0;
+	int ret_val = -ENODEV;
 	struct ion_heap *heap;
 	struct ion_device *dev = internal_dev;
 
