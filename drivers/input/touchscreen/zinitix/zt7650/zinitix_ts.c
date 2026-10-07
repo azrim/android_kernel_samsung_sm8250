@@ -123,8 +123,13 @@ enum power_control {
  *
  * A tap is never deferred (its travel stays below ZT_REL_MIN_MOVE), so typing
  * and normal tapping take the original path untouched.
+ *
+ * ZT_REL_DEBOUNCE_MS is also the latency added to a real finger-lift: when the
+ * finger is gone the controller stops sending frames, so nothing resolves the
+ * deferred release early and the rel_timer backstop commits it after the full
+ * window. Keep it near one report period.
  */
-#define ZT_REL_DEBOUNCE_MS		25
+#define ZT_REL_DEBOUNCE_MS		10
 #define ZT_REL_MIN_MOVE			40
 #define ZT_REL_MAX_DRIFT		60
 
