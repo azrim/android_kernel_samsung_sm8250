@@ -1289,6 +1289,23 @@ static void add_desc_to_perf_list(struct irq_desc *desc, unsigned int perf_flag)
 {
 	struct irq_desc_list *item;
 
+	/*
+	 * Keep at most one entry per descriptor. __free_irq() unlinks a single
+	 * entry, so a duplicate would be left dangling and later dereferenced
+	 * after the descriptor has been freed. Calls for the same descriptor
+	 * are serialized by desc->lock, so this check-and-add is race-free for
+	 * the descriptor in question.
+	 */
+	raw_spin_lock(&perf_irqs_lock);
+	list_for_each_entry(item, &perf_crit_irqs, list) {
+		if (item->desc == desc) {
+			item->perf_flag = perf_flag;
+			raw_spin_unlock(&perf_irqs_lock);
+			return;
+		}
+	}
+	raw_spin_unlock(&perf_irqs_lock);
+
 	item = kmalloc(sizeof(*item), GFP_ATOMIC | __GFP_NOFAIL);
 	item->desc = desc;
 	item->perf_flag = perf_flag;
