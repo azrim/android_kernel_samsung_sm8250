@@ -1730,14 +1730,13 @@ static bool init_touch(struct zt_ts_info *info)
 	return mini_init_touch(info);
 }
 
-/* Commit the deferred release of one slot. Called with state_lock held. */
-static void zt_flush_release(struct zt_ts_info *info, int i)
+/*
+ * Report the release of one slot unconditionally. Called with state_lock
+ * held. This is the "commit now" path used by a tap and by a deferred
+ * release once its window is over.
+ */
+static void zt_report_release(struct zt_ts_info *info, int i)
 {
-	if (!info->rel_pending[i])
-		return;
-
-	info->rel_pending[i] = false;
-
 	input_mt_slot(info->input_dev, i);
 	input_report_abs(info->input_dev, ABS_MT_CUSTOM, 0);
 	input_mt_report_slot_state(info->input_dev, MT_TOOL_FINGER, 0);
@@ -1753,6 +1752,16 @@ static void zt_flush_release(struct zt_ts_info *info, int i)
 	info->move_count[i] = 0;
 	memset(&info->cur_coord[i], 0, sizeof(struct ts_coordinate));
 	memset(&info->old_coord[i], 0, sizeof(struct ts_coordinate));
+}
+
+/* Commit the deferred release of one slot. Called with state_lock held. */
+static void zt_flush_release(struct zt_ts_info *info, int i)
+{
+	if (!info->rel_pending[i])
+		return;
+
+	info->rel_pending[i] = false;
+	zt_report_release(info, i);
 }
 
 /*
@@ -2582,7 +2591,7 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 					msecs_to_jiffies(ZT_REL_DEBOUNCE_MS);
 				mod_timer(&info->rel_timer, info->rel_deadline[i]);
 			} else {
-				zt_flush_release(info, i);
+				zt_report_release(info, i);
 			}
 		}
 	}
