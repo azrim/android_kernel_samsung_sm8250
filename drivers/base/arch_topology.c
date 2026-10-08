@@ -142,7 +142,7 @@ void arch_set_max_freq_scale(struct cpumask *cpus,
 	unsigned long scale, max_freq;
 	int cpu = cpumask_first(cpus);
 
-	if (cpu > nr_cpu_ids)
+	if (cpu >= nr_cpu_ids)
 		return;
 
 	max_freq = per_cpu(max_cpu_freq, cpu);
