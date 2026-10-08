@@ -2275,12 +2275,15 @@ static void zram_handle_comp_page(struct work_struct *work)
 	 * Take init_lock so zram_reset_device() cannot free table/comp
 	 * underneath us.  The previous NULL checks were TOCTOU: reset
 	 * can drop the write lock and free between the test and use.
-	 * down_read() may sleep, which is fine in this work context.
+	 * down_read() may sleep, which is fine in this work context --
+	 * but only once the kmap_atomic() above has been undone, since
+	 * that region has preemption disabled and down_read() would
+	 * otherwise schedule while atomic.
 	 */
+	kunmap_atomic(src);
 	down_read(&zram->init_lock);
 	if (!zram->comp || !zram->table) {
 		up_read(&zram->init_lock);
-		kunmap_atomic(src);
 		if (!zw->sync) {
 			if (zw->parent)
 				bio_io_error(zw->parent);
@@ -2294,6 +2297,7 @@ static void zram_handle_comp_page(struct work_struct *work)
 		return;
 	}
 
+	src = kmap_atomic(src_page);
 	dst = kmap_atomic(dst_page);
 	zstrm = zcomp_stream_get(zram->comp);
 	ret = zcomp_decompress(zstrm,
