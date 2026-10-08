@@ -15,8 +15,6 @@
 #include <linux/kobject.h>
 #include <linux/slab.h>
 
-#define MAX_INSERT_DIGIT 4
-
 #ifdef CONFIG_SEC_PERF_MANAGER_QC
 
 #if IS_ENABLED(CONFIG_SEC_PANEL_NOTIFIER)
@@ -397,6 +395,10 @@ unsigned long calc_fps_required_util(unsigned long rn_sum, unsigned long dur)
 	if (g_fps == 0 || us_frame_time == 0)
 		return 0;
 
+	/* A margin >= the frame time would underflow the divisor */
+	if (margin >= us_frame_time)
+		return 0;
+
 	required_rate = (us_scale_dur * FP_SCALE) / (us_frame_time - margin);
 
 	if (required_rate <= (1 * FP_SCALE))
@@ -464,13 +466,18 @@ static struct miscdevice perf_mgr_device = {
 static ssize_t fps_margin_percent_show(struct kobject *kobj,
 			struct kobj_attribute *attr, char *buf)
 {
-		return snprintf(buf, MAX_INSERT_DIGIT, "%d\n", fps_margin_percent);
+		return scnprintf(buf, PAGE_SIZE, "%d\n", fps_margin_percent);
 }
 
 static ssize_t fps_margin_percent_store(struct kobject *kobj,
 			struct kobj_attribute *attr, const char *buf, size_t n)
 {
-		sscanf(buf, "%du", &fps_margin_percent);
+		int val;
+
+		if (sscanf(buf, "%du", &val) != 1 || val < 0 || val >= 100)
+			return -EINVAL;
+
+		fps_margin_percent = val;
 		return n;
 }
 
@@ -479,7 +486,7 @@ perf_attr(fps_margin_percent);
 static ssize_t hold_frame_count_show(struct kobject *kobj,
 			struct kobj_attribute *attr, char *buf)
 {
-		return snprintf(buf, MAX_INSERT_DIGIT, "%d\n", hold_frame_count);
+		return scnprintf(buf, PAGE_SIZE, "%d\n", hold_frame_count);
 }
 
 static ssize_t hold_frame_count_store(struct kobject *kobj,
