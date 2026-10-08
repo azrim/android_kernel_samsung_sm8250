@@ -209,6 +209,12 @@ static bool cpufreq_limit_make_table(void)
 				freq > param.big_max_freq)
 			continue;
 
+		if (freq_count >= ARRAY_SIZE(param.unified_cpuftbl)) {
+			pr_err("%s: unified table full, dropping big freqs\n",
+					__func__);
+			break;
+		}
+
 		param.unified_cpuftbl[freq_count++] = freq;
 	}
 
@@ -233,6 +239,12 @@ little:
 		if (freq < param.ltl_min_freq ||
 				freq > param.ltl_max_freq)
 			continue;
+
+		if (freq_count >= ARRAY_SIZE(param.unified_cpuftbl)) {
+			pr_err("%s: unified table full, dropping little freqs\n",
+					__func__);
+			break;
+		}
 
 		param.unified_cpuftbl[freq_count++] = freq;
 	}
