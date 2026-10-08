@@ -5073,7 +5073,13 @@ static int arm_smmu_alloc_cb(struct iommu_domain *domain,
 	if (cb >= 0 && arm_smmu_is_static_cb(smmu)) {
 		smmu_domain->slave_side_secure = true;
 
-		if (arm_smmu_is_slave_side_secure(smmu_domain))
+		/*
+		 * cb is the raw 8-bit cbndx from the bootloader handoff
+		 * S2CR, while secure_context_map only has ARM_SMMU_MAX_CBS
+		 * bits, so bound it before setting the bit.
+		 */
+		if (arm_smmu_is_slave_side_secure(smmu_domain) &&
+		    cb < ARM_SMMU_MAX_CBS)
 			bitmap_set(smmu->secure_context_map, cb, 1);
 	}
 
