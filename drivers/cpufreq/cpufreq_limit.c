@@ -808,7 +808,7 @@ static ssize_t store_ltl_divider(struct kobject *a, struct kobj_attribute *b,
 	if (ret)
 		return -EINVAL;
 
-	if (input >= MAX_ATTRIBUTE_NUM)
+	if (input == 0 || input >= MAX_ATTRIBUTE_NUM)
 		return -EINVAL;
 
 	param.ltl_divider = input;
