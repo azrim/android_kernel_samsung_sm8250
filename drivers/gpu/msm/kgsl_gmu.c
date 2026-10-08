@@ -1435,6 +1435,14 @@ static int gmu_enable_clks(struct kgsl_device *device)
 			dev_err(&gmu->pdev->dev,
 					"fail to enable gpucc clk idx %d\n",
 					j);
+			/*
+			 * Undo the clocks enabled so far. GMU_CLK_ON is only
+			 * set once every clock is on, so gmu_stop() bails out
+			 * early and would otherwise leave their clk refcounts
+			 * held (and the GMU CX gdsc powered).
+			 */
+			while (j-- > 0)
+				clk_disable_unprepare(gmu->clks[j]);
 			return ret;
 		}
 		j++;
@@ -1605,8 +1613,14 @@ static int gmu_start(struct kgsl_device *device)
 	case KGSL_STATE_SUSPEND:
 		WARN_ON(test_bit(GMU_CLK_ON, &device->gmu_core.flags));
 
-		gmu_enable_gdsc(gmu);
-		gmu_enable_clks(device);
+		ret = gmu_enable_gdsc(gmu);
+		if (ret)
+			goto error_gmu;
+
+		ret = gmu_enable_clks(device);
+		if (ret)
+			goto error_gmu_pwr;
+
 		gmu_dev_ops->irq_enable(device);
 
 		/* Vote for minimal DDR BW for GMU to init */
@@ -1636,8 +1650,14 @@ static int gmu_start(struct kgsl_device *device)
 	case KGSL_STATE_SLUMBER:
 		WARN_ON(test_bit(GMU_CLK_ON, &device->gmu_core.flags));
 
-		gmu_enable_gdsc(gmu);
-		gmu_enable_clks(device);
+		ret = gmu_enable_gdsc(gmu);
+		if (ret)
+			goto error_gmu;
+
+		ret = gmu_enable_clks(device);
+		if (ret)
+			goto error_gmu_pwr;
+
 		gmu_dev_ops->irq_enable(device);
 
 		ret = gmu_dev_ops->rpmh_gpu_pwrctrl(device, GMU_FW_START,
@@ -1657,8 +1677,14 @@ static int gmu_start(struct kgsl_device *device)
 	case KGSL_STATE_RESET:
 		gmu_suspend(device);
 
-		gmu_enable_gdsc(gmu);
-		gmu_enable_clks(device);
+		ret = gmu_enable_gdsc(gmu);
+		if (ret)
+			goto error_gmu;
+
+		ret = gmu_enable_clks(device);
+		if (ret)
+			goto error_gmu_pwr;
+
 		gmu_dev_ops->irq_enable(device);
 
 		ret = gmu_dev_ops->rpmh_gpu_pwrctrl(
@@ -1681,6 +1707,8 @@ static int gmu_start(struct kgsl_device *device)
 
 	return ret;
 
+error_gmu_pwr:
+	gmu_disable_gdsc(device);
 error_gmu:
 	if (ADRENO_QUIRK(adreno_dev, ADRENO_QUIRK_HFI_USE_REG))
 		gmu_core_dev_oob_clear(device, oob_boot_slumber);
