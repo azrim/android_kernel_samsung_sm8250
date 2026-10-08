@@ -5300,6 +5300,17 @@ out:
 	return ret;
 }
 
+static void unregister_regulator_notifier(struct arm_smmu_device *smmu)
+{
+	struct arm_smmu_power_resources *pwr = smmu->pwr;
+
+	if (!(smmu->options & ARM_SMMU_OPT_HALT) || !pwr->num_gdscs)
+		return;
+
+	regulator_unregister_notifier(pwr->gdscs[0].consumer,
+				      &smmu->regulator_nb);
+}
+
 static int arm_smmu_init_regulators(struct arm_smmu_power_resources *pwr)
 {
 	const char *cname;
@@ -5954,6 +5965,8 @@ static int arm_smmu_device_remove(struct platform_device *pdev)
 
 	if (!smmu)
 		return -ENODEV;
+
+	unregister_regulator_notifier(smmu);
 
 	if (arm_smmu_power_on(smmu->pwr))
 		return -EINVAL;
