@@ -33,9 +33,17 @@ static unsigned int queue_size_per_kcompressd = INIT_QUEUE_SIZE;
 /* Round-robin cursor: each write starts scanning at a different daemon. */
 static atomic_t kcompressd_next;
 
-module_param(nr_kcompressd, uint, 0644);
+/*
+ * Both are read-only after init: kcompress[] is sized once by
+ * kcompressd_init() and there is no reallocation or synchronization for a
+ * runtime change.  A larger value makes schedule_bio_write() index past the
+ * array; a smaller one makes kcompressd_exit() skip (and then kvfree() from
+ * under) the daemons above the new bound.  Set them on the kernel command
+ * line (zram.nr_kcompressd=N) instead.
+ */
+module_param(nr_kcompressd, uint, 0444);
 MODULE_PARM_DESC(nr_kcompressd, "Number of daemons for page compression");
-module_param(queue_size_per_kcompressd, uint, 0644);
+module_param(queue_size_per_kcompressd, uint, 0444);
 MODULE_PARM_DESC(queue_size_per_kcompressd, "Size of queue for kcompressd");
 
 enum run_state {
