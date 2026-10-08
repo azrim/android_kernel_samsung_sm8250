@@ -1612,6 +1612,8 @@ struct task_struct {
 #ifdef CONFIG_SEC_PERF_MANAGER
 	int drawing_flag;
 	int drawing_mig_boost;
+	/* Group accounted to the rq at enqueue; 0 means "not accounted" */
+	int fps_boost_group;
 #endif
 	/* task is frozen/stopped (used by the cgroup freezer) */
 	ANDROID_KABI_USE(1, unsigned frozen:1);

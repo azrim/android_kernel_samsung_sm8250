@@ -3497,6 +3497,7 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	 */
 	p->drawing_flag = 0;
 	p->drawing_mig_boost = 0;
+	p->fps_boost_group = 0;
 #endif
 	/*
 	 * We mark the process as NEW here. This guarantees that

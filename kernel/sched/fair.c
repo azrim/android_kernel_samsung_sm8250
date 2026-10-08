@@ -6130,6 +6130,13 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 			per_cpu(fps_group_id, alloc_cpu) =
 				next_group_id;
 		}
+
+		/*
+		 * Remember what was accounted here. dequeue_task_fair() must
+		 * undo exactly this, even if drawing_flag gets cleared while
+		 * the task is still enqueued (PERF_MGR_PROCESS_KILL does that).
+		 */
+		p->fps_boost_group = next_group_id;
 	}
 #endif /* CONFIG_SEC_PERF_MANAGER */
 
@@ -6268,11 +6275,12 @@ static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 	schedtune_dequeue_task(p, cpu_of(rq));
 
 #ifdef CONFIG_SEC_PERF_MANAGER
-	if (p->drawing_flag) {
+	if (p->fps_boost_group) {
 		alloc_cpu = cpu_of(rq);
 		boosted_cnt = per_cpu(fps_boosted_task_count, alloc_cpu);
 		cur_group_id = per_cpu(fps_group_id, alloc_cpu);
-		next_group_id = p->drawing_flag;
+		next_group_id = p->fps_boost_group;
+		p->fps_boost_group = 0;
 
 		if (boosted_cnt > 0)
 			boosted_cnt = boosted_cnt - 1;
