@@ -41,6 +41,7 @@ static unsigned long calc_fps_required_util(unsigned long max_cap, unsigned long
 static struct task_fps_util_info *get_target_task(int tid);
 
 static spinlock_t write_slock;
+static DEFINE_MUTEX(gpis_update_lock);
 struct list_head gpis_hlist;
 int fps_task_count;
 unsigned long us_frame_time;
@@ -113,6 +114,7 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 
 		 /* When drawing action get finished, init boost information */
 		if (target_tid < 0) {
+			mutex_lock(&gpis_update_lock);
 			rcu_read_lock();
 			list_for_each_entry_rcu(fi, &gpis_hlist, list) {
 				if ( fi == NULL )
@@ -130,6 +132,7 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 				put_task_struct(task);
 			}
 			rcu_read_unlock();
+			mutex_unlock(&gpis_update_lock);
 		} else {
 			//Drawing Flag OFF on Task Struct
 			rcu_read_lock();
@@ -242,6 +245,14 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 			break;
 		}
 
+		/*
+		 * Serialise the frame-end state updates. FRAME_END and the
+		 * PROCESS_KILL reset path do read-modify-write on the same
+		 * task_fps_util_info fields (last_update_frame,
+		 * updated_fps_util, drawing_mig_boost) and nothing else
+		 * protects them; RCU only keeps the nodes alive.
+		 */
+		mutex_lock(&gpis_update_lock);
 		rcu_read_lock();
 		list_for_each_entry_rcu(fi, &gpis_hlist, list) {
 			if (fi == NULL)
@@ -279,6 +290,7 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 
 		if (target_fi == NULL) {
 			rcu_read_unlock();
+			mutex_unlock(&gpis_update_lock);
 			pr_err("[GPIS] PID %d not found. skip cal util\n",
 				fps_info_val.tid);
 			put_task_struct(task);
@@ -329,6 +341,7 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 			g_fps, target_fi->orig_fps_info.tid,
 			task->drawing_mig_boost, new_fps_util);
 		rcu_read_unlock();
+		mutex_unlock(&gpis_update_lock);
 
 		put_task_struct(task);
 		break;
