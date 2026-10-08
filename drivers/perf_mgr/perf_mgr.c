@@ -146,8 +146,8 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 				break;
 			}
 			list_del_rcu(&(fi->list));
-			spin_unlock(&write_slock);
 			fps_task_count--;
+			spin_unlock(&write_slock);
 			synchronize_rcu();
 			kfree(fi);
 		}
@@ -197,9 +197,19 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 		fi->orig_fps_info.boosting_lvl = BOOST_OFF;
 
 		spin_lock(&write_slock);
+		/*
+		 * Re-check under write_slock: a concurrent TASK_ADD for the
+		 * same tid may have inserted a node after the unlocked lookup
+		 * above, which would otherwise leave a duplicate on the list.
+		 */
+		if (get_target_task(fps_info_val.tid) != NULL) {
+			spin_unlock(&write_slock);
+			kfree(fi);
+			break;
+		}
 		list_add_tail_rcu(&(fi->list), &gpis_hlist);
-		spin_unlock(&write_slock);
 		fps_task_count++;
+		spin_unlock(&write_slock);
 		trace_printk("[GPIS] ::: Add Tid : %d in Group %d, Cnt : %d\n",
 			fi->orig_fps_info.tid, fps_info_val.group_id,
 			fps_task_count);
