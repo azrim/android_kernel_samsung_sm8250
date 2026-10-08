@@ -5929,8 +5929,10 @@ static int arm_smmu_device_dt_probe(struct platform_device *pdev)
 		arm_smmu_bus_init();
 
 	err = register_regulator_notifier(smmu);
-	if (err)
+	if (err) {
+		iommu_device_unregister(&smmu->iommu);
 		goto out_power_off;
+	}
 
 	return 0;
 
@@ -5967,6 +5969,7 @@ static int arm_smmu_device_remove(struct platform_device *pdev)
 		return -ENODEV;
 
 	unregister_regulator_notifier(smmu);
+	iommu_device_unregister(&smmu->iommu);
 
 	if (arm_smmu_power_on(smmu->pwr))
 		return -EINVAL;
