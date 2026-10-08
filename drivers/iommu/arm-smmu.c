@@ -2712,6 +2712,12 @@ static int arm_smmu_init_domain_context(struct iommu_domain *domain,
 	}
 
 	/*
+	 * Publish the page table ops now so that the error paths below
+	 * release them through arm_smmu_destroy_domain_context().
+	 */
+	smmu_domain->pgtbl_ops = pgtbl_ops;
+
+	/*
 	 * assign any page table memory that might have been allocated
 	 * during alloc_io_pgtable_ops
 	 */
@@ -2772,8 +2778,6 @@ static int arm_smmu_init_domain_context(struct iommu_domain *domain,
 	}
 	mutex_unlock(&smmu_domain->init_mutex);
 
-	/* Publish page table ops for map/unmap */
-	smmu_domain->pgtbl_ops = pgtbl_ops;
 	if (arm_smmu_is_slave_side_secure(smmu_domain) &&
 			!arm_smmu_master_attached(smmu, dev->iommu_fwspec))
 		arm_smmu_restore_sec_cfg(smmu, cfg->cbndx);
