@@ -514,15 +514,25 @@ static int __init perf_mgr_dev_init(void)
 	int err;
 	struct task_fps_util_info *s;
 
-	err = misc_register(&perf_mgr_device);
+	INIT_LIST_HEAD(&gpis_hlist);
+	spin_lock_init(&write_slock);
 
-	if (err)
-		return err;
+	fps_task_count = 0;
+	us_frame_time = 0;
+	g_fps = 0;
+	fps_margin_percent = 30;
+	hold_frame_count = 2;
 
+	s = kzalloc(sizeof(struct task_fps_util_info), GFP_KERNEL);
+	if (s == NULL)
+		return -EAGAIN;
 
-#ifdef CONFIG_SEC_PERF_MANAGER_QC
-	ss_panel_notifier_register(&panel_timing_changed_data_notifier);
-#endif
+	s->orig_fps_info.tid = 0;
+	s->orig_fps_info.duration = 0;
+	s->updated_fps_util = 0;
+	s->running_cpu = 9999;
+	fps_task_count++;
+	list_add_tail(&(s->list), &gpis_hlist);
 
 	//Tunable Sysfs Init.
 	perf_kobject = kobject_create_and_add("gpis", NULL);
@@ -534,25 +544,13 @@ static int __init perf_mgr_dev_init(void)
 		return err;
 	}
 
-	INIT_LIST_HEAD(&gpis_hlist);
-	spin_lock_init(&write_slock);
+	err = misc_register(&perf_mgr_device);
+	if (err)
+		return err;
 
-	s = kzalloc(sizeof(struct task_fps_util_info), GFP_KERNEL);
-	if (s == NULL)
-		return -EAGAIN;
-
-	fps_task_count = 0;
-	us_frame_time = 0;
-	g_fps = 0;
-	fps_margin_percent = 30;
-	hold_frame_count = 2;
-
-	s->orig_fps_info.tid = 0;
-	s->orig_fps_info.duration = 0;
-	s->updated_fps_util = 0;
-	s->running_cpu = 9999;
-	fps_task_count++;
-	list_add_tail(&(s->list), &gpis_hlist);
+#ifdef CONFIG_SEC_PERF_MANAGER_QC
+	ss_panel_notifier_register(&panel_timing_changed_data_notifier);
+#endif
 
 	return 0;
 }
