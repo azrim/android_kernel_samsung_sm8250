@@ -747,8 +747,9 @@ static void arm_lpae_free_pgtable(struct io_pgtable *iop)
 	struct arm_lpae_io_pgtable *data = io_pgtable_to_data(iop);
 
 	__arm_lpae_free_pgtable(data, ARM_LPAE_START_LVL(data), data->pgd);
-	__arm_lpae_free_pgtable(data, ARM_LPAE_START_LVL(data),
-				data->pgd_ttbr1);
+	if (data->pgd_ttbr1)
+		__arm_lpae_free_pgtable(data, ARM_LPAE_START_LVL(data),
+					data->pgd_ttbr1);
 	kfree(data);
 }
 
@@ -1091,6 +1092,7 @@ arm_lpae_alloc_pgtable(struct io_pgtable_cfg *cfg)
 	pgd_bits = va_bits - (data->bits_per_level * (data->levels - 1));
 	data->pgd_bits = pgd_bits;
 	data->pgd_size = 1UL << (pgd_bits + ilog2(sizeof(arm_lpae_iopte)));
+	data->pgd_ttbr1 = NULL;
 
 	data->iop.ops = (struct io_pgtable_ops) {
 		.map		= arm_lpae_map,
