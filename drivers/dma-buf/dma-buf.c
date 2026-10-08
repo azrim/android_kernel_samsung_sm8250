@@ -424,10 +424,8 @@ static long dma_buf_set_name(struct dma_buf *dmabuf, const char __user *buf)
 		kfree(name);
 		goto out_unlock;
 	}
-	spin_lock(&dmabuf->name_lock);
 	kfree(dmabuf->name);
 	dmabuf->name = name;
-	spin_unlock(&dmabuf->name_lock);
 
 out_unlock:
 	spin_unlock(&dmabuf->name_lock);
