@@ -233,6 +233,7 @@ static const struct dma_fence_ops timeline_fence_ops = {
 	.release = timeline_fence_release,
 	.enable_signaling = timeline_fence_enable_signaling,
 	.timeline_value_str = timeline_get_value_str,
+	.use_64bit_seqno = true,
 };
 
 static void kgsl_timeline_add_fence(struct kgsl_timeline *timeline,
