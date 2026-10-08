@@ -13473,6 +13473,25 @@ __init void init_sched_fair_class(void)
 
 }
 
+/*
+ * FPS boost helpers used by the perf_mgr driver. They must be built whenever
+ * CONFIG_SEC_PERF_MANAGER is set, independent of CONFIG_SCHED_WALT (this tree
+ * runs with WALT disabled).
+ */
+#ifdef CONFIG_SEC_PERF_MANAGER
+
+unsigned long get_task_util(struct task_struct *p){
+	return task_util_est(p);
+}
+EXPORT_SYMBOL_GPL(get_task_util);
+
+unsigned long get_max_capacity(int cpu){
+	return capacity_orig_of(cpu);
+}
+EXPORT_SYMBOL_GPL(get_max_capacity);
+
+#endif /* CONFIG_SEC_PERF_MANAGER */
+
 /* WALT sched implementation begins here */
 #ifdef CONFIG_SCHED_WALT
 
@@ -13848,19 +13867,5 @@ void check_for_migration(struct rq *rq, struct task_struct *p)
 		raw_spin_unlock(&migration_lock);
 	}
 }
-
-#ifdef CONFIG_SEC_PERF_MANAGER
-
-unsigned long get_task_util(struct task_struct *p){
-	return task_util_est(p);
-}
-EXPORT_SYMBOL_GPL(get_task_util);
-
-unsigned long get_max_capacity(int cpu){
-	return capacity_orig_of(cpu);
-}
-EXPORT_SYMBOL_GPL(get_max_capacity);
-
-#endif /* CONFIG_SEC_PERF_MANAGER */
 
 #endif /* CONFIG_SCHED_WALT */
