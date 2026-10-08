@@ -142,11 +142,12 @@ static struct tcs_group *get_tcs_of_type(struct rsc_drv *drv, int type)
 static int tcs_invalidate(struct rsc_drv *drv, int type)
 {
 	int m, ret = 0;
+	unsigned long flags;
 	struct tcs_group *tcs;
 
 	tcs = get_tcs_of_type(drv, type);
 
-	spin_lock(&drv->lock);
+	spin_lock_irqsave(&drv->lock, flags);
 	if (bitmap_empty(tcs->slots, MAX_TCS_SLOTS))
 		goto done;
 
@@ -161,7 +162,7 @@ static int tcs_invalidate(struct rsc_drv *drv, int type)
 	bitmap_zero(tcs->slots, MAX_TCS_SLOTS);
 
 done:
-	spin_unlock(&drv->lock);
+	spin_unlock_irqrestore(&drv->lock, flags);
 	return ret;
 }
 
@@ -322,6 +323,16 @@ skip:
 		write_tcs_reg(drv, RSC_DRV_CMD_ENABLE, i, 0);
 		write_tcs_reg(drv, RSC_DRV_CMD_WAIT_FOR_CMPL, i, 0);
 		write_tcs_reg(drv, RSC_DRV_IRQ_CLEAR, 0, BIT(i));
+		/*
+		 * RSC_DRV_IRQ_ENABLE is a single shared register, so the
+		 * read-modify-write in enable_tcs_irq() must be serialized
+		 * against the process-context writers (tcs_write(),
+		 * tcs_ctrl_write(), tcs_invalidate(), rpmh_rsc_mode_solver_set()),
+		 * which hold drv->lock with IRQs disabled.  Taking the same lock
+		 * here is safe because they disable IRQs, so this handler can
+		 * never run on the CPU that holds the lock.
+		 */
+		spin_lock(&drv->lock);
 		clear_bit(i, drv->tcs_in_use);
 		/*
 		 * Disable interrupt for WAKE TCS to avoid being
@@ -330,6 +341,7 @@ skip:
 		 */
 		if (!drv->tcs[ACTIVE_TCS].num_tcs)
 			enable_tcs_irq(drv, i, false);
+		spin_unlock(&drv->lock);
 		if (req)
 			rpmh_tx_done(req, err);
 	}
@@ -417,12 +429,18 @@ static int tcs_write(struct rsc_drv *drv, const struct tcs_request *msg)
 	struct tcs_group *tcs;
 	int tcs_id;
 	int ret;
+	unsigned long flags;
 
 	tcs = get_tcs_for_msg(drv, msg);
 	if (IS_ERR(tcs))
 		return PTR_ERR(tcs);
 
-	spin_lock(&drv->lock);
+	/*
+	 * Disable IRQs: tcs_tx_done() takes drv->lock from hardirq context to
+	 * serialize the shared RSC_DRV_IRQ_ENABLE update, so a plain
+	 * spin_lock() here could deadlock against an RSC interrupt on this CPU.
+	 */
+	spin_lock_irqsave(&drv->lock, flags);
 	if (msg->state == RPMH_ACTIVE_ONLY_STATE && drv->in_solver_mode) {
 		ret = -EINVAL;
 		goto done_write;
@@ -451,7 +469,7 @@ static int tcs_write(struct rsc_drv *drv, const struct tcs_request *msg)
 	__tcs_set_trigger(drv, tcs_id, true);
 
 done_write:
-	spin_unlock(&drv->lock);
+	spin_unlock_irqrestore(&drv->lock, flags);
 	return ret;
 }
 
@@ -562,17 +580,18 @@ static int tcs_ctrl_write(struct rsc_drv *drv, const struct tcs_request *msg)
 	struct tcs_group *tcs;
 	int tcs_id = 0, cmd_id = 0;
 	int ret;
+	unsigned long flags;
 
 	tcs = get_tcs_for_msg(drv, msg);
 	if (IS_ERR(tcs))
 		return PTR_ERR(tcs);
 
-	spin_lock(&drv->lock);
+	spin_lock_irqsave(&drv->lock, flags);
 	/* find the TCS id and the command in the TCS to write to */
 	ret = find_slots(tcs, msg, &tcs_id, &cmd_id);
 	if (!ret)
 		__tcs_buffer_write(drv, tcs_id, cmd_id, msg);
-	spin_unlock(&drv->lock);
+	spin_unlock_irqrestore(&drv->lock, flags);
 
 	return ret;
 }
@@ -587,6 +606,7 @@ static int tcs_ctrl_write(struct rsc_drv *drv, const struct tcs_request *msg)
 void rpmh_rsc_mode_solver_set(struct rsc_drv *drv, bool enable)
 {
 	int m;
+	unsigned long flags;
 	unsigned int delay = 1;
 	unsigned int waited = 0;
 	struct tcs_group *tcs = get_tcs_of_type(drv, ACTIVE_TCS);
@@ -600,10 +620,10 @@ void rpmh_rsc_mode_solver_set(struct rsc_drv *drv, bool enable)
 	if (!tcs->num_tcs)
 		tcs = get_tcs_of_type(drv, WAKE_TCS);
 again:
-	spin_lock(&drv->lock);
+	spin_lock_irqsave(&drv->lock, flags);
 	for (m = tcs->offset; m < tcs->offset + tcs->num_tcs; m++) {
 		if (!tcs_is_free(drv, m)) {
-			spin_unlock(&drv->lock);
+			spin_unlock_irqrestore(&drv->lock, flags);
 			if (waited >= TCS_BUSY_TIMEOUT_US) {
 				pr_err_ratelimited("Timed out waiting for %s TCS%d to go idle\n",
 						   drv->name, m);
@@ -616,7 +636,7 @@ again:
 		}
 	}
 	drv->in_solver_mode = enable;
-	spin_unlock(&drv->lock);
+	spin_unlock_irqrestore(&drv->lock, flags);
 }
 
 /**
