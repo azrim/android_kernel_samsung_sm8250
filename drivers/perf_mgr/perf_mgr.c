@@ -109,6 +109,10 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 		if (fps_task_count <= 1)
 			break;
 
+		/* tid 0 is the list sentinel, never a real drawing task */
+		if (target_tid == 0)
+			break;
+
 		 /* When drawing action get finished, init boost information */
 		if (target_tid < 0) {
 			rcu_read_lock();
@@ -526,7 +530,7 @@ static int __init perf_mgr_dev_init(void)
 	INIT_LIST_HEAD(&gpis_hlist);
 	spin_lock_init(&write_slock);
 
-	s = kmalloc(sizeof(struct task_fps_util_info), GFP_KERNEL);
+	s = kzalloc(sizeof(struct task_fps_util_info), GFP_KERNEL);
 	if (s == NULL)
 		return -EAGAIN;
 
