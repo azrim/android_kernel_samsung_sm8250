@@ -2066,12 +2066,17 @@ static ssize_t tcs3407_debug_store(struct device *dev,
 		tcs3407_debug_var(data);
 		break;
 	case 3:
-		pinctrl_select_state(data->als_pinctrl, data->pinctrl_pwm);
-		pwm_apply_state(data->pwm, &state);
+		/* pinctrl_pwm / pwm are NULL when the DT has no torch PWM. */
+		if (data->pinctrl_pwm)
+			pinctrl_select_state(data->als_pinctrl, data->pinctrl_pwm);
+		if (data->pwm)
+			pwm_apply_state(data->pwm, &state);
 		break;
 	case 4:
-		state.period = period2;
-		pwm_apply_state(data->pwm, &state);
+		if (data->pwm) {
+			state.period = period2;
+			pwm_apply_state(data->pwm, &state);
+		}
 		break;
 	default:
 		debug_pwm_duty = data->debug_mode;
