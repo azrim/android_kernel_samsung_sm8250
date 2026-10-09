@@ -220,6 +220,7 @@ ssize_t ktd2692_store(struct device *dev,struct device_attribute *attr, const ch
 		if (ret) {
 			gpio_free(global_ktd2692data->flash_control);
 			LED_ERROR("Failed to request ktd2692_led_en\n");
+			return -1;
 		}
 	}
 
