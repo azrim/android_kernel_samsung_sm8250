@@ -184,7 +184,8 @@ static int move_irq_to_cpu(struct bal_irq *bi, int cpu)
 static unsigned int scale_intrs(unsigned int intrs, int cpu)
 {
 	/* Scale the number of interrupts to this CPU's current capacity */
-	return intrs * SCHED_CAPACITY_SCALE / per_cpu(cpu_cap, cpu);
+	return (unsigned int)((u64)intrs * SCHED_CAPACITY_SCALE /
+			      per_cpu(cpu_cap, cpu));
 }
 
 /* Returns true if IRQ balancing should stop */
@@ -412,6 +413,11 @@ static int __noreturn sbalance_thread(void *data)
 		bd = per_cpu_ptr(&balance_data, cpu);
 		INIT_LIST_HEAD(&bd->movable_irqs);
 		bd->cpu = cpu;
+		/*
+		 * Prime the counter so the first balance pass sees the
+		 * interrupt delta since start-up, not the total since boot.
+		 */
+		bd->old_total = kstat_cpu_irqs_sum(cpu);
 	}
 
 	set_freezable();
