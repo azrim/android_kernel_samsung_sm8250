@@ -274,9 +274,14 @@ static void pn547_check_core_reset(char *buf, int len)
 ssize_t pn547_dev_read(struct file *filp, char __user *buf,
 		size_t count, loff_t *offset)
 {
-	struct pn547_dev *pn547_dev = filp->private_data;
 	int ret = 0;
-	char *r_buf = pn547_dev->r_buf;
+	char *r_buf;
+
+	/* the device object is freed on removal; pn547_remove() clears the global */
+	if (!pn547_dev)
+		return -ENODEV;
+
+	r_buf = pn547_dev->r_buf;
 
 	if (count > MAX_BUFFER_SIZE)
 		count = MAX_BUFFER_SIZE;
@@ -414,9 +419,14 @@ fail:
 static ssize_t pn547_dev_write(struct file *filp, const char __user *buf,
 		size_t count, loff_t *offset)
 {
-	struct pn547_dev *pn547_dev = filp->private_data;
-	char *w_buf = pn547_dev->w_buf;
+	char *w_buf;
 	int ret = 0, retry = 2;
+
+	/* the device object is freed on removal; pn547_remove() clears the global */
+	if (!pn547_dev)
+		return -ENODEV;
+
+	w_buf = pn547_dev->w_buf;
 
 #if NFC_DEBUG
 	NFC_LOG_INFO("+ w\n");
@@ -487,8 +497,6 @@ static int pn547_dev_open(struct inode *inode, struct file *filp)
 
 static int pn547_dev_flush(struct file *pfile, fl_owner_t id)
 {
-	struct pn547_dev *pn547_dev = pfile->private_data;
-
 	if (!pn547_dev) {
 		NFC_LOG_ERR("%s: pn547 instance is NULL!!\n", __func__);
 		return -ENODEV;
@@ -517,6 +525,11 @@ static int pn547_dev_release(struct inode *inode, struct file *filp)
 #endif
 
 	NFC_LOG_INFO("release\n");
+
+	/* the device object is freed on removal; pn547_remove() clears the global */
+	if (!pn547_dev)
+		return 0;
+
 	mutex_lock(&pn547_dev->dev_ref_mutex);
 	set_force_reset(false);
 	if (pn547_dev->firm_gpio)
@@ -1361,6 +1374,11 @@ long pn547_dev_ioctl(struct file *filp,
 			   unsigned int cmd, unsigned long arg)
 {
 	/*struct pn547_dev *pn547_dev = filp->private_data;*/
+
+	/* the device object is freed on removal; pn547_remove() clears the global */
+	if (!pn547_dev)
+		return -ENODEV;
+
 #ifdef CONFIG_NFC_PN547_ESE_SUPPORT
 	enum p61_access_state current_state;
 	int ret = 0;
@@ -1854,9 +1872,10 @@ static int pn547_probe(struct i2c_client *client, const struct i2c_device_id *id
 
 		ret = request_irq(pn547_dev->clk_req_irq, pn547_wake_irq_handler, IRQF_TRIGGER_RISING,
 				"pn547_clk_req", pn547_dev);
-		if (ret)
+		if (ret) {
 			NFC_LOG_ERR("clk_req_irq failed\n");
-		else
+			pn547_dev->clk_req_irq = 0;
+		} else
 			enable_irq_wake(pn547_dev->clk_req_irq);
 	}
 
@@ -1982,46 +2001,62 @@ err_iso_rst:
 
 static int pn547_remove(struct i2c_client *client)
 {
-	struct pn547_dev *pn547_dev;
+	struct pn547_dev *dev;
 
 	NFC_LOG_INFO("removing pn547 driver\n");
-	pn547_dev = i2c_get_clientdata(client);
+	dev = i2c_get_clientdata(client);
 
 #ifdef SEC_NFC_WAKELOCK
-	wakeup_source_remove(pn547_dev->ws);
+	wakeup_source_remove(dev->ws);
 #endif
-	free_irq(client->irq, pn547_dev);
-	misc_deregister(&pn547_dev->pn547_device);
-	mutex_destroy(&pn547_dev->dev_ref_mutex);
-	mutex_destroy(&pn547_dev->read_mutex);
-	gpio_free(pn547_dev->irq_gpio);
-	gpio_free(pn547_dev->ven_gpio);
-	gpio_free(pn547_dev->firm_gpio);
+	free_irq(client->irq, dev);
+
+	/*
+	 * The clk_req IRQ is registered separately in probe and left
+	 * wake-enabled across suspend, so it must be freed here too; otherwise
+	 * its handler can run against the device after it is gone.
+	 */
+	if (dev->clk_req_irq > 0)
+		free_irq(dev->clk_req_irq, dev);
+
+	misc_deregister(&dev->pn547_device);
+	mutex_destroy(&dev->dev_ref_mutex);
+	mutex_destroy(&dev->read_mutex);
+	gpio_free(dev->irq_gpio);
+	gpio_free(dev->ven_gpio);
+	gpio_free(dev->firm_gpio);
 #ifdef CONFIG_NFC_PN547_CLOCK_REQUEST
-	gpio_free(pn547_dev->clk_req_gpio);
-	msm_xo_put(pn547_dev->nfc_clock);
+	gpio_free(dev->clk_req_gpio);
+	msm_xo_put(dev->nfc_clock);
 #endif
 #ifdef ISO_RST
-	gpio_free(pn547_dev->iso_rst_gpio);
+	gpio_free(dev->iso_rst_gpio);
 #endif
 #ifdef CONFIG_NFC_PN547_ESE_SUPPORT
-	pn547_dev->p61_current_state = P61_STATE_INVALID;
-	pn547_dev->nfc_ven_enabled = false;
-	pn547_dev->spi_ven_enabled = false;
-	mutex_destroy(&pn547_dev->p61_state_mutex);
+	dev->p61_current_state = P61_STATE_INVALID;
+	dev->nfc_ven_enabled = false;
+	dev->spi_ven_enabled = false;
+	mutex_destroy(&dev->p61_state_mutex);
 #endif
 #ifdef FEATURE_SN100X
 	ese_reset_resource_destroy();
 #endif
 
-	if (pn547_dev->nfc_pvdd) {
-		devm_regulator_put(pn547_dev->nfc_pvdd);
-		pn547_dev->nfc_pvdd = NULL;
+	if (dev->nfc_pvdd) {
+		devm_regulator_put(dev->nfc_pvdd);
+		dev->nfc_pvdd = NULL;
 	}
 
-	kfree(pn547_dev->r_buf);
-	kfree(pn547_dev->w_buf);
-	kfree(pn547_dev);
+	kfree(dev->r_buf);
+	kfree(dev->w_buf);
+
+	/*
+	 * Clear the file-scope global before dropping the object so the fops
+	 * stop touching it. The object was devm_kzalloc()'d, so hand it back to
+	 * devres instead of kfree()ing it (which would double-free).
+	 */
+	pn547_dev = NULL;
+	devm_kfree(&client->dev, dev);
 	return 0;
 }
 

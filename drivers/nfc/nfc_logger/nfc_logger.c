@@ -31,6 +31,7 @@ static unsigned int g_curpos;
 static int is_nfc_logger_init;
 static int is_buf_full;
 static int log_max_count = -1;
+static DEFINE_SPINLOCK(nfc_log_lock);
 
 void nfc_logger_print_date_time(void)
 {
@@ -65,6 +66,7 @@ void nfc_logger_print(const char *fmt, ...)
 	char buf[MAX_STR_LEN + 16];
 	u64 time;
 	unsigned long nsec;
+	unsigned long flags;
 	volatile unsigned int curpos;
 	static int log_count = 0;
 
@@ -90,6 +92,8 @@ void nfc_logger_print(const char *fmt, ...)
 	if (len > MAX_STR_LEN)
 		len = MAX_STR_LEN;
 
+	/* the ring index is shared with the IRQ/process paths; serialise it */
+	spin_lock_irqsave(&nfc_log_lock, flags);
 	curpos = g_curpos;
 	if (curpos + len >= BUF_SIZE) {
 		g_curpos = curpos = 0;
@@ -97,6 +101,7 @@ void nfc_logger_print(const char *fmt, ...)
 	}
 	memcpy(log_buf + curpos, buf, len);
 	g_curpos += len;
+	spin_unlock_irqrestore(&nfc_log_lock, flags);
 	
 	log_count++;
 	if (log_count == 150) {
@@ -142,12 +147,16 @@ static ssize_t nfc_logger_read(struct file *file, char __user *buf, size_t len, 
 	loff_t pos = *offset;
 	ssize_t count;
 	size_t size;
-	volatile unsigned int curpos = g_curpos;
+	unsigned long flags;
+	unsigned int curpos;
 
+	spin_lock_irqsave(&nfc_log_lock, flags);
+	curpos = g_curpos;
 	if (is_buf_full || BUF_SIZE <= curpos)
 		size = BUF_SIZE;
 	else
 		size = (size_t)curpos;
+	spin_unlock_irqrestore(&nfc_log_lock, flags);
 
 	if (pos >= size)
 		return 0;

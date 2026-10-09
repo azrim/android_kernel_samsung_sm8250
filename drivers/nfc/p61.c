@@ -643,6 +643,7 @@ static ssize_t p61_dev_read(struct file *filp, char *buf, size_t count,
 	struct p61_device *p61_dev = filp->private_data;
 	unsigned char sof = 0x00;
 	int total_count = 0;
+	size_t user_count = count;
 	//unsigned char rx_buffer[MAX_BUFFER_SIZE];
 
 	P61_DBG_MSG("%s: count %zu - Enter\n", __func__, count);
@@ -657,6 +658,7 @@ static ssize_t p61_dev_read(struct file *filp, char *buf, size_t count,
 	mutex_lock(&p61_dev->read_mutex);
 	if (count > MAX_BUFFER_SIZE)
 		count = MAX_BUFFER_SIZE;
+	user_count = count;
 
 	//memset(&rx_buffer[0], 0x00, sizeof(rx_buffer));
 	memset(p61_dev->buf, 0x00, MAX_BUFFER_SIZE);
@@ -702,6 +704,12 @@ static ssize_t p61_dev_read(struct file *filp, char *buf, size_t count,
 	}
 	total_count = (total_count + (count+1));
 	P61_DBG_MSG(KERN_INFO"total_count = %d", total_count);
+
+	/* the length above comes from the device; never copy more than the
+	 * caller's buffer can hold
+	 */
+	if (total_count > (int)user_count)
+		total_count = user_count;
 
 	if (copy_to_user(buf, p61_dev->buf, total_count)) {
 		P61_ERR_MSG("%s: failed to copy to user space\n", __func__);
