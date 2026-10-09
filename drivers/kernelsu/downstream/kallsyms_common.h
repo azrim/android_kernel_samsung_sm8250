@@ -353,11 +353,13 @@ static noinline uintptr_t kallsyms_lookup_retry(const char *name)
 	if (!(current->flags & PF_KTHREAD))
 		return 0x0;
 
-	if (guarded_mutex_lock(&kallsyms_hash_array_mutex) && !kallsyms_hash_array_ready) {
+	mutex_lock(&kallsyms_hash_array_mutex);
+	if (!kallsyms_hash_array_ready) {
 		dotted_kallsyms_build_hash_array();
 		kallsyms_hash_array_ready = true;
 		smp_mb();
 	}
+	mutex_unlock(&kallsyms_hash_array_mutex);
 
 	return kallsyms_lookup_hashed_name(name);
 	
