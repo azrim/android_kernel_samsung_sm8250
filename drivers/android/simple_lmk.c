@@ -734,21 +734,26 @@ static bool scan_and_kill(short adj_floor)
 		pages_freed += victim->size;
 
 		/*
-		 * Release the victim's task lock acquired in find_victims()
-		 * before touching affinity: set_cpus_allowed_ptr() may sleep
-		 * (stop_one_cpu migration) for an affinity-restricted victim,
-		 * which must never run under task_lock().
+		 * Release the victim's task lock acquired in find_victims().
+		 * set_cpus_allowed_ptr() may sleep (stop_one_cpu migration)
+		 * and must not run while *any* victim's task_lock is still
+		 * held -- at this point victims[i+1..] are still locked -- so
+		 * it is deferred to the second pass below.
 		 */
 		task_unlock(vtsk);
+	}
 
-		/*
-		 * Allow the victim to run on any CPU so a task pinned to an
-		 * offline or isolated CPU can still run to die. A failure is
-		 * benign (e.g. perf/prime-affine tasks that must keep their
-		 * mask); the kill signal is already delivered.
-		 */
+	/*
+	 * With every task_lock now dropped, allow each victim to run on any
+	 * CPU so a task pinned to an offline or isolated CPU can still run
+	 * to die.  A failure is benign (e.g. perf/prime-affine tasks that
+	 * must keep their mask); the kill signal is already delivered.  The
+	 * victims stay valid here because of the get_task_struct() above.
+	 */
+	for (i = 0; i < nr_to_kill; i++) {
+		struct task_struct *vtsk = victims[i].tsk;
+
 		set_cpus_allowed_ptr(vtsk, cpu_all_mask);
-
 		put_task_struct(vtsk);
 	}
 
