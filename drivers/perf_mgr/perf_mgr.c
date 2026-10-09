@@ -91,7 +91,7 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 		if (g_fps <= 60)
 			fps_margin_percent = 10;
 
-		us_frame_time = 1000000 / g_fps;
+		WRITE_ONCE(us_frame_time, 1000000 / g_fps);
 #endif
 		break;
 
@@ -403,18 +403,26 @@ unsigned long calc_fps_required_util(unsigned long rn_sum, unsigned long dur)
 	unsigned long us_scale_dur = dur / 1000;	// ns -> us
 	unsigned long required_rate = 0;
 	unsigned long margin = 0;
+	int margin_pct = READ_ONCE(fps_margin_percent);
+	/*
+	 * us_frame_time / g_fps are updated together from the panel
+	 * notifier.  Snapshot us_frame_time once and use it for every step:
+	 * sampling it repeatedly could mix two different frame times (e.g.
+	 * across a 120->60 VRR change) and skew required_cap.
+	 */
+	unsigned long us_ft = READ_ONCE(us_frame_time);
 
-	if (fps_margin_percent > 0)
-		margin = (us_frame_time * (fps_margin_percent * 10)) >> 10;
+	if (margin_pct > 0)
+		margin = (us_ft * (margin_pct * 10)) >> 10;
 
-	if (g_fps == 0 || us_frame_time == 0)
+	if (READ_ONCE(g_fps) == 0 || us_ft == 0)
 		return 0;
 
 	/* A margin >= the frame time would underflow the divisor */
-	if (margin >= us_frame_time)
+	if (margin >= us_ft)
 		return 0;
 
-	required_rate = (us_scale_dur * FP_SCALE) / (us_frame_time - margin);
+	required_rate = (us_scale_dur * FP_SCALE) / (us_ft - margin);
 
 	if (required_rate <= (1 * FP_SCALE))
 		return 0;
@@ -444,7 +452,7 @@ int panel_timing_changed_data_notify(struct notifier_block *nb,
 		if (g_fps <= 60)
 			fps_margin_percent = 10;
 
-		us_frame_time = 1000000 / g_fps;
+		WRITE_ONCE(us_frame_time, 1000000 / g_fps);
 	}
 	return 0;
 }
