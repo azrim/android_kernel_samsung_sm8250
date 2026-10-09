@@ -2064,6 +2064,18 @@ static ssize_t writeback_store(struct device *dev,
 		zram_clear_flag(zram, index, ZRAM_UNDER_WB);
 		zram_set_flag(zram, index, ZRAM_WB);
 		zram_set_element(zram, index, blk_idx << (PAGE_SHIFT * 2));
+		/*
+		 * One block holds exactly this page, so record the object
+		 * refcount: free_block_bdev() then balances bd_objcnt via its
+		 * wb_table > 0 branch, the same way the packed path does
+		 * through zram_writeback_done().  Without it the direct block
+		 * is freed with wb_table == 0 and bd_objcnt is never dropped.
+		 */
+		if (zram->wb_table) {
+			spin_lock(&zram->wb_table_lock);
+			zram->wb_table[blk_idx] = 1;
+			spin_unlock(&zram->wb_table_lock);
+		}
 		blk_idx = 0;
 		atomic64_inc(&zram->stats.pages_stored);
 		atomic64_inc(&zram->stats.bd_objcnt);
