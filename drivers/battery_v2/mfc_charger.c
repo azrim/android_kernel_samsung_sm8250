@@ -2735,6 +2735,13 @@ static void mfc_wpc_fw_update_work(struct work_struct *work)
 #endif
 	return;
 fw_err:
+	/*
+	 * Both WPC IRQs were disabled before request_firmware(); re-enable them
+	 * here so a missing firmware blob does not leave wireless charging dead
+	 * until reboot (mirrors the success path).
+	 */
+	enable_irq(charger->pdata->irq_wpc_int);
+	enable_irq(charger->pdata->irq_wpc_det);
 	mfc_uno_on(charger, false);
 #if defined(CONFIG_DISABLE_MFC_IC)
 	mfc_set_wpc_en(charger, WPC_EN_FW, false);
@@ -5763,7 +5770,7 @@ static void mfc_wpc_int_req_work(struct work_struct *work)
 		}
 	}
 	if (ret < 0)
-		free_irq(charger->pdata->irq_wpc_det, NULL);
+		free_irq(charger->pdata->irq_wpc_det, charger);
 }
 
 static enum alarmtimer_restart mfc_phm_alarm(
@@ -6044,6 +6051,14 @@ static int mfc_charger_remove(struct i2c_client *client)
 	 */
 	if (charger->wqueue)
 		destroy_workqueue(charger->wqueue);
+
+	/*
+	 * irq_wpc_int is requested asynchronously from mfc_wpc_int_req_work();
+	 * free it after the workqueue drain above (which may run that work), or
+	 * its handler can run against the freed charger.
+	 */
+	if (charger->pdata->irq_wpc_int)
+		free_irq(charger->pdata->irq_wpc_int, charger);
 
 	wakeup_source_unregister(charger->wpc_wake_lock);
 	wakeup_source_unregister(charger->wpc_rx_wake_lock);
