@@ -444,7 +444,11 @@ static int rt8547_led_probe(struct platform_device *pdev)
 		if (ret < 0) {
 			pr_err("%s: not found torch dt! ret[%d]\n",
 					 __func__, ret);
-			kfree(pdata);
+			/*
+			 * pdata came from devm_kzalloc(): devres releases it
+			 * when probe returns an error.  kfree()ing it here
+			 * would make devres free it a second time.
+			 */
 			return ret;
 		}
 	} else {
