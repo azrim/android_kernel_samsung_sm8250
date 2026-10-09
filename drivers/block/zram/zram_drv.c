@@ -965,27 +965,37 @@ static void free_block_bdev(struct zram *zram, unsigned long blk_idx, bool ppr)
 	unsigned long flags;
 
 	spin_lock_irqsave(&zram->wb_table_lock, flags);
-	/*
-	 * No reference to this block: it is already free (freeing it again
-	 * would clear the bitmap twice and underflow the counters), or the
-	 * writeback tables are gone.  Nothing to do in either case.
-	 */
-	if (!zram->wb_table || zram->wb_table[blk_idx] == 0) {
+	/* The writeback tables are gone: nothing left to account. */
+	if (!zram->wb_table) {
 		spin_unlock_irqrestore(&zram->wb_table_lock, flags);
 		return;
 	}
-	zram->wb_table[blk_idx]--;
-	atomic64_dec(&zram->stats.bd_objcnt);
-	count_vm_events(SQZR_OBJCNT, -1);
-	if (ppr)
-		atomic64_dec(&zram->stats.bd_ppr_objcnt);
 	if (zram->wb_table[blk_idx] > 0) {
-		spin_unlock_irqrestore(&zram->wb_table_lock, flags);
-		return;
+		zram->wb_table[blk_idx]--;
+		atomic64_dec(&zram->stats.bd_objcnt);
+		count_vm_events(SQZR_OBJCNT, -1);
+		if (ppr)
+			atomic64_dec(&zram->stats.bd_ppr_objcnt);
+		if (zram->wb_table[blk_idx] > 0) {
+			spin_unlock_irqrestore(&zram->wb_table_lock, flags);
+			return;
+		}
 	}
 	spin_unlock_irqrestore(&zram->wb_table_lock, flags);
+
+	/*
+	 * The block refcount is zero: it was either just released above, or
+	 * it was allocated for a direct (HUGE / incompressible) writeback or
+	 * for a packed writeback that failed before zram_writeback_done()
+	 * ran, so it never took a wb_table reference.  Such a block still
+	 * owns its bitmap bit and bd_count.  test_and_clear_bit() separates
+	 * "still allocated" from "already free": only the former is freed,
+	 * so a stray second free can no longer clear the bitmap twice or
+	 * underflow bd_count.
+	 */
 	was_set = test_and_clear_bit(blk_idx, zram->bitmap);
-	WARN_ON_ONCE(!was_set);
+	if (!was_set)
+		return;
 	atomic64_dec(&zram->stats.bd_count);
 	count_vm_events(SQZR_COUNT, -1);
 	if (ppr)
