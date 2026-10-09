@@ -2375,8 +2375,12 @@ static int tcs3407_eol_mode(struct tcs3407_device_data *data)
 	data->eol_enable = 0;
 
 	if (data->eol_state >= EOL_STATE_DONE) {
-		icRatio100 = data->eol_flicker_awb[EOL_STATE_100][1] * 100 / data->eol_flicker_awb[EOL_STATE_100][2];
-		icRatio120 = data->eol_flicker_awb[EOL_STATE_120][1] * 100 / data->eol_flicker_awb[EOL_STATE_120][2];
+		icRatio100 = data->eol_flicker_awb[EOL_STATE_100][2] ?
+			data->eol_flicker_awb[EOL_STATE_100][1] * 100 /
+			data->eol_flicker_awb[EOL_STATE_100][2] : 0;
+		icRatio120 = data->eol_flicker_awb[EOL_STATE_120][2] ?
+			data->eol_flicker_awb[EOL_STATE_120][1] * 100 /
+			data->eol_flicker_awb[EOL_STATE_120][2] : 0;
 
 		scnprintf(data->eol_result, MAX_TEST_RESULT,
 			  "%d, %s, %d, %s, %d, %s, %d, %s, %d, %s, %d, %s, %d, %s, %d, %s\n",
@@ -2782,7 +2786,9 @@ static int tcs3407_eol_mode_handler(struct tcs3407_device_data *data)
 			ctx->ccbAlsCtx.ctxAlgAls.results.irrClear, ctx->ccbAlsCtx.ctxAlgAls.results.irrIR, ctx->ccbAlsCtx.ctxAlgAls.results.irrWideband);
 
 		if (data->eol_count >= (EOL_COUNT + EOL_SKIP_COUNT)) {
-			data->eol_flicker_awb[data->eol_state][0] = data->eol_flicker / data->eol_flicker_count;
+			data->eol_flicker_awb[data->eol_state][0] =
+				data->eol_flicker_count ?
+				data->eol_flicker / data->eol_flicker_count : 0;
 			data->eol_flicker_awb[data->eol_state][1] = data->eol_awb / EOL_COUNT;
 			data->eol_flicker_awb[data->eol_state][2] = data->eol_clear / EOL_COUNT;
 			data->eol_flicker_awb[data->eol_state][3] = data->eol_wideband / EOL_COUNT;
