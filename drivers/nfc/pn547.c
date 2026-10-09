@@ -1374,15 +1374,16 @@ long pn547_dev_ioctl(struct file *filp,
 			   unsigned int cmd, unsigned long arg)
 {
 	/*struct pn547_dev *pn547_dev = filp->private_data;*/
+#ifdef CONFIG_NFC_PN547_ESE_SUPPORT
+	enum p61_access_state current_state;
+	int ret = 0;
+#endif
 
 	/* the device object is freed on removal; pn547_remove() clears the global */
 	if (!pn547_dev)
 		return -ENODEV;
 
 #ifdef CONFIG_NFC_PN547_ESE_SUPPORT
-	enum p61_access_state current_state;
-	int ret = 0;
-
 	/* Free pass autobahn area, not protected. Use it carefullly. START */
 	switch (cmd) {
 	case P547_GET_ESE_ACCESS:
