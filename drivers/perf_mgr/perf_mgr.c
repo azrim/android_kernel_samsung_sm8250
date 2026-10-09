@@ -561,23 +561,35 @@ static int __init perf_mgr_dev_init(void)
 
 	//Tunable Sysfs Init.
 	perf_kobject = kobject_create_and_add("gpis", NULL);
-	if (!perf_kobject)
-		return -ENOMEM;
+	if (!perf_kobject) {
+		err = -ENOMEM;
+		goto err_free_sentinel;
+	}
 	err = sysfs_create_group(perf_kobject, &attr_group);
 	if (err) {
 		pr_err("[GPIS] Failed to create sysfs in /sys/gpis\n");
-		return err;
+		goto err_put_kobject;
 	}
 
 	err = misc_register(&perf_mgr_device);
 	if (err)
-		return err;
+		goto err_remove_group;
 
 #ifdef CONFIG_SEC_PERF_MANAGER_QC
 	ss_panel_notifier_register(&panel_timing_changed_data_notifier);
 #endif
 
 	return 0;
+
+err_remove_group:
+	sysfs_remove_group(perf_kobject, &attr_group);
+err_put_kobject:
+	kobject_put(perf_kobject);
+err_free_sentinel:
+	list_del(&s->list);
+	fps_task_count--;
+	kfree(s);
+	return err;
 }
 
 static void  __exit perf_mgr_dev_exit(void)
