@@ -1622,7 +1622,13 @@ static inline bool is_per_cpu_kthread(struct task_struct *p)
 static inline bool is_cpu_allowed(struct task_struct *p, int cpu)
 {
 #ifdef CONFIG_SEC_PERF_MANAGER
-	if (!READ_ONCE(p->drawing_mig_boost))
+	/*
+	 * A boosted drawing task is allowed to be placed outside its
+	 * affinity mask so perf_mgr can force it onto a fast CPU.  A task
+	 * pinned to a single CPU (RT/audio style) is a deliberate hard pin
+	 * and is still honoured.
+	 */
+	if (!READ_ONCE(p->drawing_mig_boost) || p->nr_cpus_allowed == 1)
 #endif
 		if (!cpumask_test_cpu(cpu, &p->cpus_allowed))
 			return false;
