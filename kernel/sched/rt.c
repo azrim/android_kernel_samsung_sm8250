@@ -1864,7 +1864,7 @@ static int rt_energy_aware_wake_cpu(struct task_struct *task)
 	int cpu_idle_idx = -1;
 	bool boost_on_big = rt_boost_on_big();
 #ifdef CONFIG_SEC_PERF_MANAGER
-	boost_on_big = boost_on_big || task->drawing_mig_boost;
+	boost_on_big = boost_on_big || READ_ONCE(task->drawing_mig_boost);
 #endif
 
 	rcu_read_lock();
@@ -1888,7 +1888,7 @@ retry:
 				continue;
 			} else {
 #ifdef CONFIG_SEC_PERF_MANAGER
-				if (task->drawing_mig_boost){
+				if (READ_ONCE(task->drawing_mig_boost)){
 					cpumask_or(&tmp_mask, &tmp_mask, sched_group_span(sg));
 					lowest_mask = &tmp_mask;
 				}
@@ -1911,7 +1911,7 @@ retry:
 
 			util = cpu_util(cpu);
 #ifdef CONFIG_SEC_PERF_MANAGER
-			if (task->drawing_mig_boost){
+			if (READ_ONCE(task->drawing_mig_boost)){
 				if (capacity_orig_of(cpu) < util + tutil){
 					continue;
 				}
@@ -2028,7 +2028,7 @@ static int find_lowest_rq(struct task_struct *task)
 	 * it is most likely cache-hot in that location.
 	 */
 #ifdef CONFIG_SEC_PERF_MANAGER
-	if ( task->drawing_mig_boost || cpumask_test_cpu(cpu, lowest_mask))
+	if ( READ_ONCE(task->drawing_mig_boost) || cpumask_test_cpu(cpu, lowest_mask))
 		return cpu;
 #else
 	if (cpumask_test_cpu(cpu, lowest_mask))
@@ -2139,7 +2139,7 @@ static struct rq *find_lock_lowest_rq(struct task_struct *task, struct rq *rq)
 			 */
 			cpu_allow_check = cpumask_test_cpu(lowest_rq->cpu, &task->cpus_allowed);
 #ifdef CONFIG_SEC_PERF_MANAGER
-			if (task->drawing_mig_boost)
+			if (READ_ONCE(task->drawing_mig_boost))
 				cpu_allow_check = cpu_active(cpu);
 #endif
 			if (unlikely(!cpu_allow_check ||

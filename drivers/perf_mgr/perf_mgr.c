@@ -128,7 +128,7 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 					continue;
 
 				get_task_struct(task);
-				task->drawing_mig_boost = 0;
+				WRITE_ONCE(task->drawing_mig_boost, 0);
 				put_task_struct(task);
 			}
 			rcu_read_unlock();
@@ -277,7 +277,7 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 			if (++(fi->last_update_frame) > hold_frame_count) {
 				fi->last_update_frame = 0;
 				fi->updated_fps_util = 0;
-				tmp_task->drawing_mig_boost = 0;
+				WRITE_ONCE(tmp_task->drawing_mig_boost, 0);
 			}
 
 #ifdef CONFIG_SEC_PERF_MANAGER_MTK
@@ -318,7 +318,7 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 				if (ofi.group_id == task->drawing_flag) {
 					tmp_task = find_task_by_vpid(ofi.tid);
 					if (tmp_task != NULL)
-						tmp_task->drawing_mig_boost = 1;
+						WRITE_ONCE(tmp_task->drawing_mig_boost, 1);
 				}
 			}
 		}

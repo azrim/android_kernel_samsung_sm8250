@@ -1622,7 +1622,7 @@ static inline bool is_per_cpu_kthread(struct task_struct *p)
 static inline bool is_cpu_allowed(struct task_struct *p, int cpu)
 {
 #ifdef CONFIG_SEC_PERF_MANAGER
-	if (!p->drawing_mig_boost)
+	if (!READ_ONCE(p->drawing_mig_boost))
 #endif
 		if (!cpumask_test_cpu(cpu, &p->cpus_allowed))
 			return false;
@@ -3496,7 +3496,7 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	 * and corrupt the per-CPU FPS boost accounting until it registers.
 	 */
 	p->drawing_flag = 0;
-	p->drawing_mig_boost = 0;
+	WRITE_ONCE(p->drawing_mig_boost, 0);
 	p->fps_boost_group = 0;
 #endif
 	/*
