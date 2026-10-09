@@ -54,7 +54,7 @@ static struct kobject *perf_kobject;
 static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	void __user *uarg = (void __user *)arg;
-	long ret = -EINVAL;
+	long ret = 0;
 	int target_tid;
 	int pFps;
 	struct fps_info fps_info_val, ofi;
@@ -346,6 +346,8 @@ static long perf_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 		put_task_struct(task);
 		break;
 	default:
+		/* Unknown command. */
+		ret = -EINVAL;
 		break;
 	}
 	return ret;
