@@ -142,7 +142,9 @@ static struct tcs3407_device_data *tcs3407_data;
 #define AMS_GET_ALS_GAIN(scaledGain, gain, ret) \
 	do { \
 		(ret) = ams_getByte(ctx->portHndl, DEVREG_ASTATUS, &(gain)); \
-		(scaledGain) = alsGain_conversion[(gain) & 0x0f]; \
+		/* ASTATUS[3:0] is a gain code; codes above 12 are reserved. */ \
+		(scaledGain) = alsGain_conversion[min_t(u32, (gain) & 0x0f, \
+					ARRAY_SIZE(alsGain_conversion) - 1)]; \
 	} while (0)
 
 #define AMS_SET_ALS_STEP_TIME(uSec, ret) \
