@@ -507,7 +507,17 @@ static ssize_t hold_frame_count_show(struct kobject *kobj,
 static ssize_t hold_frame_count_store(struct kobject *kobj,
 			struct kobj_attribute *attr, const char *buf, size_t n)
 {
-		sscanf(buf, "%du", &hold_frame_count);
+		int val;
+
+		/*
+		 * A negative count makes "++last_update_frame > count" always
+		 * true (the boost is reset every frame); a huge one lets the
+		 * frame counter run away.  Accept a sane, non-negative range.
+		 */
+		if (sscanf(buf, "%du", &val) != 1 || val < 0 || val > 100000)
+			return -EINVAL;
+
+		hold_frame_count = val;
 		return n;
 }
 
