@@ -576,6 +576,19 @@ static int ktd2692_probe(struct platform_device *pdev)
 
 	sysfs_flash_op_kt = 0; //default off
 
+	/*
+	 * Publish the driver data and initialise the lock *before* the sysfs
+	 * nodes go live: ktd2692_show()/store() dereference
+	 * global_ktd2692data and take global_ktd2692data->int_lock.
+	 */
+	global_ktd2692data = pdata;
+	global_dev_kt = &pdev->dev;
+
+	LED_INFO("KTD2692_LED Probe\n");
+
+	global_ktd2692data->is_torch_enable = false;
+
+	spin_lock_init(&pdata->int_lock);
 
 	if (camera_class == NULL) {
 		camera_class = class_create(THIS_MODULE, "camera");
@@ -605,15 +618,6 @@ static int ktd2692_probe(struct platform_device *pdev)
 	}
 	}
 
-
-	global_ktd2692data = pdata;
-	global_dev_kt = &pdev->dev;
-
-	LED_INFO("KTD2692_LED Probe\n");
-
-	global_ktd2692data->is_torch_enable = false;
-
-	spin_lock_init(&pdata->int_lock);
 
 	return 0;
 }

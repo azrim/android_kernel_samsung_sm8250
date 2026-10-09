@@ -9045,16 +9045,22 @@ static int zt_ts_remove(struct i2c_client *client)
 #endif
 #endif
 
+#ifdef CONFIG_TOUCHSCREEN_DUMP_MODE
+	/*
+	 * Stop the dump work before its raw_data buffer is freed below:
+	 * zt_check_rawdata() -> zt_run_rawdata() dereferences info->raw_data.
+	 * Cancel outside state_lock, which the dump path may take.
+	 */
+	cancel_delayed_work_sync(&info->ghost_check);
+	p_ghost_check = NULL;
+#endif
+
 	mutex_lock(&info->state_lock);
 
 	info->work_state = REMOVE;
 
 	sec_cmd_exit(&info->sec, SEC_CLASS_DEVT_TSP);
 	kfree(info->raw_data);
-
-#ifdef CONFIG_TOUCHSCREEN_DUMP_MODE
-	p_ghost_check = NULL;
-#endif
 
 	if (info->irq)
 		free_irq(info->irq, info);
@@ -9074,10 +9080,6 @@ static int zt_ts_remove(struct i2c_client *client)
 
 	input_unregister_device(info->input_dev);
 	mutex_unlock(&info->state_lock);
-
-#ifdef CONFIG_TOUCHSCREEN_DUMP_MODE
-	cancel_delayed_work_sync(&info->ghost_check);
-#endif
 
 	misc_info = NULL;
 	kfree(info);

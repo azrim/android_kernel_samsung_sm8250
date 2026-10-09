@@ -3347,6 +3347,11 @@ static int fts_remove(struct i2c_client *client)
 	cancel_delayed_work_sync(&info->work_read_info);
 	cancel_delayed_work_sync(&info->reset_work);
 //	cancel_delayed_work_sync(&info->work_lfd_ctrl);
+#if defined(CONFIG_TOUCHSCREEN_DUMP_MODE)
+	/* the dump callback (tsp_dump()) can still fire after remove */
+	cancel_delayed_work_sync(&info->debug_work);
+	p_debug_work = NULL;
+#endif
 
 	wake_lock_destroy(&info->wakelock);
 
@@ -3355,6 +3360,8 @@ static int fts_remove(struct i2c_client *client)
 		sysfs_remove_file(&info->input_dev->dev.kobj,
 				&attrs[i].attr);
 	}
+	/* drop the secure-touch descriptor that points into info */
+	sec_secure_touch_unregister(info->board->ss_touch_num);
 #endif
 
 #ifdef SEC_TSP_FACTORY_TEST
