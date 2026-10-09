@@ -292,11 +292,12 @@ int64_t rt8547_led_mode_ctrl(int state, int value)
 				rt8547_led_write_data(RT8547_ADDR_FLASH_CURRENT_LEVEL_TIMEOUT_SETTING,
 					(RT8547_TIMEOUT_CURRENT_400mA << 5) | global_rt8547data->flash_current_value);
 			}
+			else
 			{
 				rt8547_led_write_data(RT8547_ADDR_LVP_SETTING, global_rt8547data->LVP_Voltage); // LVP setting
 				rt8547_led_write_data(RT8547_ADDR_CURRENT_SETTING, RT8547_STROBE_SELECT); // Strobe select
 				rt8547_led_write_data(RT8547_ADDR_FLASH_CURRENT_LEVEL_TIMEOUT_SETTING,
-					(RT8547_TIMEOUT_CURRENT_400mA << 5) | value);
+					(RT8547_TIMEOUT_CURRENT_400mA << 5) | (value & 0x1F));
 				rt8547_led_write_data(RT8547_ADDR_FLASH_TIMEOUT_SETTING, RT8547_TIMER_1216ms);
 
 				gpio_direction_output(global_rt8547data->flash_en, 1);
