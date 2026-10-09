@@ -1863,6 +1863,13 @@ static int a96t3x6_fw_check(struct a96t3x6_data *data)
 			GRIP_ERR("failed to a96t3x6_flash_fw (%d)\n", ret);
 		else
 			GRIP_INFO("fw update success\n");
+	} else {
+		/*
+		 * Firmware is already current, so a96t3x6_flash_fw() (which is
+		 * what normally calls a96t3x6_release_fw()) is skipped; release
+		 * the blob loaded by a96t3x6_load_fw_kernel() above.
+		 */
+		a96t3x6_release_fw(data, BUILT_IN);
 	}
 
 	ret = a96t3x6_i2c_read(data->client, REG_SAR_THRESHOLD, r_buf, 4);
@@ -2727,6 +2734,7 @@ static ssize_t a96t3x6_attr_store(struct device *dev,
 			ret = a96t3x6_load_fw_kernel(data);
 			if (ret) {
 				GRIP_ERR("failed to load firmware(%d)\n", ret);
+				enable_irq(data->irq);
 				goto fw_update_out;
 			}
 			GRIP_INFO("fw version read success (%d)\n", ret);
