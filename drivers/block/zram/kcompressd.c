@@ -67,6 +67,14 @@ struct kcompress {
 	atomic_t head;
 	unsigned int tail;
 	atomic_t count;
+	/*
+	 * Number of dequeued entries whose callback has not finished yet.
+	 * count is dropped at dequeue time, so it reaching zero only means
+	 * "the ring is empty", not "the work is done".  kcompressd_flush()
+	 * must also wait for in_flight to drain before the caller is allowed
+	 * to free the zram table/pool/comp the callbacks touch.
+	 */
+	atomic_t in_flight;
 	atomic_t running;
 	unsigned int ring_size;
 	unsigned int ring_mask;
@@ -124,13 +132,24 @@ static int kcompressd_worker(void *para)
 			WRITE_ONCE(kc->ring[slot].ready, 0);
 			kc->tail = tail + 1;
 			smp_wmb();
+			/*
+			 * Account the entry as in-flight before dropping the
+			 * queue count, so a concurrent kcompressd_flush() can
+			 * never observe count==0 with the callback still to
+			 * run.
+			 */
+			atomic_inc(&kc->in_flight);
 			atomic_dec(&kc->count);
 			nr_batch++;
 		}
 
 		if (nr_batch > 0) {
+			int done = 0;
+
 			for (i = 0; i < nr_batch; i++) {
 				kcompressd_do_work(&batch[i]);
+				atomic_dec(&kc->in_flight);
+				done++;
 
 				if (kthread_should_stop() || kthread_should_park())
 					break;
@@ -139,6 +158,15 @@ static int kcompressd_worker(void *para)
 				if (need_resched())
 					cond_resched();
 			}
+
+			/*
+			 * If we bailed out early the remaining entries are
+			 * dropped (as before); release their in-flight refs so
+			 * kcompressd_flush() cannot wait on work that will
+			 * never run.
+			 */
+			if (done < nr_batch)
+				atomic_sub(nr_batch - done, &kc->in_flight);
 			continue;
 		}
 
@@ -218,7 +246,13 @@ void kcompressd_flush(void)
 		struct kcompress *kc = &kcompress[i];
 		unsigned long timeout = jiffies + msecs_to_jiffies(1000);
 
-		while (atomic_read(&kc->count) > 0 &&
+		/*
+		 * Wait for the ring to drain *and* for every callback that
+		 * was already dequeued to finish.  Only then are the zram
+		 * table/pool/comp safe to free.
+		 */
+		while ((atomic_read(&kc->count) > 0 ||
+			atomic_read(&kc->in_flight) > 0) &&
 		       time_before(jiffies, timeout)) {
 			wake_up_interruptible(&kc->kcompressd_wait);
 			usleep_range(500, 1000);
@@ -299,6 +333,7 @@ int kcompressd_init(void)
 		atomic_set(&kcompress[i].head, 0);
 		kcompress[i].tail = 0;
 		atomic_set(&kcompress[i].count, 0);
+		atomic_set(&kcompress[i].in_flight, 0);
 		atomic_set(&kcompress[i].running, KCOMPRESSD_RUNNING);
 
 		kcompress[i].kcompressd = kthread_run(kcompressd_worker,
