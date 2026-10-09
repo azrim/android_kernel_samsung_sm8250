@@ -135,9 +135,11 @@ static unsigned long zram_dedup_put(struct zram *zram,
 	spin_lock(&hash->lock);
 
 	val = --entry->refcount;
-	if (!entry->refcount)
-		rb_erase(&entry->rb_node, &hash->rb_root);
-	else
+	if (!entry->refcount) {
+		/* Only an inserted entry has a node to unlink. */
+		if (!RB_EMPTY_NODE(&entry->rb_node))
+			rb_erase(&entry->rb_node, &hash->rb_root);
+	} else
 		atomic64_sub(entry->len, &zram->stats.dup_data_size);
 
 	spin_unlock(&hash->lock);
@@ -243,6 +245,13 @@ void zram_dedup_init_entry(struct zram *zram, struct zram_entry *entry,
 	entry->handle = handle;
 	entry->refcount = 1;
 	entry->len = len;
+	/*
+	 * Mark the node as not linked yet: zram_dedup_put() may be called on
+	 * an entry that was never inserted (the limit_pages error path in
+	 * __zram_bvec_write()), and rb_erase() on a never-linked node would
+	 * corrupt the rbtree (it rewrites the root of hash bucket 0).
+	 */
+	RB_CLEAR_NODE(&entry->rb_node);
 }
 
 bool zram_dedup_put_entry(struct zram *zram, struct zram_entry *entry)
