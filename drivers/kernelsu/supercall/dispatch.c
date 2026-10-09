@@ -88,6 +88,9 @@ static int do_report_event(void __user *arg)
 		if (!cmpxchg(&boot_complete_lock, false, true)) {
 			pr_info("boot_complete triggered\n");
 			on_boot_completed();
+#ifdef CONFIG_KSU_SUSFS
+			susfs_start_sdcard_monitor_fn();
+#endif
 		}
 		break;
 	}
