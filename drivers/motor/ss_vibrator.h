@@ -62,6 +62,7 @@ enum freq_type {
  * Global variables
  */
 static struct ss_vib *g_vib;
+static DEFINE_MUTEX(g_vib_lock);
 
 int32_t g_nlra_gp_clk_m = GP_CLK_M_DEFAULT;
 int32_t g_nlra_gp_clk_n = GP_CLK_N_DEFAULT;

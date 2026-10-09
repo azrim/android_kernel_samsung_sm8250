@@ -1007,8 +1007,10 @@ static void regulator_power_onoff(struct ss_vib *vib, int onoff)
 extern int haptic_homekey_press(void)
 {
 	/*for drv2624 panic prevention*/
+	mutex_lock(&g_vib_lock);
 	if (g_vib == NULL) {
 		pr_info("[VIB] %s : NULL reference, return\n", __func__);
+		mutex_unlock(&g_vib_lock);
 		return -1;
 	}
 
@@ -1031,6 +1033,8 @@ extern int haptic_homekey_press(void)
 
 	queue_work(g_vib->queue, &g_vib->work);
 
+	mutex_unlock(&g_vib_lock);
+
 	return 0;
 }
 
@@ -1038,8 +1042,10 @@ extern int haptic_homekey_release(void)
 {
 
 	/*for drv2624 panic prevention*/
+	mutex_lock(&g_vib_lock);
 	if (g_vib == NULL) {
 		pr_info("[VIB] %s : NULL reference, return\n", __func__);
+		mutex_unlock(&g_vib_lock);
 		return -1;
 	}
 
@@ -1059,6 +1065,8 @@ extern int haptic_homekey_release(void)
 	mutex_unlock(&g_vib->lock);
 
 	queue_work(g_vib->queue, &g_vib->work);
+
+	mutex_unlock(&g_vib_lock);
 
 	return 0;
 }
@@ -1217,10 +1225,19 @@ static int ss_vibrator_remove(struct platform_device *pdev)
 	/* Stop the timer before the driver data it touches goes away. */
 	hrtimer_cancel(&vib->vib_timer);
 
+	/*
+	 * Stop the home-key path, then drain the workqueue *before* unmapping
+	 * MMSS_GP1: ss_vibrator_update()/ss_haptic_engine_update() write those
+	 * registers, and the timer may have queued work before hrtimer_cancel().
+	 */
+	mutex_lock(&g_vib_lock);
+	g_vib = NULL;
+	mutex_unlock(&g_vib_lock);
+
+	destroy_workqueue(vib->queue);
 	iounmap(virt_mmss_gp1_base);
 	pm_qos_remove_request(&pm_qos_req);
 
-	destroy_workqueue(vib->queue);
 	mutex_destroy(&vib->lock);
 	mutex_destroy(&vib->sysfs_lock);
 	wake_lock_destroy(&vib_wake_lock);
