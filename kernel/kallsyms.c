@@ -24,6 +24,9 @@
 #include <linux/filter.h>
 #include <linux/ftrace.h>
 #include <linux/compiler.h>
+#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+#include <linux/susfs_def.h>
+#endif // #ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
 
 /*
  * These will be re-linked against their real values
@@ -654,9 +657,24 @@ static void s_stop(struct seq_file *m, void *p)
 /* True if this symbol belongs to KSU/SUSFS and must be hidden. */
 static bool susfs_symbol_hidden(const char *name)
 {
-	return strnstr(name, "ksu_", KSYM_NAME_LEN) ||
-	       !strncmp(name, "susfs_", 6) ||
-	       !strncmp(name, "ksud", 4);
+	return susfs_starts_with(name, "ksu_") ||
+	       susfs_starts_with(name, "__ksu_") ||
+	       susfs_starts_with(name, "susfs_") ||
+	       susfs_starts_with(name, "ksud") ||
+	       susfs_starts_with(name, "is_ksu_") ||
+	       susfs_starts_with(name, "is_manager_") ||
+	       susfs_starts_with(name, "escape_to_") ||
+	       susfs_starts_with(name, "setup_selinux") ||
+	       susfs_starts_with(name, "track_throne") ||
+	       susfs_starts_with(name, "on_post_fs_data") ||
+	       susfs_starts_with(name, "try_umount") ||
+	       susfs_starts_with(name, "kernelsu") ||
+	       susfs_starts_with(name, "__initcall__kmod_kernelsu") ||
+	       susfs_starts_with(name, "apply_kernelsu") ||
+	       susfs_starts_with(name, "handle_sepolicy") ||
+	       susfs_starts_with(name, "getenforce") ||
+	       susfs_starts_with(name, "setenforce") ||
+	       susfs_starts_with(name, "is_zygote");
 }
 #endif
 

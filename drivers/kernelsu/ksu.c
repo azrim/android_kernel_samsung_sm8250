@@ -66,9 +66,6 @@
 #include "feature/selinux_hide.h"
 #include "feature/sucompat.h"
 #include "feature/sulog.h"
-#ifdef CONFIG_KSU_SUSFS
-#include "feature/susfs.h"
-#endif
 #include "runtime/ksud.h"
 #include "sulog/event.h"
 #include "sulog/fd.h"
@@ -119,9 +116,6 @@
 #include "feature/selinux_hide.c"
 #include "feature/sucompat.c"
 #include "feature/sulog.c"
-#ifdef CONFIG_KSU_SUSFS
-#include "feature/susfs.c"
-#endif
 #include "runtime/ksud.c"
 
 #include "sulog/event.c"

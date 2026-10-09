@@ -1247,6 +1247,7 @@ static int override_release(char __user *release, size_t len)
 }
 
 #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+extern struct static_key_false susfs_is_uname_spoof_buffer_set;
 extern void susfs_spoof_uname(struct new_utsname* tmp);
 #endif
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
@@ -1256,7 +1257,8 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 	down_read(&uts_sem);
 	memcpy(&tmp, utsname(), sizeof(tmp));
 #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
-	susfs_spoof_uname(&tmp);
+	if (static_branch_likely(&susfs_is_uname_spoof_buffer_set))
+		susfs_spoof_uname(&tmp);
 #endif
 #ifndef CONFIG_FAKE_UNAME_NONE
 	if (!strncmp(current->comm, "bpfloader", 9) ||
@@ -2461,21 +2463,12 @@ static int prctl_set_vma(unsigned long opt, unsigned long start,
 }
 #endif
 
-#if defined(CONFIG_KSU) && defined(CONFIG_KSU_SUSFS) && !defined(CONFIG_KSU_KPROBES_KSUD)
-extern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
-			    unsigned long arg4, unsigned long arg5);
-#endif
-
 SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		unsigned long, arg4, unsigned long, arg5)
 {
 	struct task_struct *me = current;
 	unsigned char comm[sizeof(me->comm)];
 	long error;
-
-#if defined(CONFIG_KSU) && defined(CONFIG_KSU_SUSFS) && !defined(CONFIG_KSU_KPROBES_KSUD)
-	ksu_handle_prctl(option, arg2, arg3, arg4, arg5);
-#endif
 
 	error = security_task_prctl(option, arg2, arg3, arg4, arg5);
 	if (error != -ENOSYS)
