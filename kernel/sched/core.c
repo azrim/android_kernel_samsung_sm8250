@@ -1268,6 +1268,14 @@ static void __setscheduler_uclamp(struct task_struct *p,
 			       clamp_id == UCLAMP_MIN)) {
 
 			clamp_value = uclamp_none(UCLAMP_MAX);
+
+			/*
+			 * Don't let the default boost exceed a user-configured
+			 * uclamp_max ceiling.
+			 */
+			if (p->uclamp_req[UCLAMP_MAX].user_defined &&
+			    clamp_value > p->uclamp_req[UCLAMP_MAX].value)
+				clamp_value = p->uclamp_req[UCLAMP_MAX].value;
 		}
 
 		uclamp_se_set(uc_se, clamp_value, false);
