@@ -1293,6 +1293,18 @@ static void __setscheduler_uclamp(struct task_struct *p,
 		uclamp_se_set(&p->uclamp_req[UCLAMP_MAX],
 			      attr->sched_util_max, true);
 	}
+
+	/*
+	 * The requested clamps are validated before the rq lock is taken
+	 * (uclamp_validate() may sleep), so a concurrent sched_setattr() on
+	 * the same task can slip an inverted pair past the check. Re-assert
+	 * the min <= max invariant here, under the lock.
+	 */
+	if (unlikely(p->uclamp_req[UCLAMP_MIN].value >
+		     p->uclamp_req[UCLAMP_MAX].value))
+		uclamp_se_set(&p->uclamp_req[UCLAMP_MIN],
+			      p->uclamp_req[UCLAMP_MAX].value,
+			      p->uclamp_req[UCLAMP_MIN].user_defined);
 }
 
 static void uclamp_fork(struct task_struct *p)
