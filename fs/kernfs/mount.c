@@ -8,6 +8,7 @@
  */
 
 #include <linux/fs.h>
+#include <linux/fs_context.h>
 #include <linux/mount.h>
 #include <linux/init.h>
 #include <linux/magic.h>
@@ -276,6 +277,82 @@ static int kernfs_set_super(struct super_block *sb, void *data)
 	if (!error)
 		sb->s_fs_info = data;
 	return error;
+}
+
+static int kernfs_test_super_fc(struct super_block *sb, struct fs_context *fc)
+{
+	struct kernfs_super_info *sb_info = kernfs_info(sb);
+	struct kernfs_super_info *info = fc->s_fs_info;
+
+	return sb_info->root == info->root && sb_info->ns == info->ns;
+}
+
+static int kernfs_set_super_fc(struct super_block *sb, struct fs_context *fc)
+{
+	struct kernfs_fs_context *kfc = fc->fs_private;
+
+	kfc->ns_tag = NULL;
+	return set_anon_super_fc(sb, fc);
+}
+
+/**
+ * kernfs_get_tree - kernfs filesystem access/retrieval helper
+ * @fc: The filesystem context.
+ *
+ * This is to be called from each kernfs user's fs_context->ops->get_tree()
+ * implementation, which should set the specified ->@fs_type and ->@flags, and
+ * specify the hierarchy and namespace tag to mount via ->@root and ->@ns,
+ * respectively.
+ *
+ * Return: %0 on success, -errno on failure.
+ */
+int kernfs_get_tree(struct fs_context *fc)
+{
+	struct kernfs_fs_context *kfc = fc->fs_private;
+	struct super_block *sb;
+	struct kernfs_super_info *info;
+	int error;
+
+	info = kzalloc(sizeof(*info), GFP_KERNEL);
+	if (!info)
+		return -ENOMEM;
+
+	info->root = kfc->root;
+	info->ns = kfc->ns_tag;
+	INIT_LIST_HEAD(&info->node);
+
+	fc->s_fs_info = info;
+	sb = sget_fc(fc, kernfs_test_super_fc, kernfs_set_super_fc);
+	if (IS_ERR(sb))
+		return PTR_ERR(sb);
+
+	if (!sb->s_root) {
+		struct kernfs_super_info *info = kernfs_info(sb);
+		struct kernfs_root *root = kfc->root;
+
+		kfc->new_sb_created = true;
+
+		error = kernfs_fill_super(sb, kfc->magic);
+		if (error) {
+			deactivate_locked_super(sb);
+			return error;
+		}
+		sb->s_flags |= SB_ACTIVE;
+
+		mutex_lock(&kernfs_mutex);
+		list_add(&info->node, &root->supers);
+		mutex_unlock(&kernfs_mutex);
+	}
+
+	fc->root = dget(sb->s_root);
+	return 0;
+}
+
+void kernfs_free_fs_context(struct fs_context *fc)
+{
+	/* Note that we don't deal with kfc->ns_tag here. */
+	kfree(fc->s_fs_info);
+	fc->s_fs_info = NULL;
 }
 
 /**

@@ -26,6 +26,7 @@ struct vm_area_struct;
 struct super_block;
 struct file_system_type;
 struct poll_table_struct;
+struct fs_context;
 
 struct kernfs_open_node;
 struct kernfs_iattrs;
@@ -197,6 +198,18 @@ struct kernfs_root {
 	struct list_head	supers;
 
 	wait_queue_head_t	deactivate_waitq;
+};
+
+/*
+ * The kernfs superblock creation/mount parameter context.
+ */
+struct kernfs_fs_context {
+	struct kernfs_root	*root;		/* Root of the hierarchy being mounted */
+	void			*ns_tag;	/* Namespace tag of the mount (or NULL) */
+	unsigned long		magic;		/* File system specific magic number */
+
+	/* The following are set/used by kernfs_get_tree() */
+	bool			new_sb_created;	/* Set to T if we allocated a new sb */
 };
 
 struct kernfs_open_file {
@@ -390,6 +403,8 @@ int kernfs_xattr_set(struct kernfs_node *kn, const char *name,
 		     const void *value, size_t size, int flags);
 
 const void *kernfs_super_ns(struct super_block *sb);
+int kernfs_get_tree(struct fs_context *fc);
+void kernfs_free_fs_context(struct fs_context *fc);
 struct dentry *kernfs_mount_ns(struct file_system_type *fs_type, int flags,
 			       struct kernfs_root *root, unsigned long magic,
 			       bool *new_sb_created, const void *ns);
@@ -398,7 +413,18 @@ struct super_block *kernfs_pin_sb(struct kernfs_root *root, const void *ns);
 
 void kernfs_init(void);
 
+static inline struct kernfs_node *kernfs_root_to_node(struct kernfs_root *root)
+{
+	return root->kn;
+}
+
 struct kernfs_node *kernfs_get_node_by_id(struct kernfs_root *root, u64 id);
+
+static inline struct kernfs_node *
+kernfs_find_and_get_node_by_id(struct kernfs_root *root, u64 id)
+{
+	return kernfs_get_node_by_id(root, id);
+}
 #else	/* CONFIG_KERNFS */
 
 static inline enum kernfs_node_type kernfs_type(struct kernfs_node *kn)
@@ -502,6 +528,11 @@ static inline int kernfs_xattr_set(struct kernfs_node *kn, const char *name,
 
 static inline const void *kernfs_super_ns(struct super_block *sb)
 { return NULL; }
+
+static inline int kernfs_get_tree(struct fs_context *fc)
+{ return -ENOSYS; }
+
+static inline void kernfs_free_fs_context(struct fs_context *fc) { }
 
 static inline struct dentry *
 kernfs_mount_ns(struct file_system_type *fs_type, int flags,
