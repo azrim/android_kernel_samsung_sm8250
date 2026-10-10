@@ -871,12 +871,18 @@ void rebuild_sched_domains(void)
 	put_online_cpus();
 }
 
-static int update_cpus_allowed(struct cpuset *cs, struct task_struct *p,
+static int update_cpus_allowed(struct task_struct *p,
 			       const struct cpumask *new_mask)
 {
 	int ret;
 
-	if (cpumask_subset(&p->cpus_requested, cs->cpus_requested)) {
+	/*
+	 * Restore the task's requested affinity only when it is contained in
+	 * the cpuset's effective mask. cs->cpus_requested can be wider than
+	 * the effective mask (parent cpusets in v2 mode, offline CPUs), so
+	 * testing against it would let a task escape the cpuset hierarchy.
+	 */
+	if (cpumask_subset(&p->cpus_requested, new_mask)) {
 		ret = set_cpus_allowed_ptr(p, &p->cpus_requested);
 		if (!ret)
 			return ret;
@@ -900,7 +906,7 @@ static void update_tasks_cpumask(struct cpuset *cs)
 
 	css_task_iter_start(&cs->css, 0, &it);
 	while ((task = css_task_iter_next(&it)))
-		update_cpus_allowed(cs, task, cs->effective_cpus);
+		update_cpus_allowed(task, cs->effective_cpus);
 	css_task_iter_end(&it);
 }
 
@@ -1576,7 +1582,7 @@ static void cpuset_attach(struct cgroup_taskset *tset)
 		 * can_attach beforehand should guarantee that this doesn't
 		 * fail.  TODO: have a better way to handle failure here
 		 */
-		WARN_ON_ONCE(update_cpus_allowed(cs, task, cpus_attach));
+		WARN_ON_ONCE(update_cpus_allowed(task, cpus_attach));
 
 		cpuset_change_task_nodemask(task, &cpuset_attach_nodemask_to);
 		cpuset_update_task_spread_flag(cs, task);
