@@ -874,7 +874,20 @@ void rebuild_sched_domains(void)
 static int update_cpus_allowed(struct task_struct *p,
 			       const struct cpumask *new_mask)
 {
+	cpumask_var_t cpus_requested;
 	int ret;
+
+	if (!alloc_cpumask_var(&cpus_requested, GFP_KERNEL))
+		return set_cpus_allowed_ptr(p, new_mask);
+
+	/*
+	 * p->cpus_requested is updated locklessly by sched_setaffinity();
+	 * snapshot it so the test and the update below act on one consistent
+	 * mask instead of racing with the writer.
+	 */
+	task_lock(p);
+	cpumask_copy(cpus_requested, &p->cpus_requested);
+	task_unlock(p);
 
 	/*
 	 * Restore the task's requested affinity only when it is contained in
@@ -882,12 +895,15 @@ static int update_cpus_allowed(struct task_struct *p,
 	 * the effective mask (parent cpusets in v2 mode, offline CPUs), so
 	 * testing against it would let a task escape the cpuset hierarchy.
 	 */
-	if (cpumask_subset(&p->cpus_requested, new_mask)) {
-		ret = set_cpus_allowed_ptr(p, &p->cpus_requested);
-		if (!ret)
+	if (cpumask_subset(cpus_requested, new_mask)) {
+		ret = set_cpus_allowed_ptr(p, cpus_requested);
+		if (!ret) {
+			free_cpumask_var(cpus_requested);
 			return ret;
+		}
 	}
 
+	free_cpumask_var(cpus_requested);
 	return set_cpus_allowed_ptr(p, new_mask);
 }
 
