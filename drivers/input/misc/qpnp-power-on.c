@@ -2818,6 +2818,16 @@ static int qpnp_pon_resume(struct device *dev)
 }
 #endif
 
+static void qpnp_pon_sys_reset_dev_cleanup(void *data)
+{
+	struct qpnp_pon *pon = data;
+
+	if (pon == sys_reset_dev) {
+		cancel_delayed_work_sync(&smpl_monitor_work);
+		sys_reset_dev = NULL;
+	}
+}
+
 static int qpnp_pon_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -2876,6 +2886,10 @@ static int qpnp_pon_probe(struct platform_device *pdev)
 #endif
 		INIT_DELAYED_WORK(&smpl_monitor_work, smpl_panic);
 		schedule_delayed_work(&smpl_monitor_work, HZ * 5);
+		rc = devm_add_action_or_reset(dev,
+					      qpnp_pon_sys_reset_dev_cleanup, pon);
+		if (rc)
+			return rc;
 	}
 
 	/* Get the total number of pon configurations and regulators */
