@@ -100,6 +100,14 @@ static struct msm_rpmh_master_stats apss_master_stats;
 static void __iomem *rpmh_unit_base;
 
 static DEFINE_MUTEX(rpmh_stats_mutex);
+/*
+ * apss_master_stats is updated from the cpuidle cluster-exit path
+ * (system_sleep_exit -> msm_rpmh_master_stats_update) with a spinlock held,
+ * so a sleeping lock cannot be taken there. Serialize that writer against
+ * the sysfs reader with a seqcount instead: the reader retries until it has
+ * observed a stable snapshot.
+ */
+static seqcount_t apss_master_stats_seq = SEQCNT_ZERO(apss_master_stats_seq);
 
 #ifdef CONFIG_SEC_PM
 void debug_masterstats_show(char *annotation)
@@ -191,14 +199,18 @@ static ssize_t msm_rpmh_master_stats_show(struct kobject *kobj,
 {
 	ssize_t length;
 	int i = 0;
+	unsigned int seq;
 	struct msm_rpmh_master_stats *record = NULL;
 
 	mutex_lock(&rpmh_stats_mutex);
 
 	/* First Read APSS master stats */
 
-	length = msm_rpmh_master_stats_print_data(buf, PAGE_SIZE,
+	do {
+		seq = read_seqcount_begin(&apss_master_stats_seq);
+		length = msm_rpmh_master_stats_print_data(buf, PAGE_SIZE,
 						&apss_master_stats, "APSS");
+	} while (read_seqcount_retry(&apss_master_stats_seq, seq));
 
 	/* Read SMEM data written by other masters */
 
@@ -221,12 +233,14 @@ static ssize_t msm_rpmh_master_stats_show(struct kobject *kobj,
 static inline void msm_rpmh_apss_master_stats_update(
 				struct msm_rpmh_profile_unit *profile_unit)
 {
+	write_seqcount_begin(&apss_master_stats_seq);
 	apss_master_stats.counts++;
 	apss_master_stats.last_entered = profile_unit[POWER_DOWN_END].value;
 	apss_master_stats.last_exited = profile_unit[POWER_UP_START].value;
 	apss_master_stats.accumulated_duration +=
 					(apss_master_stats.last_exited
 					- apss_master_stats.last_entered);
+	write_seqcount_end(&apss_master_stats_seq);
 }
 
 void msm_rpmh_master_stats_update(void)
