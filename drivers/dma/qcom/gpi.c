@@ -1481,12 +1481,21 @@ static void gpi_process_imed_data_event(struct gpii_chan *gpii_chan,
 	struct gpi_ring *ch_ring = &gpii_chan->ch_ring;
 	struct virt_dma_desc *vd;
 	struct gpi_desc *gpi_desc;
-	void *tre = ch_ring->base +
-		(ch_ring->el_size * imed_event->tre_index);
+	void *tre;
 	struct msm_gpi_dma_async_tx_cb_param *tx_cb_param;
 	unsigned long flags;
 	u32 chid;
 	struct gpii_chan *gpii_tx_chan = &gpii->gpii_chan[GPI_TX_CHAN];
+
+	if (unlikely(imed_event->tre_index >= ch_ring->elements)) {
+		GPII_ERR(gpii, gpii_chan->chid,
+			 "invalid tre_index:%u (elements:%u)\n",
+			 imed_event->tre_index, ch_ring->elements);
+		gpi_generate_cb_event(gpii_chan, MSM_GPI_QUP_EOT_DESC_MISMATCH,
+				      __LINE__);
+		return;
+	}
+	tre = ch_ring->base + (ch_ring->el_size * imed_event->tre_index);
 
 	/*
 	 * If channel not active don't process event but let
