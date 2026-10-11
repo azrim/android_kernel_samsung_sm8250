@@ -938,6 +938,13 @@ All cgroup core files are prefixed with "cgroup."
 	deep level of the hierarchy, in which case this control attribute can
 	be used to disable PSI accounting in the non-leaf cgroups.
 
+  irq.pressure
+	A read-write nested-keyed file.
+
+	Shows pressure stall information for IRQ/SOFTIRQ. See
+	Documentation/accounting/psi.txt for details. This file is only
+	created when CONFIG_IRQ_TIME_ACCOUNTING is enabled.
+
 
 Controllers
 ===========
