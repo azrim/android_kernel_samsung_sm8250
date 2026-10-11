@@ -9158,6 +9158,12 @@ static int zt_ts_remove(struct i2c_client *client)
 	mutex_unlock(&info->state_lock);
 
 	misc_info = NULL;
+#ifdef CONFIG_TRUSTONIC_TRUSTED_UI
+	tui_tsp_info = NULL;
+#endif
+#ifdef CONFIG_SAMSUNG_TUI
+	tui_tsp_info = NULL;
+#endif
 	kfree(info);
 
 	return 0;
