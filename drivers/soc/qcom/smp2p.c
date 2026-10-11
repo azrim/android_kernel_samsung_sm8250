@@ -27,6 +27,7 @@
 #include <linux/soc/qcom/smem_state.h>
 #include <linux/spinlock.h>
 #include <linux/pm_wakeup.h>
+#include <linux/suspend.h>
 
 #include <linux/ipc_logging.h>
 
@@ -162,6 +163,10 @@ struct qcom_smp2p {
 	int ipc_offset;
 	int ipc_bit;
 	struct wakeup_source *ws;
+
+	bool suspending;
+	bool stay_done;
+	struct notifier_block pm_nb;
 
 	struct mbox_client mbox_client;
 	struct mbox_chan *mbox_chan;
@@ -306,7 +311,21 @@ static irqreturn_t qcom_smp2p_isr(int irq, void *data)
 {
 	struct qcom_smp2p *smp2p = data;
 
-	__pm_stay_awake(smp2p->ws);
+	/*
+	 * Don't hold a wakeup reference while suspending: a stay/relax pair
+	 * bumps combined_event_count, which makes pm_wakeup_pending() true and
+	 * aborts the freeze even though no real wakeup occurred.  Remember
+	 * whether we took the reference so the threaded handler only relaxes
+	 * what this handler stayed.  IRQF_ONESHOT keeps the primary and the
+	 * thread from overlapping, so the flag needs no lock.
+	 */
+	if (!READ_ONCE(smp2p->suspending)) {
+		__pm_stay_awake(smp2p->ws);
+		WRITE_ONCE(smp2p->stay_done, true);
+	} else {
+		WRITE_ONCE(smp2p->stay_done, false);
+	}
+
 	return IRQ_WAKE_THREAD;
 }
 
@@ -354,7 +373,10 @@ static irqreturn_t qcom_smp2p_intr(int irq, void *data)
 	}
 
 out:
-	__pm_relax(smp2p->ws);
+	if (READ_ONCE(smp2p->stay_done)) {
+		WRITE_ONCE(smp2p->stay_done, false);
+		__pm_relax(smp2p->ws);
+	}
 	return IRQ_HANDLED;
 }
 
@@ -576,6 +598,30 @@ static int smp2p_parse_ipc(struct qcom_smp2p *smp2p)
 	return 0;
 }
 
+/**
+ * qcom_smp2p_pm_notifier() - track the system suspend window
+ * @nb:		notifier block registered for the smp2p instance
+ * @event:	PM suspend state event
+ * @unused:	unused
+ *
+ * Suppress smp2p wakeup accounting for the whole suspend window.  A
+ * controller IRQ that arrives while suspending must not touch the wakeup
+ * event count, otherwise pm_wakeup_pending() sees the stay/relax pair and
+ * aborts the freeze ("PM: Last active Wakeup Source: smp2p").
+ */
+static int qcom_smp2p_pm_notifier(struct notifier_block *nb,
+				  unsigned long event, void *unused)
+{
+	struct qcom_smp2p *smp2p = container_of(nb, struct qcom_smp2p, pm_nb);
+
+	if (event == PM_SUSPEND_PREPARE)
+		WRITE_ONCE(smp2p->suspending, true);
+	else if (event == PM_POST_SUSPEND)
+		WRITE_ONCE(smp2p->suspending, false);
+
+	return NOTIFY_DONE;
+}
+
 static int qcom_smp2p_probe(struct platform_device *pdev)
 {
 	struct smp2p_entry *entry;
@@ -684,6 +730,13 @@ static int qcom_smp2p_probe(struct platform_device *pdev)
 		goto unreg_ws;
 	}
 
+	smp2p->pm_nb.notifier_call = qcom_smp2p_pm_notifier;
+	ret = register_pm_notifier(&smp2p->pm_nb);
+	if (ret) {
+		dev_err(&pdev->dev, "failed to register pm notifier\n");
+		goto unreg_ws;
+	}
+
 	return 0;
 
 unreg_ws:
@@ -712,6 +765,8 @@ static int qcom_smp2p_remove(struct platform_device *pdev)
 {
 	struct qcom_smp2p *smp2p = platform_get_drvdata(pdev);
 	struct smp2p_entry *entry;
+
+	unregister_pm_notifier(&smp2p->pm_nb);
 
 	wakeup_source_unregister(smp2p->ws);
 
