@@ -1799,7 +1799,7 @@ static int lpm_suspend_enter(suspend_state_t state)
 	}
 	if (idx < 0) {
 		pr_err("Failed suspend\n");
-		return 0;
+		return -EBUSY;
 	}
 	cpu_prepare(lpm_cpu, idx, false);
 	cluster_prepare(cluster, cpumask, idx, false, 0);
