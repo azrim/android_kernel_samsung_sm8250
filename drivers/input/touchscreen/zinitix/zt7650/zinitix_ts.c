@@ -2692,7 +2692,7 @@ out:
 #ifdef CONFIG_INPUT_ENABLED
 static int zt_ts_open(struct input_dev *dev)
 {
-	struct zt_ts_info *info = misc_info;
+	struct zt_ts_info *info = input_get_drvdata(dev);
 
 	if (!info || !info->info_work_done)
 		return 0;
@@ -2767,7 +2767,7 @@ static int zt_ts_open(struct input_dev *dev)
 
 static void zt_ts_close(struct input_dev *dev)
 {
-	struct zt_ts_info *info = misc_info;
+	struct zt_ts_info *info = input_get_drvdata(dev);
 	int i;
 
 	if (!info || !info->info_work_done)
@@ -8806,6 +8806,8 @@ static int zt_ts_probe(struct i2c_client *client,
 		ret = -ENOMEM;
 		goto err_alloc;
 	}
+	/* zt_ts_open()/zt_ts_close() recover @info from the input device. */
+	input_set_drvdata(info->input_dev, info);
 
 	if (pdata->support_dex) {
 		info->input_dev_pad = input_allocate_device();
@@ -9131,6 +9133,14 @@ static int zt_ts_remove(struct i2c_client *client)
 	p_ghost_check = NULL;
 #endif
 
+	/*
+	 * Unregister the touch input device *outside* state_lock: the input core
+	 * invokes zt_ts_close() synchronously here, and close() takes
+	 * state_lock itself, so doing this under the lock self-deadlocks. Every
+	 * resource @info still points to (irq, raw_data, client) is live yet.
+	 */
+	input_unregister_device(info->input_dev);
+
 	mutex_lock(&info->state_lock);
 
 	info->work_state = REMOVE;
@@ -9154,7 +9164,6 @@ static int zt_ts_remove(struct i2c_client *client)
 		input_unregister_device(info->input_dev_proximity);
 	}
 
-	input_unregister_device(info->input_dev);
 	mutex_unlock(&info->state_lock);
 
 	misc_info = NULL;
