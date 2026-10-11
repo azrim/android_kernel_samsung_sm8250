@@ -1510,6 +1510,9 @@ int qpnp_set_resin_wk_int(int en)
 	struct qpnp_pon *pon = sys_reset_dev;
 	struct qpnp_pon_config *cfg;
 
+	if (!pon)
+		return -ENODEV;
+
 	cfg = qpnp_get_cfg(pon, PON_RESIN);
 	if (!cfg) {
 		pr_err("Invalid config pointer\n");
@@ -2373,6 +2376,9 @@ static int qpnp_wake_enabled(const char *val, const struct kernel_param *kp)
 	if (old_val == wake_enabled)
 		return ret;
 
+	if (!sys_reset_dev)
+		return -ENODEV;
+
 	cfg = qpnp_get_cfg(sys_reset_dev, PON_KPDPWR);
 	if (!cfg) {
 		pr_err("Invalid config pointer\n");
@@ -2407,6 +2413,9 @@ static int qpnp_reset_enabled(const char *val, const struct kernel_param *kp)
 		pr_err("Unable to set %s: %d\n", __func__, ret);
 		return ret;
 	}
+
+	if (!sys_reset_dev)
+		return -ENODEV;
 
 	cfg = qpnp_get_cfg(sys_reset_dev, PON_KPDPWR);
 	if (!cfg) {
