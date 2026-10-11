@@ -2615,7 +2615,7 @@ error_start_chan:
 	i = 2;
 error_alloc_chan:
 	for (i = i - 1; i >= 0; i--)
-		gpi_reset_chan(gpii_chan, GPI_CH_CMD_DE_ALLOC);
+		gpi_reset_chan(&gpii->gpii_chan[i], GPI_CH_CMD_DE_ALLOC);
 error_alloc_ev_ring:
 	gpi_disable_interrupts(gpii);
 error_config_int:
