@@ -1806,6 +1806,7 @@ static void zt_rel_work(struct work_struct *work)
 {
 	struct zt_ts_info *info =
 		container_of(work, struct zt_ts_info, rel_work);
+	unsigned long next = 0;
 	int i;
 	u8 reported = false;
 
@@ -1815,9 +1816,25 @@ static void zt_rel_work(struct work_struct *work)
 		if (!info->rel_pending[i])
 			continue;
 
+		/*
+		 * The shared timer may have fired for an earlier slot while
+		 * this one was armed later. Only commit a release whose own
+		 * window has elapsed; remember the earliest remaining deadline
+		 * so the timer is re-armed below and every pending release
+		 * still commits eventually.
+		 */
+		if (time_before(jiffies, info->rel_deadline[i])) {
+			if (!next || time_before(info->rel_deadline[i], next))
+				next = info->rel_deadline[i];
+			continue;
+		}
+
 		zt_flush_release(info, i);
 		reported = true;
 	}
+
+	if (next)
+		mod_timer(&info->rel_timer, next);
 
 	if (reported)
 		input_sync(info->input_dev);
@@ -2549,7 +2566,11 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 			info->rel_y[i] = info->cur_coord[i].y;
 			info->rel_deadline[i] = jiffies +
 				msecs_to_jiffies(ZT_REL_DEBOUNCE_MS);
-			mod_timer(&info->rel_timer, info->rel_deadline[i]);
+			if (!timer_pending(&info->rel_timer) ||
+			    time_before(info->rel_deadline[i],
+					info->rel_timer.expires))
+				mod_timer(&info->rel_timer,
+					  info->rel_deadline[i]);
 
 			if (info->old_coord[i].touch_status == FINGER_RELEASE) {
 				info->glitch_count++;
@@ -2677,7 +2698,11 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 					info->rel_y[i] = info->cur_coord[i].y;
 					info->rel_deadline[i] = jiffies +
 						msecs_to_jiffies(ZT_REL_DEBOUNCE_MS);
-					mod_timer(&info->rel_timer, info->rel_deadline[i]);
+					if (!timer_pending(&info->rel_timer) ||
+					    time_before(info->rel_deadline[i],
+							info->rel_timer.expires))
+						mod_timer(&info->rel_timer,
+							  info->rel_deadline[i]);
 				} else {
 					zt_report_release(info, i);
 				}
