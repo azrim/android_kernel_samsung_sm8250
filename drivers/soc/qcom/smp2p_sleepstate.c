@@ -128,6 +128,7 @@ static struct platform_driver smp2p_sleepstate_driver = {
 	.probe = smp2p_sleepstate_probe,
 	.driver = {
 		.name = "smp2p_sleepstate",
+		.suppress_bind_attrs = true,
 		.of_match_table = smp2p_slst_match_table,
 	},
 };
