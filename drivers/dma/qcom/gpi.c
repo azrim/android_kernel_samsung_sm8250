@@ -2601,9 +2601,9 @@ static int gpi_config(struct dma_chan *chan,
 	return ret;
 
 error_start_chan:
-	for (i = i - 1; i >= 0; i++) {
-		gpi_send_cmd(gpii, gpii_chan, GPI_CH_CMD_STOP);
-		gpi_send_cmd(gpii, gpii_chan, GPI_CH_CMD_RESET);
+	for (i = i - 1; i >= 0; i--) {
+		gpi_send_cmd(gpii, &gpii->gpii_chan[i], GPI_CH_CMD_STOP);
+		gpi_send_cmd(gpii, &gpii->gpii_chan[i], GPI_CH_CMD_RESET);
 	}
 	i = 2;
 error_alloc_chan:
