@@ -3015,6 +3015,9 @@ int zt_tclm_data_read(struct i2c_client *client, int address)
 		info->tdata->nvdata.cal_count = nbuff[ZT_TS_NVM_OFFSET_CAL_COUNT];
 		info->tdata->nvdata.tune_fix_ver = (nbuff[ZT_TS_NVM_OFFSET_TUNE_VERSION] << 8) | nbuff[ZT_TS_NVM_OFFSET_TUNE_VERSION + 1];
 		info->tdata->nvdata.cal_position = nbuff[ZT_TS_NVM_OFFSET_CAL_POSITION];
+		/* cal_position indexes tclm_string[CALPOSITION_MAX]; clamp at source. */
+		if (info->tdata->nvdata.cal_position >= CALPOSITION_MAX)
+			info->tdata->nvdata.cal_position = 0;
 		info->tdata->nvdata.cal_pos_hist_cnt = nbuff[ZT_TS_NVM_OFFSET_HISTORY_QUEUE_COUNT];
 		info->tdata->nvdata.cal_pos_hist_lastp = nbuff[ZT_TS_NVM_OFFSET_HISTORY_QUEUE_LASTP];
 		for (i = ZT_TS_NVM_OFFSET_HISTORY_QUEUE_ZERO; i < ZT_TS_NVM_OFFSET_LENGTH; i++)
