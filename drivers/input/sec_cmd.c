@@ -812,6 +812,10 @@ err_alloc_cmd_result:
 
 void sec_cmd_exit(struct sec_cmd_data *data, int devt)
 {
+	/* Idempotent: probe unwind may call this after a partial init. */
+	if (!data || !data->fac_dev)
+		return;
+
 	pr_info("%s: %s %s\n", dev_name(data->fac_dev), SECLOG, __func__);
 
 	sysfs_remove_group(&data->fac_dev->kobj, &sec_fac_attr_group);
