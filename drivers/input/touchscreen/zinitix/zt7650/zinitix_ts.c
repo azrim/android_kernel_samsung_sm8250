@@ -9109,6 +9109,14 @@ static int zt_ts_remove(struct i2c_client *client)
 	cancel_work_sync(&info->rel_work);
 
 	/*
+	 * Unregister the touch input device *outside* state_lock: the input core
+	 * invokes zt_ts_close() synchronously here, and close() takes
+	 * state_lock itself, so doing this under the lock self-deadlocks. Every
+	 * resource @info still points to (irq, raw_data, client) is live yet.
+	 */
+	input_unregister_device(info->input_dev);
+
+	/*
 	 * Same hazard for the ESD watchdog: ts_tmr_work() takes state_lock, so
 	 * stop the timer and drain the worker *before* acquiring the lock.
 	 * Flushing it while holding state_lock deadlocks against a worker that
@@ -9141,14 +9149,6 @@ static int zt_ts_remove(struct i2c_client *client)
 	cancel_delayed_work_sync(&info->ghost_check);
 	p_ghost_check = NULL;
 #endif
-
-	/*
-	 * Unregister the touch input device *outside* state_lock: the input core
-	 * invokes zt_ts_close() synchronously here, and close() takes
-	 * state_lock itself, so doing this under the lock self-deadlocks. Every
-	 * resource @info still points to (irq, raw_data, client) is live yet.
-	 */
-	input_unregister_device(info->input_dev);
 
 	mutex_lock(&info->state_lock);
 
