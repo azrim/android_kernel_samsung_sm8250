@@ -1713,6 +1713,13 @@ static void gpi_process_events(struct gpii *gpii)
 			gpi_event = ev_ring->rp;
 			chid = gpi_event->xfer_compl_event.chid;
 			type = gpi_event->xfer_compl_event.type;
+
+			if (unlikely(chid >= MAX_CHANNELS_PER_GPII)) {
+				GPII_ERR(gpii, GPI_DBG_COMMON,
+					 "invalid chid reported:%u\n", chid);
+				goto recycle_ev;
+			}
+
 			GPII_VERB(gpii, GPI_DBG_COMMON,
 				  "chid:%u type:0x%x %08x %08x %08x %08x\n",
 				  chid, type,
@@ -1746,6 +1753,7 @@ static void gpi_process_events(struct gpii *gpii)
 					  "not supported event type:0x%x\n",
 					  type);
 			}
+recycle_ev:
 			gpi_ring_recycle_ev_element(ev_ring);
 		}
 		gpi_write_ev_db(gpii, ev_ring, ev_ring->wp);
