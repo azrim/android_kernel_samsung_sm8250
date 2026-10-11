@@ -1834,6 +1834,7 @@ static int lpm_probe(struct platform_device *pdev)
 	int ret;
 	int size;
 	unsigned int cpu;
+	bool cpuhp_registered = false;
 	struct hrtimer *cpu_histtimer;
 	struct kobject *module_kobj = NULL;
 	struct md_region md_entry;
@@ -1886,6 +1887,7 @@ static int lpm_probe(struct platform_device *pdev)
 			lpm_starting_cpu, lpm_dying_cpu);
 	if (ret)
 		goto failed;
+	cpuhp_registered = true;
 
 	module_kobj = kset_find_obj(module_kset, KBUILD_MODNAME);
 	if (!module_kobj) {
@@ -1913,6 +1915,19 @@ static int lpm_probe(struct platform_device *pdev)
 
 	return 0;
 failed:
+	/*
+	 * Undo the global registrations made above before the devm-allocated
+	 * cluster/cpu objects are freed by the driver core on probe failure.
+	 * Otherwise suspend_ops->enter, the s2idle ops and the hotplug
+	 * callbacks would keep pointing at freed memory, and per_cpu(cpu_lpm)
+	 * would dangle.
+	 */
+	suspend_set_ops(NULL);
+	s2idle_set_ops(NULL);
+	if (cpuhp_registered)
+		cpuhp_remove_state_nocalls(CPUHP_AP_QCOM_SLEEP_STARTING);
+	for_each_possible_cpu(cpu)
+		per_cpu(cpu_lpm, cpu) = NULL;
 	free_cluster_node(lpm_root_node);
 	lpm_root_node = NULL;
 	return ret;
