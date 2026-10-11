@@ -115,11 +115,18 @@ enum power_control {
 /*
  * Deferred finger release (glitch filter).
  *
- * A RELEASE at the end of a drag is held for ZT_REL_DEBOUNCE_MS and cancelled
- * if the same slot reports PRESS/MOVE again within that window and within
- * ZT_REL_MAX_DRIFT of where it was released. The controller occasionally
- * emits such a one-frame release+re-press pair, and the framework decodes it
- * as finger-up followed by finger-down, i.e. a stray tap that breaks a scroll.
+ * A RELEASE at the end of a drag is held for ZT_REL_DEBOUNCE_MS. The
+ * controller occasionally emits a one-frame release+re-press pair, and the
+ * framework decodes it as finger-up followed by finger-down, i.e. a stray tap
+ * that breaks a scroll. When the same slot reports PRESS/MOVE again within
+ * that window and within ZT_REL_MAX_DRIFT of where it was released, the
+ * release is swallowed and the touch continues.
+ *
+ * The candidate is kept armed while the finger stays down (the window follows
+ * the finger) instead of being dropped, so that if the controller then goes
+ * quiet - the re-press was really the last frame of the touch - the rel_timer
+ * backstop still commits the release. Without that the slot would stay pressed
+ * until the ESD watchdog resets the IC.
  *
  * A tap is never deferred (its travel stays below ZT_REL_MIN_MOVE), so typing
  * and normal tapping take the original path untouched.
@@ -2467,6 +2474,26 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 	}
 
 	/*
+	 * A slot that was down can vanish without a RELEASE frame - the
+	 * controller drops one, or the lift frame is lost to an I2C error. The
+	 * report loop ignores FINGER_NONE, so synthesise the release from the
+	 * last known position and let the normal release path (including the
+	 * glitch filter) handle it. Without this the slot stays pressed until
+	 * the ESD watchdog resets the controller.
+	 */
+	for (i = 0; i < info->cap_info.multi_fingers; i++) {
+		if (info->cur_coord[i].touch_status != FINGER_NONE)
+			continue;
+		if (info->old_coord[i].touch_status <= FINGER_NONE)
+			continue;
+		if (info->old_coord[i].ttype == TOUCH_PROXIMITY)
+			continue;
+
+		info->cur_coord[i] = info->old_coord[i];
+		info->cur_coord[i].touch_status = FINGER_RELEASE;
+	}
+
+	/*
 	 * Resolve a deferred release against this frame. If the same slot comes
 	 * back (PRESS/MOVE) inside the debounce window and at (nearly) the same
 	 * spot, the release was a controller glitch: swallow it and keep the
@@ -2488,17 +2515,46 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 				drift <= ZT_REL_MAX_DRIFT &&
 				(info->cur_coord[i].touch_status == FINGER_PRESS ||
 				 info->cur_coord[i].touch_status == FINGER_MOVE)) {
-			info->rel_pending[i] = false;
-			info->glitch_count++;
+			/*
+			 * Glitch: the finger is still down. Keep the release
+			 * pending and re-arm the backstop instead of dropping
+			 * it - if the controller goes quiet right after this
+			 * frame (the re-press was really the last frame of the
+			 * touch) the timer must still commit the release, or
+			 * the slot stays pressed until the ESD watchdog resets
+			 * the IC. Follow the finger so the drift window stays
+			 * valid.
+			 */
+			info->rel_x[i] = info->cur_coord[i].x;
+			info->rel_y[i] = info->cur_coord[i].y;
+			info->rel_deadline[i] = jiffies +
+				msecs_to_jiffies(ZT_REL_DEBOUNCE_MS);
+			mod_timer(&info->rel_timer, info->rel_deadline[i]);
+
+			if (info->old_coord[i].touch_status == FINGER_RELEASE) {
+				info->glitch_count++;
+				input_dbg(true, &client->dev,
+						"tID:%d glitch release swallowed (cnt:%u)\n",
+						i, info->glitch_count);
+			}
 			/*
 			 * Treat this as a continuation rather than a fresh
 			 * press, so finger_cnt1 is not bumped a second time.
 			 */
 			info->old_coord[i].touch_status = info->cur_coord[i].touch_status;
 			info->old_coord[i].ttype = info->cur_coord[i].ttype;
-			input_dbg(true, &client->dev,
-					"tID:%d glitch release swallowed (cnt:%u)\n",
-					i, info->glitch_count);
+		} else if (time_before(jiffies, info->rel_deadline[i]) &&
+				drift <= ZT_REL_MAX_DRIFT &&
+				info->cur_coord[i].touch_status == FINGER_RELEASE) {
+			/*
+			 * The controller repeated the lift for a slot that is
+			 * already pending (same release, or a second glitch).
+			 * Follow it but do not extend the window, so the
+			 * backstop still commits it while another finger keeps
+			 * the frame stream alive.
+			 */
+			info->rel_x[i] = info->cur_coord[i].x;
+			info->rel_y[i] = info->cur_coord[i].y;
 		} else {
 			zt_flush_release(info, i);
 		}
@@ -2587,21 +2643,24 @@ static irqreturn_t zt_touch_work(int irq, void *data)
 			}
 
 			/*
-			 * Hold the release only at the end of a drag/scroll; a tap is
-			 * committed right away, exactly as before, so typing and normal
-			 * tapping are never affected.
+			 * If the resolve loop above already armed a release
+			 * candidate for this slot (it swallowed a glitch), the
+			 * backstop timer owns it - do nothing here. Otherwise
+			 * hold the release only at the end of a drag/scroll; a
+			 * tap is committed right away, exactly as before, so
+			 * typing and normal tapping are never affected.
 			 */
-			if (info->rel_pending[i]) {
-				zt_flush_release(info, i);
-			} else if (abs(dx) + abs(dy) >= ZT_REL_MIN_MOVE) {
-				info->rel_pending[i] = true;
-				info->rel_x[i] = info->cur_coord[i].x;
-				info->rel_y[i] = info->cur_coord[i].y;
-				info->rel_deadline[i] = jiffies +
-					msecs_to_jiffies(ZT_REL_DEBOUNCE_MS);
-				mod_timer(&info->rel_timer, info->rel_deadline[i]);
-			} else {
-				zt_report_release(info, i);
+			if (!info->rel_pending[i]) {
+				if (abs(dx) + abs(dy) >= ZT_REL_MIN_MOVE) {
+					info->rel_pending[i] = true;
+					info->rel_x[i] = info->cur_coord[i].x;
+					info->rel_y[i] = info->cur_coord[i].y;
+					info->rel_deadline[i] = jiffies +
+						msecs_to_jiffies(ZT_REL_DEBOUNCE_MS);
+					mod_timer(&info->rel_timer, info->rel_deadline[i]);
+				} else {
+					zt_report_release(info, i);
+				}
 			}
 		}
 	}
