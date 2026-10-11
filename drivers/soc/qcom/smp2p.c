@@ -614,10 +614,13 @@ static int qcom_smp2p_pm_notifier(struct notifier_block *nb,
 {
 	struct qcom_smp2p *smp2p = container_of(nb, struct qcom_smp2p, pm_nb);
 
-	if (event == PM_SUSPEND_PREPARE)
+	if (event == PM_SUSPEND_PREPARE) {
 		WRITE_ONCE(smp2p->suspending, true);
-	else if (event == PM_POST_SUSPEND)
+		disable_irq(smp2p->irq);
+	} else if (event == PM_POST_SUSPEND) {
 		WRITE_ONCE(smp2p->suspending, false);
+		enable_irq(smp2p->irq);
+	}
 
 	return NOTIFY_DONE;
 }
