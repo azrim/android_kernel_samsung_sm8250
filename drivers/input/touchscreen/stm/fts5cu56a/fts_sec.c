@@ -806,6 +806,18 @@ static ssize_t get_lp_dump(struct device *dev, struct device_attribute *attr, ch
 		goto out;
 	}
 
+	/* sponge_dump_format is an IC-supplied byte; the dump loops below
+	 * read one record into the 10-byte string_data[] and divide by the
+	 * format, so reject anything outside (0, 10].
+	 */
+	if (info->sponge_dump_format == 0 || info->sponge_dump_format > 10) {
+		input_err(true, &info->client->dev,
+				"%s: abnormal sponge dump format:%d\n",
+				__func__, info->sponge_dump_format);
+		snprintf(buf, SEC_CMD_BUF_SIZE, "%s", "NG, invalid dump format");
+		goto out;
+	}
+
 	/* legacy get_lp_dump */
 	input_info(true, &info->client->dev, "%s: DEBUG format=%d, num=%d, start=%d, end=%d, current_index=%d\n",
 		__func__, info->sponge_dump_format, info->sponge_dump_event, dump_start, dump_end, current_index);
@@ -865,13 +877,20 @@ static ssize_t get_lp_dump(struct device *dev, struct device_attribute *attr, ch
 			addr = FTS_CMD_SPONGE_LP_DUMP_EVENT;
 		}
 
+		if (dump_cnt * info->sponge_dump_format > FTS_MAX_SPONGE_DUMP_BUFFER) {
+			input_err(true, &info->client->dev,
+					"%s: wrong sponge dump read size (%d)\n",
+					__func__, dump_cnt * info->sponge_dump_format);
+			goto out;
+		}
+
 		ret = info->fts_read_from_sponge(info, addr, sec_spg_dat, dump_cnt * info->sponge_dump_format);
 		if (ret < 0) {
 			input_err(true, &info->client->dev, "%s: Failed to read sponge\n", __func__);
 			goto out;
 		}
 
-		for (i = 0 ; i <= dump_cnt ; i++) {
+		for (i = 0 ; i < dump_cnt ; i++) {
 			int e_offset = i * info->sponge_dump_format;
 			char ibuff[30] = {0, };
 			u16 edata[5];
