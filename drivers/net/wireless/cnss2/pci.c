@@ -1258,6 +1258,18 @@ static int cnss_pci_set_mhi_state(struct cnss_pci_data *pci_priv,
 		mutex_lock(&pci_priv->mhi_ctrl->pm_mutex);
 		if (pci_priv->drv_connected_last) {
 			ret = mhi_pm_fast_suspend(pci_priv->mhi_ctrl, true);
+			/* mhi_pm_fast_suspend aborts with -EBUSY when packets
+			 * are still pending or a bus vote is held - the same
+			 * transient corner case the non-DRV path below retries
+			 * for. Without the retry the whole system suspend is
+			 * aborted instead of just deferred.
+			 */
+			while (ret == -EBUSY && retry < MHI_SUSPEND_RETRY_CNT) {
+				usleep_range(5000, 6000);
+				retry++;
+				cnss_pr_err("mhi is busy, retry #%u", retry);
+				ret = mhi_pm_fast_suspend(pci_priv->mhi_ctrl, true);
+			}
 		} else {
 			ret = mhi_pm_suspend(pci_priv->mhi_ctrl);
 			/* in some corner case, when cnss try to suspend,
