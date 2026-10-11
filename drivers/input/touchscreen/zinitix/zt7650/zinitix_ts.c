@@ -1730,14 +1730,18 @@ static bool init_touch(struct zt_ts_info *info)
 	info->cap_info.total_node_num = info->cap_info.x_node_num * info->cap_info.y_node_num;
 
 	/*
-	 * Bound the IC-reported geometry to what the raw-data buffers can hold
-	 * (TSP_CMD_NODE_NUM = TSP_CMD_X_NUM * TSP_CMD_Y_NUM). total_node_num is
-	 * used to size writes into fixed 544-element buffers, so an oversized or
-	 * zero node count must abort the probe instead of overflowing them.
+	 * Bound the IC-reported geometry by the total node count the raw-data
+	 * buffers can hold (TSP_CMD_NODE_NUM = TSP_CMD_X_NUM * TSP_CMD_Y_NUM).
+	 * total_node_num is used to size writes into fixed 544-element buffers,
+	 * so an oversized or zero node count must abort the probe instead of
+	 * overflowing them. The bound is on the product, not on each axis:
+	 * TSP_CMD_X_NUM/TSP_CMD_Y_NUM are orientation-specific, so a panel
+	 * reported as 16x34 (544 = TSP_CMD_NODE_NUM) is valid even though its
+	 * per-axis counts do not match those constants.
 	 */
 	if (info->cap_info.x_node_num == 0 || info->cap_info.y_node_num == 0 ||
-	    info->cap_info.x_node_num > TSP_CMD_X_NUM ||
-	    info->cap_info.y_node_num > TSP_CMD_Y_NUM) {
+	    (u32)info->cap_info.x_node_num * info->cap_info.y_node_num >
+	    TSP_CMD_NODE_NUM) {
 		input_err(true, &info->client->dev,
 			  "%s: invalid node num x %d, y %d\n", __func__,
 			  info->cap_info.x_node_num, info->cap_info.y_node_num);
