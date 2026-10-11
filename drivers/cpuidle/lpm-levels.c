@@ -127,7 +127,7 @@ static const int num_dbg_elements = 0x100;
 static void cluster_unprepare(struct lpm_cluster *cluster,
 		const struct cpumask *cpu, int child_idx, bool from_idle,
 		int64_t time, bool success);
-static void cluster_prepare(struct lpm_cluster *cluster,
+static int cluster_prepare(struct lpm_cluster *cluster,
 		const struct cpumask *cpu, int child_idx, bool from_idle,
 		int64_t time);
 
@@ -1165,18 +1165,19 @@ static int cluster_configure(struct lpm_cluster *cluster, int idx,
 	return 0;
 }
 
-static void cluster_prepare(struct lpm_cluster *cluster,
+static int cluster_prepare(struct lpm_cluster *cluster,
 		const struct cpumask *cpu, int child_idx, bool from_idle,
 		int64_t start_time)
 {
 	int i;
 	int predicted = 0;
+	int ret = 0;
 
 	if (!cluster)
-		return;
+		return 0;
 
 	if (cluster->min_child_level > child_idx)
-		return;
+		return 0;
 
 	spin_lock(&cluster->sync_lock);
 	cpumask_or(&cluster->num_children_in_sync, cpu,
@@ -1223,20 +1224,22 @@ static void cluster_prepare(struct lpm_cluster *cluster,
 	if (i < 0)
 		goto failed;
 
-	if (cluster_configure(cluster, i, from_idle, predicted))
+	ret = cluster_configure(cluster, i, from_idle, predicted);
+	if (ret)
 		goto failed;
 
 	if (!IS_ERR_OR_NULL(cluster->stats))
 		cluster->stats->sleep_time = start_time;
-	cluster_prepare(cluster->parent, &cluster->num_children_in_sync, i,
+	ret = cluster_prepare(cluster->parent, &cluster->num_children_in_sync, i,
 			from_idle, start_time);
 
 	spin_unlock(&cluster->sync_lock);
-	return;
+	return ret;
 failed:
 	spin_unlock(&cluster->sync_lock);
 	if (!IS_ERR_OR_NULL(cluster->stats))
 		cluster->stats->sleep_time = 0;
+	return ret ? ret : -EBUSY;
 }
 
 static void cluster_unprepare(struct lpm_cluster *cluster,
@@ -1791,6 +1794,7 @@ static int lpm_suspend_enter(suspend_state_t state)
 	struct lpm_cluster *cluster = lpm_cpu->parent;
 	const struct cpumask *cpumask = get_cpu_mask(cpu);
 	int idx;
+	int ret;
 	bool success;
 
 	for (idx = lpm_cpu->nlevels - 1; idx >= 0; idx--) {
@@ -1802,7 +1806,9 @@ static int lpm_suspend_enter(suspend_state_t state)
 		return -EBUSY;
 	}
 	cpu_prepare(lpm_cpu, idx, false);
-	cluster_prepare(cluster, cpumask, idx, false, 0);
+	ret = cluster_prepare(cluster, cpumask, idx, false, 0);
+	if (ret)
+		return ret;
 
 	success = psci_enter_sleep(lpm_cpu, idx, false);
 
