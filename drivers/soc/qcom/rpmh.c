@@ -359,8 +359,10 @@ static int flush_batch(struct rpmh_ctrlr *ctrlr)
 	int ret = 0;
 	int i;
 
-	/* Send Sleep/Wake requests to the controller, expect no response */
-	spin_lock(&ctrlr->cache_lock);
+	/*
+	 * Send Sleep/Wake requests to the controller, expect no response.
+	 * The caller holds ctrlr->cache_lock.
+	 */
 	list_for_each_entry(req, &ctrlr->batch_cache, list) {
 		for (i = 0; i < req->count; i++) {
 			rpm_msg = req->rpm_msgs + i;
@@ -370,7 +372,6 @@ static int flush_batch(struct rpmh_ctrlr *ctrlr)
 				break;
 		}
 	}
-	spin_unlock(&ctrlr->cache_lock);
 
 	return ret;
 }
@@ -549,22 +550,31 @@ static int send_single(const struct device *dev, enum rpmh_state state,
  * Return: -EBUSY if the controller is busy, probably waiting on a response
  * to a RPMH request sent earlier.
  *
- * This function is always called from the sleep code from the last CPU
- * that is powering down the entire system. Since no other RPMH API would be
- * executing at this time, it is safe to run lockless.
+ * This is reachable from runtime cpuidle (lpm_cpuidle_enter ->
+ * cluster_configure -> system_sleep_enter) in addition to system suspend,
+ * so the cache may be updated concurrently by another CPU. Walk the cache
+ * under cache_lock.
  */
 int rpmh_flush(const struct device *dev)
 {
 	struct cache_req *p;
 	struct rpmh_ctrlr *ctrlr = get_rpmh_ctrlr(dev);
-	int ret;
+	int ret = 0;
 
 	if (rpmh_standalone)
 		return 0;
 
+	/*
+	 * If the lock is busy another CPU is still up, so abort the flush
+	 * instead of spinning with IRQs disabled; the cluster simply won't
+	 * power-collapse this round.
+	 */
+	if (!spin_trylock(&ctrlr->cache_lock))
+		return -EBUSY;
+
 	if (!ctrlr->dirty) {
 		pr_debug("Skipping flush, TCS has latest data.\n");
-		return 0;
+		goto exit;
 	}
 
 	do {
@@ -574,12 +584,8 @@ int rpmh_flush(const struct device *dev)
 	/* First flush the cached batch requests */
 	ret = flush_batch(ctrlr);
 	if (ret)
-		return ret;
+		goto exit;
 
-	/*
-	 * Nobody else should be calling this function other than system PM,
-	 * hence we can run without locks.
-	 */
 	list_for_each_entry(p, &ctrlr->cache, list) {
 		if (!is_req_valid(p)) {
 			pr_debug("%s: skipping RPMH req: a:%#x s:%#x w:%#x",
@@ -588,16 +594,19 @@ int rpmh_flush(const struct device *dev)
 		}
 		ret = send_single(dev, RPMH_SLEEP_STATE, p->addr, p->sleep_val);
 		if (ret)
-			return ret;
+			goto exit;
 		ret = send_single(dev, RPMH_WAKE_ONLY_STATE,
 				  p->addr, p->wake_val);
 		if (ret)
-			return ret;
+			goto exit;
 	}
 
 	ctrlr->dirty = false;
 
-	return 0;
+exit:
+	spin_unlock(&ctrlr->cache_lock);
+
+	return ret;
 }
 EXPORT_SYMBOL(rpmh_flush);
 
