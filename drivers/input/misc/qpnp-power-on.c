@@ -2863,6 +2863,21 @@ static int qpnp_pon_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
+	/*
+	 * Publish the system-reset PON before qpnp_pon_config_init(), which
+	 * reads sys_reset_dev through its config helpers. Deferring this to the
+	 * end of probe leaves sys_reset_dev NULL there and panics the boot
+	 * (NULL deref in qpnp_pon_config_init).
+	 */
+	if (sys_reset) {
+		sys_reset_dev = pon;
+#ifdef CONFIG_SEC_PM_DEBUG
+		pon->is_mpon = true;
+#endif
+		INIT_DELAYED_WORK(&smpl_monitor_work, smpl_panic);
+		schedule_delayed_work(&smpl_monitor_work, HZ * 5);
+	}
+
 	/* Get the total number of pon configurations and regulators */
 	for_each_available_child_of_node(dev->of_node, node) {
 		if (of_find_property(node, "regulator-name", NULL)) {
@@ -2976,18 +2991,6 @@ static int qpnp_pon_probe(struct platform_device *pdev)
 	rc = qpnp_pon_input_dispatch(pon, PON_KPDPWR);
 	if (rc)
 		dev_err(pon->dev, "Unable to send input event\n");
-
-	/* Publish the system-reset PON only once probe has fully succeeded, so a
-	 * failed probe cannot leave sys_reset_dev pointing at freed memory.
-	 */
-	if (sys_reset) {
-		sys_reset_dev = pon;
-#ifdef CONFIG_SEC_PM_DEBUG
-		pon->is_mpon = true;
-#endif
-		INIT_DELAYED_WORK(&smpl_monitor_work, smpl_panic);
-		schedule_delayed_work(&smpl_monitor_work, HZ * 5);
-	}
 
 	return 0;
 }
