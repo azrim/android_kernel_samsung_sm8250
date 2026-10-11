@@ -961,9 +961,9 @@ static int geni_i2c_probe(struct platform_device *pdev)
 	if (!gi2c)
 		return -ENOMEM;
 
-	if (arr_idx++ < MAX_SE)
+	if (arr_idx < MAX_SE)
 		/* Debug purpose */
-		gi2c_dev_dbg[arr_idx] = gi2c;
+		gi2c_dev_dbg[arr_idx++] = gi2c;
 
 	gi2c->dev = &pdev->dev;
 
