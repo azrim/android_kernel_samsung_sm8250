@@ -257,7 +257,7 @@ struct qpnp_pon {
 };
 
 #ifdef CONFIG_SEC_PM
-static char poff_reg_dump[160];
+static char poff_reg_dump[256];
 static char *poff_reg_ptr = poff_reg_dump;
 #endif
 
@@ -466,6 +466,9 @@ int qpnp_pon_check_chg_det(void)
 	struct qpnp_pon *pon = sys_reset_dev;
 	int rc = 0;
 	unsigned int val;
+
+	if (!pon)
+		return -ENODEV;
 
 	rc = regmap_read(pon->regmap, QPNP_PON_RT_STS(pon), &val);
 
@@ -1455,6 +1458,10 @@ int qpnp_get_s2_reset_onoff(void)
 	struct qpnp_pon *pon = sys_reset_dev;
 	struct qpnp_pon_config *cfg;
 	uint val;
+
+	if (!pon)
+		return -ENODEV;
+
 	cfg = qpnp_get_cfg(pon, PON_KPDPWR_RESIN);
 	if (!cfg) {
 		pr_err("Invalid config pointer\n");
@@ -2465,10 +2472,12 @@ static int qpnp_pon_read_gen2_pon_off_reason(struct qpnp_pon *pon, u16 *reason,
 #ifdef CONFIG_SEC_PM
 	if (is_pon_gen2(pon)) {
 		char regs[11];
+		int len;
 
 		regmap_bulk_read(pon->regmap, QPNP_PON_REASON1(pon), regs, 11);
 
-		poff_reg_ptr += sprintf(poff_reg_ptr,
+		len = scnprintf(poff_reg_ptr,
+			sizeof(poff_reg_dump) - (poff_reg_ptr - poff_reg_dump),
 			"PM%u: PON:%02X ON:%02X POFF:%02X O:%02X F1:%02X F2:%02X S3:%02X\n",
 			(to_spmi_device(pon->dev->parent)->usid / 2),
 			regs[0], // pon_reason1
@@ -2478,6 +2487,7 @@ static int qpnp_pon_read_gen2_pon_off_reason(struct qpnp_pon *pon, u16 *reason,
 			regs[8], // fault_reason1
 			regs[9], // fault_reason2
 			regs[10]);// s3_reset_reason
+		poff_reg_ptr += len;
 	}
 #endif
 	return 0;
@@ -2779,7 +2789,7 @@ static int qpnp_pon_suspend(struct device *dev)
 		if (rc)
 			return rc;
 
-		saved_s1_timer = val;
+		saved_s1_timer = val & QPNP_PON_S1_TIMER_MASK;
 		pr_info("[%s] Change S1 Timer: %dms(0x%X) -> 904ms(0x9)\n",
 				KBUILD_MODNAME, s1_delay[saved_s1_timer], saved_s1_timer);
 		return qpnp_pon_masked_write(pon, s1_timer_addr, QPNP_PON_S1_TIMER_MASK, 0x9);
@@ -2851,15 +2861,6 @@ static int qpnp_pon_probe(struct platform_device *pdev)
 	} else if (modem_reset && sys_reset) {
 		dev_err(dev, "qcom,modem-reset and qcom,system-reset properties cannot be supported together for one PMIC PON device\n");
 		return -EINVAL;
-	}
-
-	if (sys_reset) {
-		sys_reset_dev = pon;
-#ifdef CONFIG_SEC_PM_DEBUG
-		pon->is_mpon = true;
-#endif
-		INIT_DELAYED_WORK(&smpl_monitor_work, smpl_panic);
-		schedule_delayed_work(&smpl_monitor_work, HZ * 5);
 	}
 
 	/* Get the total number of pon configurations and regulators */
@@ -2976,6 +2977,18 @@ static int qpnp_pon_probe(struct platform_device *pdev)
 	if (rc)
 		dev_err(pon->dev, "Unable to send input event\n");
 
+	/* Publish the system-reset PON only once probe has fully succeeded, so a
+	 * failed probe cannot leave sys_reset_dev pointing at freed memory.
+	 */
+	if (sys_reset) {
+		sys_reset_dev = pon;
+#ifdef CONFIG_SEC_PM_DEBUG
+		pon->is_mpon = true;
+#endif
+		INIT_DELAYED_WORK(&smpl_monitor_work, smpl_panic);
+		schedule_delayed_work(&smpl_monitor_work, HZ * 5);
+	}
+
 	return 0;
 }
 
@@ -2987,6 +3000,11 @@ static int qpnp_pon_remove(struct platform_device *pdev)
 	device_remove_file(&pdev->dev, &dev_attr_debounce_us);
 
 	cancel_delayed_work_sync(&pon->bark_work);
+
+	if (pon == sys_reset_dev) {
+		cancel_delayed_work_sync(&smpl_monitor_work);
+		sys_reset_dev = NULL;
+	}
 
 	qpnp_pon_debugfs_remove(pon);
 	if (pon->is_spon) {
@@ -3043,6 +3061,9 @@ int qpnp_control_s2_reset_onoff(int on)
 	int rc;
 	struct qpnp_pon *pon = sys_reset_dev;
 	struct qpnp_pon_config *cfg;
+
+	if (!pon)
+		return -ENODEV;
 
 	cfg = qpnp_get_cfg(pon, PON_KPDPWR_RESIN);
 	if (!cfg) {
