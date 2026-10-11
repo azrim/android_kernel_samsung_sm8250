@@ -7867,7 +7867,6 @@ static int init_sec_factory(struct zt_ts_info *info)
 	ret = sysfs_create_group(&info->sec.fac_dev->kobj, &touchscreen_attr_group);
 	if (ret < 0) {
 		input_err(true, &info->client->dev, "%s: Failed to create sysfs attributes\n", __func__);
-		sec_cmd_exit(&info->sec, SEC_CLASS_DEVT_TSP);
 		kfree(raw_data);
 		return ret;
 	}
@@ -7876,7 +7875,6 @@ static int init_sec_factory(struct zt_ts_info *info)
 	if (ret < 0) {
 		input_err(true, &info->client->dev, "%s: Failed to create link\n", __func__);
 		sysfs_remove_group(&info->sec.fac_dev->kobj, &touchscreen_attr_group);
-		sec_cmd_exit(&info->sec, SEC_CLASS_DEVT_TSP);
 		kfree(raw_data);
 		return ret;
 	}
