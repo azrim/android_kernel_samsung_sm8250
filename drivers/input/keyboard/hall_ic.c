@@ -293,10 +293,14 @@ static int hall_probe(struct platform_device *pdev)
 	if (ddata->gpio_flip_cover != 0) {
 		hall_ic = sec_device_create(ddata, "hall_ic");
 
-		error = device_create_file(hall_ic, &dev_attr_hall_detect);
-		if (error < 0) {
-			pr_err("Failed to create device file(%s)!, error: %d\n",
-			dev_attr_hall_detect.attr.name, error);
+		if (IS_ERR(hall_ic)) {
+			pr_err("%s failed to create hall_ic\n", __func__);
+		} else {
+			error = device_create_file(hall_ic, &dev_attr_hall_detect);
+			if (error < 0) {
+				pr_err("Failed to create device file(%s)!, error: %d\n",
+				dev_attr_hall_detect.attr.name, error);
+			}
 		}
 	}
 
@@ -313,6 +317,13 @@ static int hall_probe(struct platform_device *pdev)
 	return 0;
 
  fail1:
+	if (ddata->input) {
+		if (ddata->irq_flip_cover > 0)
+			free_irq(ddata->irq_flip_cover, ddata);
+		cancel_delayed_work_sync(&ddata->flip_cover_dwork);
+		wake_lock_destroy(&ddata->flip_wake_lock);
+		input_free_device(ddata->input);
+	}
 	kfree(ddata);
 
 	return error;
@@ -326,6 +337,11 @@ static int hall_remove(struct platform_device *pdev)
 	pr_info("%s start\n", __func__);
 
 	device_init_wakeup(&pdev->dev, 0);
+
+	/* Stop the IRQ first, then drain any queued debounce work. */
+	if (ddata->irq_flip_cover > 0)
+		free_irq(ddata->irq_flip_cover, ddata);
+	cancel_delayed_work_sync(&ddata->flip_cover_dwork);
 
 	input_unregister_device(input);
 
