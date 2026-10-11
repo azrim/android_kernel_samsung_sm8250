@@ -88,6 +88,12 @@ void sec_secure_touch_unregister(int dev_num)
 
 	pr_info("%s: %s\n", SECLOG, __func__);
 
+	if (!data || number < 0 || number >= (int)ARRAY_SIZE(data->touch_driver))
+		return;
+
+	if (!data->touch_driver[number].registered)
+		return;
+
 	data->touch_driver[number].drv_number = 0;
 	data->touch_driver[number].drv_data = NULL;
 	data->touch_driver[number].kobj = NULL;
@@ -268,16 +274,22 @@ static ssize_t virtual_hall_ic_store(struct device *dev,
 	}
 
 	if (val == 1) {
-		if (data->hall_ic == 2)
+		if (data->hall_ic == 2 && data->touch_driver[2 - 1].registered)
 			sysfs_delete_link(&data->device->kobj, data->touch_driver[2 - 1].kobj, "secure");
+
+		if (!data->touch_driver[1 - 1].registered)
+			return -ENODEV;
 
 		ret = sysfs_create_link(&data->device->kobj, data->touch_driver[1 - 1].kobj, "secure");
 		pr_info("%s: %s: create link ret:%d\n", SECLOG, __func__, ret);
 		if (ret < 0)
 			return -EINVAL;
 	} else if (val == 2) {
-		if (data->hall_ic == 1)
+		if (data->hall_ic == 1 && data->touch_driver[1 - 1].registered)
 			sysfs_delete_link(&data->device->kobj, data->touch_driver[1 - 1].kobj, "secure");
+
+		if (!data->touch_driver[2 - 1].registered)
+			return -ENODEV;
 
 		ret = sysfs_create_link(&data->device->kobj, data->touch_driver[2 - 1].kobj, "secure");
 		pr_info("%s: %s: create link ret:%d\n", SECLOG, __func__, ret);
@@ -287,9 +299,10 @@ static ssize_t virtual_hall_ic_store(struct device *dev,
 		/*
 		 * hall_ic is 0 after kzalloc and only ever set from val
 		 * (1 or 2); guard the index so a "0" write cannot index
-		 * touch_driver[-1].
+		 * touch_driver[-1], and only unlink a registered driver.
 		 */
-		if (data->hall_ic >= 1 && data->hall_ic <= 2)
+		if (data->hall_ic >= 1 && data->hall_ic <= 2 &&
+				data->touch_driver[data->hall_ic - 1].registered)
 			sysfs_delete_link(&data->device->kobj,
 					data->touch_driver[data->hall_ic - 1].kobj,
 					"secure");
