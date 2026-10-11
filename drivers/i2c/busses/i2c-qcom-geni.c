@@ -907,7 +907,7 @@ static int geni_i2c_xfer(struct i2c_adapter *adap,
 		if (mode == SE_DMA) {
 			if (gi2c->err) {
 				reinit_completion(&gi2c->xfer);
-				if (msgs[i].flags != I2C_M_RD)
+				if (!(msgs[i].flags & I2C_M_RD))
 					writel_relaxed(1, gi2c->base +
 							SE_DMA_TX_FSM_RST);
 				else
