@@ -7672,7 +7672,10 @@ static ssize_t get_lp_dump(struct device *dev, struct device_attribute *attr, ch
 		return snprintf(buf, SEC_CMD_BUF_SIZE, "Reset is ongoing");
 	}
 
+	zt_ts_esd_timer_stop(info);
 	disable_irq(info->irq);
+	mutex_lock(&info->state_lock);
+
 	ts_read_from_sponge(info, ZT_SPONGE_DUMP_FORMAT, (u8 *)sponge_data, 4);
 
 	dump_format = sponge_data[0];
@@ -7738,7 +7741,9 @@ static ssize_t get_lp_dump(struct device *dev, struct device_attribute *attr, ch
 	}
 
 out:
+	mutex_unlock(&info->state_lock);
 	enable_irq(info->irq);
+	zt_ts_esd_timer_start(info);
 	return strlen(buf);
 }
 
