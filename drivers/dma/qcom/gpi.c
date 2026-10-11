@@ -1157,8 +1157,9 @@ static void gpi_generate_cb_event(struct gpii_chan *gpii_chan,
 	msm_gpi_cb.cb_event = event;
 	msm_gpi_cb.status = status;
 	msm_gpi_cb.timestamp = sched_clock();
-	client_info->callback(&gpii_chan->vc.chan, &msm_gpi_cb,
-			      client_info->cb_param);
+	if (client_info->callback)
+		client_info->callback(&gpii_chan->vc.chan, &msm_gpi_cb,
+				      client_info->cb_param);
 }
 
 /* process transfer completion interrupt */
@@ -1312,8 +1313,9 @@ static void gpi_process_glob_err_irq(struct gpii *gpii)
 		 msm_gpi_cb.error_log.routine,
 		 msm_gpi_cb.error_log.type,
 		 msm_gpi_cb.error_log.error_code);
-	client_info->callback(&gpii_chan->vc.chan, &msm_gpi_cb,
-			      client_info->cb_param);
+	if (client_info->callback)
+		client_info->callback(&gpii_chan->vc.chan, &msm_gpi_cb,
+				      client_info->cb_param);
 
 	return;
 
@@ -1446,8 +1448,9 @@ static void gpi_process_qup_notif_event(struct gpii_chan *gpii_chan,
 	msm_gpi_cb.count = notif_event->count;
 	GPII_VERB(gpii_chan->gpii, gpii_chan->chid, "sending CB event:%s\n",
 		  TO_GPI_CB_EVENT_STR(msm_gpi_cb.cb_event));
-	client_info->callback(&gpii_chan->vc.chan, &msm_gpi_cb,
-			      client_info->cb_param);
+	if (client_info->callback)
+		client_info->callback(&gpii_chan->vc.chan, &msm_gpi_cb,
+				      client_info->cb_param);
 }
 
 /* free gpi_desc for the specified channel */
@@ -1459,6 +1462,10 @@ static void gpi_free_chan_desc(struct gpii_chan *gpii_chan)
 
 	spin_lock_irqsave(&gpii_chan->vc.lock, flags);
 	vd = vchan_next_desc(&gpii_chan->vc);
+	if (!vd) {
+		spin_unlock_irqrestore(&gpii_chan->vc.lock, flags);
+		return;
+	}
 	gpi_desc = to_gpi_desc(vd);
 	list_del(&vd->node);
 	spin_unlock_irqrestore(&gpii_chan->vc.lock, flags);
