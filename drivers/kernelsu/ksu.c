@@ -291,7 +291,6 @@ static int __init kernelsu_init(void)
 #if !defined(MODULE)
 device_initcall(kernelsu_init);
 #else
-#include "downstream/module_blacklist.h"
 
 #ifndef CONFIG_KSU_SHELL_HAS_SU_ALWAYS
 /**
@@ -303,12 +302,16 @@ device_initcall(kernelsu_init);
 module_param(allow_shell, bool, 0); 
 #endif
 
+// module_blacklist
+#include "feature/module_blacklist.h"
+#include "feature/module_blacklist.c"
+
 static int __init kernelsu_lkm_init(void)
 {
 	kernelsu_init();
 
-	ksu_extend_module_blacklist();
-	list_del(&THIS_MODULE->list);
+	ksu_module_blacklist_init();
+	// list_del(&THIS_MODULE->list);
 	kobject_del(&THIS_MODULE->mkobj.kobj); // tiann/KernelSU fefb02e
 
 	if (current->pid == 1)
@@ -327,7 +330,9 @@ static int __init kernelsu_lkm_init(void)
 
 	on_post_fs_data();
 	on_boot_completed();
-	
+
+	ksu_feature_apply_forced();
+
 	if (!!getenforce())
 		return 0;
 	
