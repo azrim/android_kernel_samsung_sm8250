@@ -600,6 +600,15 @@ static int enter_state(suspend_state_t state)
 	if (!mutex_trylock(&system_transition_mutex))
 		return -EBUSY;
 
+	/*
+	 * Tell the coprocessors (SLPI/sensors) that the AP is asleep only
+	 * after the system-transition lock is held: a failed trylock above
+	 * must not emit a spurious "AP asleep" signal that pm_suspend() would
+	 * then immediately have to correct.
+	 */
+	if (smem_state && !IS_ERR(smem_state))
+		qcom_smem_state_update_bits(smem_state, AWAKE_BIT, 0);
+
 	if (state == PM_SUSPEND_TO_IDLE)
 		s2idle_begin();
 
@@ -654,9 +663,11 @@ int pm_suspend(suspend_state_t state)
 		return -EINVAL;
 
 	pm_suspend_marker("entry");
-	if (smem_state && !IS_ERR(smem_state))
-		qcom_smem_state_update_bits(smem_state, AWAKE_BIT, 0);
 	error = enter_state(state);
+	/*
+	 * enter_state() clears AWAKE_BIT once it holds the transition lock;
+	 * re-set it on every return path.
+	 */
 	if (smem_state && !IS_ERR(smem_state))
 		qcom_smem_state_update_bits(smem_state, AWAKE_BIT, AWAKE_BIT);
 	if (error) {
