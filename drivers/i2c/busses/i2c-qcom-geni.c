@@ -371,6 +371,15 @@ static void gi2c_ev_cb(struct dma_chan *ch, struct msm_gpi_cb const *cb_str,
 	case MSM_GPI_QUP_FW_ERROR:
 	case MSM_GPI_QUP_PENDING_EVENT:
 	case MSM_GPI_QUP_EOT_DESC_MISMATCH:
+		/*
+		 * The channel event does not line up with a submitted
+		 * descriptor (e.g. EOT_DESC_MISMATCH is raised when the GPI
+		 * sees a completion with no pending descriptor), so this
+		 * transfer will never complete on its own. Fail it right
+		 * away instead of parking the caller for the whole timeout.
+		 */
+		gi2c->err = -EIO;
+		complete(&gi2c->xfer);
 		break;
 	case MSM_GPI_QUP_NOTIFY:
 		if (m_stat & M_GP_IRQ_1_EN)
@@ -710,6 +719,7 @@ static int geni_i2c_gsi_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[],
 geni_i2c_err_prep_sg:
 		if (gi2c->err) {
 			dmaengine_terminate_all(gi2c->tx_c);
+			dmaengine_terminate_all(gi2c->rx_c);
 			gi2c->cfg_sent = 0;
 		}
 		if (gi2c->is_shared)
