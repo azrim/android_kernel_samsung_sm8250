@@ -6233,6 +6233,7 @@ static void run_ref_calibration(void *device_data)
 		return;
 	}
 
+	mutex_lock(&info->state_lock);
 	disable_irq(info->irq);
 	zt_ts_esd_timer_stop(info);
 	zt_power_control(info, POWER_OFF);
@@ -6271,6 +6272,7 @@ static void run_ref_calibration(void *device_data)
 	clear_report_data(info);
 	zt_ts_esd_timer_start(info);
 	enable_irq(info->irq);
+	mutex_unlock(&info->state_lock);
 	input_info(true, &client->dev, "%s: %s(%d)\n", __func__,
 			sec->cmd_result, (int)strnlen(sec->cmd_result, sizeof(sec->cmd_result)));
 }
