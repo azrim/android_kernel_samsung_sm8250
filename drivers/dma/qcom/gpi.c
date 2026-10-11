@@ -2906,8 +2906,10 @@ static int gpi_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	/* debug purpose */
-	gpi_dev_dbg[arr_idx] = gpi_dev;
-	arr_idx++;
+	if (arr_idx < ARRAY_SIZE(gpi_dev_dbg)) {
+		gpi_dev_dbg[arr_idx] = gpi_dev;
+		arr_idx++;
+	}
 
 	gpi_dev->dev = &pdev->dev;
 	gpi_dev->klog_lvl = DEFAULT_KLOG_LVL;
