@@ -8884,6 +8884,12 @@ static int zt_ts_probe(struct i2c_client *client,
 
 	info->input_dev->name = "sec_touchscreen";
 	zt_ts_set_input_prop(info, info->input_dev, INPUT_PROP_DIRECT);
+
+#ifdef CONFIG_INPUT_ENABLED
+	info->input_dev->open = zt_ts_open;
+	info->input_dev->close = zt_ts_close;
+#endif
+
 	ret = input_register_device(info->input_dev);
 	if (ret) {
 		input_info(true, &client->dev, "unable to register %s input device\n",
@@ -8940,11 +8946,6 @@ static int zt_ts_probe(struct i2c_client *client,
 #ifdef CONFIG_TRUSTONIC_TRUSTED_UI
 	trustedui_set_tsp_irq(info->irq);
 	input_info(true, &client->dev, "%s[%d] called!\n", __func__, info->irq);
-#endif
-
-#ifdef CONFIG_INPUT_ENABLED
-	info->input_dev->open = zt_ts_open;
-	info->input_dev->close = zt_ts_close;
 #endif
 
 #ifdef USE_MISC_DEVICE
