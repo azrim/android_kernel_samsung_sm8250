@@ -1115,15 +1115,17 @@ static int gpio_keys_probe(struct platform_device *pdev)
 #else
 	sec_key = device_create(sec_class, NULL, 13, NULL, "sec_key");
 #endif
-	if (IS_ERR(sec_key))
+	if (IS_ERR(sec_key)) {
 		pr_err("%s failed to create sec_key\n", __func__);
-
-	error = sysfs_create_group(&sec_key->kobj, &sec_key_attr_group);
-	if (error) {
-		dev_err(dev, "Unable to create sysfs_group, error: %d\n",
-			error);
+		sec_key = NULL;
+	} else {
+		error = sysfs_create_group(&sec_key->kobj, &sec_key_attr_group);
+		if (error) {
+			dev_err(dev, "Unable to create sysfs_group, error: %d\n",
+				error);
+		}
+		dev_set_drvdata(sec_key, ddata);
 	}
-	dev_set_drvdata(sec_key, ddata);
 	device_init_wakeup(dev, wakeup);
 
 	return 0;
