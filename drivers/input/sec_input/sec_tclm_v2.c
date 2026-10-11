@@ -251,10 +251,18 @@ void sec_tclm_position_history(struct sec_tclm_data *data)
 		return;
 
 	for (i = 0; i < data->nvdata.cal_pos_hist_cnt; i++) {
-		snprintf(pTmp, sizeof(pTmp), "%c%d", data->tclm_string[data->nvdata.cal_pos_hist_queue[2 * now_lastp]].s_name, data->nvdata.cal_pos_hist_queue[2 * now_lastp + 1]);
+		unsigned char hist_pos = data->nvdata.cal_pos_hist_queue[2 * now_lastp];
+
+		/* cal_pos_hist_queue[] is read straight from NVM and may be
+		 * corrupt; keep it inside tclm_string[] (CALPOSITION_MAX).
+		 */
+		if (hist_pos >= CALPOSITION_MAX)
+			hist_pos = CALPOSITION_NONE;
+
+		snprintf(pTmp, sizeof(pTmp), "%c%d", data->tclm_string[hist_pos].s_name, data->nvdata.cal_pos_hist_queue[2 * now_lastp + 1]);
 		strlcat(pStr, pTmp, CAL_HISTORY_QUEUE_MAX * 5);
 		if (i < CAL_HISTORY_QUEUE_SHORT_DISPLAY) {
-			data->cal_pos_hist_last3[2 * i] = data->tclm_string[data->nvdata.cal_pos_hist_queue[2 * now_lastp]].s_name;
+			data->cal_pos_hist_last3[2 * i] = data->tclm_string[hist_pos].s_name;
 			data->cal_pos_hist_last3[2 * i + 1] = data->nvdata.cal_pos_hist_queue[2 * now_lastp + 1];
 		}
 
