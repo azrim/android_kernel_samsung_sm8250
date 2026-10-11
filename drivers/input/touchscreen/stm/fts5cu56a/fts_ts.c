@@ -184,7 +184,8 @@ static ssize_t fts_secure_touch_enable_store(struct device *dev,
 
 		fts_delay(10);
 
-		fts_interrupt_handler(info->client->irq, info);
+		if (!info->shutdown_is_on_going)
+			fts_interrupt_handler(info->client->irq, info);
 
 		complete_all(&info->st_powerdown);
 		complete(&info->st_interrupt);
@@ -1710,7 +1711,8 @@ static void location_detect(struct fts_ts_info *info, char *loc, int x, int y)
 		strcat(loc, "N");
 }
 
-static const char finger_mode[10] = {'N', '1', '2', 'G', '4', 'P'};
+/* ttype is a 4-bit IC value (0..15); size the table for the full range */
+static const char finger_mode[16] = {'N', '1', '2', 'G', '4', 'P'};
 
 static u8 fts_event_handler_type_b(struct fts_ts_info *info)
 {
@@ -1824,8 +1826,8 @@ static u8 fts_event_handler_type_b(struct fts_ts_info *info)
 				if (info->board->support_ear_detect) {
 					if (p_event_status->status_id == 0x6A) {
 						if (is_aosp) {
-							if (info->fts_power_state == FTS_POWER_STATE_LOWPOWER || (info->finger[TouchID].y < 700 && info->finger[TouchID].x > 900
-							    && info->finger[TouchID].x < 3000)) {
+							if (TouchID < FINGER_MAX && (info->fts_power_state == FTS_POWER_STATE_LOWPOWER || (info->finger[TouchID].y < 700 && info->finger[TouchID].x > 900
+							    && info->finger[TouchID].x < 3000))) {
 								// Report actual range when either the area around the sensor is touched or if panel is in LPM state
 								p_event_status->status_data_1 = p_event_status->status_data_1 == 5 || !p_event_status->status_data_1;
 								info->hover_event = p_event_status->status_data_1;
@@ -3390,6 +3392,11 @@ static int fts_remove(struct i2c_client *client)
 	input_unregister_device(info->input_dev);
 	info->input_dev = NULL;
 	info->input_dev_touch = NULL;
+
+	if (info->board->support_ear_detect) {
+		input_unregister_device(info->input_dev_proximity);
+		info->input_dev_proximity = NULL;
+	}
 
 	if (info->board->power)
 		info->board->power(info, false);
